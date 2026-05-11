@@ -1,0 +1,32 @@
+# Local-only migration/runtime state. Keep public KnowledgeOS clean.
+/.knowledgeos-local/
+/.knowledgeos-reset-backups/
+/.agents/
+
+# Local generated OS module roots. Public users generate clean roots from templates/ with init-os.
+/global-agent-fabric/
+/capability-layer/
+
+# Runtime evidence for this local repository. Public users receive the schema/control files, not local run history.
+/.agent-os/runs/
+/.agent-os/receipts/
+/.agent-os/handoffs/
+/.agent-os/inbox/
+
+# Secrets and local environment files.
+.env
+.env.*
+*.pem
+*.key
+*secret*
+*secrets*
+
+# macOS/editor noise.
+.DS_Store
+.vscode/
+.idea/
+
+# Python build/test cache.
+__pycache__/
+*.pyc
+.pytest_cache/

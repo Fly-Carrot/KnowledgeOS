@@ -1,0 +1,26 @@
+workspace_id: knowledgeos-local-build
+name: KnowledgeOS Local Build
+root: .
+active_project: KOS001
+
+shared_fabric:
+  governance_root: templates/governance-core
+  capability_root: templates/capability-layer
+  boot_hook: hooks/before-task.sh
+  phase_hook: hooks/log-phase.sh
+  postflight_hook: hooks/after-task.sh
+
+runtimes:
+  primary: codex
+  secondary:
+    - gemini-cli
+    - antigravity
+
+paths:
+  docs: docs/
+  templates: templates/
+  local_migration: .knowledgeos-local/
+
+state:
+  phase: skeleton
+  last_sync_status: BOOT_OK

@@ -1,0 +1,36 @@
+evals:
+  knowledge_task:
+    required_checks:
+      - sources_have_ids
+      - claims_link_to_sources
+      - uncertainty_is_marked
+    human_gate: final_trust
+
+  engineering_task:
+    required_checks:
+      - command_logged
+      - tests_or_reproduction_attempted
+      - changed_files_listed
+      - failures_recorded
+    human_gate: final_acceptance
+
+  report_task:
+    required_checks:
+      - source_traceability
+      - no_fabricated_references
+      - unresolved_assumptions_listed
+    human_gate: final_reading
+
+  workspace_initialization:
+    required_checks:
+      - placeholders_filled_or_explicitly_allowed
+      - structure_verified
+      - route_write_guard_used
+    human_gate: review_generated_control_plane
+
+  capability_orchestration_task:
+    required_checks:
+      - dispatch_policy_exists
+      - dispatch_plan_is_observable
+      - consultation_checkpoints_are_present
+    human_gate: orchestration_policy_review

@@ -1,0 +1,15 @@
+decisions:
+  - id: KOS-D001
+    date: 2026-05-09
+    decision: "KnowledgeOS keeps public documentation separate from local migration state."
+    rationale: "The framework should become publishable without exposing private paths, secrets, or runtime state."
+
+  - id: KOS-D002
+    date: 2026-05-09
+    decision: "Agent Shared Fabric becomes a KnowledgeOS kernel module rather than being copied into every project."
+    rationale: "Projects should mount governance services without becoming dirty or non-portable."
+
+  - id: KOS-D003
+    date: 2026-05-09
+    decision: "Dirty-write prevention is a core OS feature, not an optional lint rule."
+    rationale: "Agent systems need controlled mutation, receipts, and rollback to remain trustworthy."

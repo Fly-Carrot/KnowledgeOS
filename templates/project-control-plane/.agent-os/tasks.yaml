@@ -1,0 +1,15 @@
+tasks:
+  - id: T001
+    title: Initialize KnowledgeOS control plane
+    type: initialization
+    status: ready
+    inputs: []
+    outputs:
+      - .agent-os/
+    allowed_agents:
+      - codex
+      - gemini-cli
+    acceptance:
+      - workspace.yaml is filled
+      - project.yaml is filled
+      - write-policy.yaml is reviewed

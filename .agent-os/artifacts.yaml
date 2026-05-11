@@ -1,0 +1,14 @@
+artifacts:
+  - id: KOS-ART001
+    type: documentation
+    path: README.md
+    project: KOS001
+    produced_by_task: KOS-T001
+    status: draft
+
+  - id: KOS-ART002
+    type: live_report
+    path: docs/LIVE-REPORT.md
+    project: KOS001
+    produced_by_task: KOS-T001
+    status: active

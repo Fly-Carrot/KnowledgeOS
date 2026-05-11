@@ -1,0 +1,13 @@
+project:
+  id: P001
+  name: CHANGE_ME_PROJECT_NAME
+  status: active
+  goal: >
+    Describe what this project is trying to accomplish.
+  current_phase: initialization
+  primary_outputs: []
+  acceptance_criteria:
+    - raw materials are preserved
+    - important outputs are registered in artifacts.yaml
+    - major work has run receipts
+    - unresolved risks are tracked in tasks.yaml

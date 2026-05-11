@@ -1,0 +1,41 @@
+write_policy:
+  immutable:
+    - materials/raw/**
+    - data/raw/**
+    - .agent-os/schemas/kernel/**
+
+  controlled:
+    - README.md
+    - AGENTS.md
+    - Makefile
+    - bin/**
+    - knowledgeos/**
+    - global-agent-fabric/**
+    - capability-layer/**
+    - docs/**
+    - examples/**
+    - templates/**
+    - .agent-os/**
+    - knowledge/**
+    - src/**
+    - tests/**
+    - outputs/**
+    - reports/drafts/**
+
+  forbidden_without_human_gate:
+    - "**/.env"
+    - "**/*secret*"
+    - "**/*secrets*"
+    - reports/final/**
+    - templates/governance-core/**
+    - templates/capability-layer/**
+
+  require_receipt_for:
+    - bin/**
+    - knowledgeos/**
+    - global-agent-fabric/**
+    - capability-layer/**
+    - docs/**
+    - examples/**
+    - templates/**
+    - .agent-os/**

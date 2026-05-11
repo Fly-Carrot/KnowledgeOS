@@ -1,0 +1,181 @@
+# KnowledgeOS local workflow router.
+# The router maps task types to observable command paths. It does not execute tools.
+workflows:
+  os_scaffold:
+    route_order:
+      - doctor --root .
+      - check-write --project-root . --path templates/
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: scaffold_task
+    human_gate: review_public_surface
+    allowed_outputs:
+      - README.md
+      - docs/
+      - templates/
+      - .agent-os/
+    notes:
+      - Keep public templates free of personal paths and secrets.
+
+  migration_inventory:
+    route_order:
+      - doctor --project-root .
+      - check-write --project-root . --path .knowledgeos-local/inventory/
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: inventory_task
+    human_gate: no_secret_materialization
+    allowed_outputs:
+      - .knowledgeos-local/inventory/
+    notes:
+      - Inventory local state without copying secrets into public docs.
+
+  template_design:
+    route_order:
+      - doctor --root . --project-root templates/project-control-plane --template
+      - check-write --project-root . --path templates/project-control-plane/
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: template_task
+    human_gate: public_template_review
+    allowed_outputs:
+      - templates/project-control-plane/
+      - docs/
+    notes:
+      - Template placeholders are allowed only under explicit template validation.
+
+  executable_control_plane:
+    route_order:
+      - doctor --root . --project-root .
+      - check-write --project-root . --path knowledgeos/cli.py
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: executable_control_plane
+    human_gate: test_before_release
+    allowed_outputs:
+      - knowledgeos/
+      - bin/
+      - tests/
+      - docs/
+    notes:
+      - Prefer standard-library checks and deterministic outputs.
+
+  deep_validation:
+    route_order:
+      - doctor --project-root .
+      - agent-guide --project-root .
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: guardrail_task
+    human_gate: review_before_agent_adoption
+    allowed_outputs:
+      - knowledgeos/
+      - tests/
+      - docs/
+      - .agent-os/handoffs/
+    notes:
+      - Deep validation now lives under the unified doctor command.
+
+  workflow_routing:
+    route_order:
+      - doctor --project-root .
+      - route-task --project-root . --task-id <task-id>
+      - check-write --project-root . --path .agent-os/workflows/router.yaml
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: workflow_router_task
+    human_gate: review_unrouted_task_types
+    allowed_outputs:
+      - knowledgeos/
+      - tests/
+      - docs/
+      - .agent-os/workflows/
+      - templates/project-control-plane/.agent-os/workflows/
+    notes:
+      - Workflow routing is observable planning metadata, not automatic mutation.
+
+  tool_registry:
+    route_order:
+      - doctor --project-root .
+      - tool-registry --project-root . --check-paths
+      - check-write --project-root . --path .agent-os/tool-registry.yaml
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: tool_registry_task
+    human_gate: external_tool_policy_review
+    allowed_outputs:
+      - knowledgeos/
+      - tests/
+      - docs/
+      - .agent-os/tool-registry.yaml
+      - templates/project-control-plane/.agent-os/tool-registry.yaml
+    notes:
+      - Tool registry is configuration visibility, not automatic tool execution.
+      - External tools must remain capability-matched and human-gated when risky.
+
+  route_bound_execution_guard:
+    route_order:
+      - doctor --project-root .
+      - route-task --project-root . --task-id <task-id>
+      - check-route-write --project-root . --task-id <task-id> --path <planned-path>
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: route_bound_guard_task
+    human_gate: security_review_before_release
+    allowed_outputs:
+      - knowledgeos/
+      - tests/
+      - docs/
+      - global-agent-fabric/
+      - capability-layer/
+      - .agent-os/tasks.yaml
+      - .agent-os/evals.yaml
+      - .agent-os/fabric-link.yaml
+      - .agent-os/workspace.yaml
+      - .agent-os/tool-registry.yaml
+      - .agent-os/startup-prompt.md
+      - .agent-os/write-policy.yaml
+      - .agent-os/workflows/
+      - templates/
+      - examples/
+      - README.md
+      - AGENTS.md
+      - Makefile
+    notes:
+      - Execution must be route-bound before mutation and eval-bound before completion.
+      - The guard minimizes dirty-system risk by rejecting unclassified or out-of-route writes.
+
+  capability_orchestration:
+    route_order:
+      - doctor --project-root .
+      - route-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id>
+      - check-route-write --project-root . --task-id <task-id> --path <planned-path>
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: capability_orchestration_task
+    human_gate: orchestration_policy_review
+    allowed_outputs:
+      - knowledgeos/
+      - tests/
+      - docs/
+      - .agent-os/dispatch-policy.yaml
+      - .agent-os/tool-registry.yaml
+      - .agent-os/tasks.yaml
+      - .agent-os/evals.yaml
+      - .agent-os/workflows/
+      - templates/
+      - README.md
+      - Makefile
+    notes:
+      - Dispatch is observable and policy-driven, not hidden tool improvisation.
+      - Agents must pause at consultation checkpoints, state their recommendation, and ask before proceeding.

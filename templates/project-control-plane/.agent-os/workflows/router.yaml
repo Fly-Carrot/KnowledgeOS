@@ -1,0 +1,41 @@
+# KnowledgeOS workflow router.
+# Task classification is open, but lifecycle routing must be explicit.
+workflows:
+  initialization:
+    route_order:
+      - doctor --project-root .
+      - route-task --project-root . --task-id <task-id>
+      - check-route-write --project-root . --task-id <task-id> --path <planned-path>
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: workspace_initialization
+    human_gate: review_generated_control_plane
+    allowed_outputs:
+      - .agent-os/
+      - AGENTS.md
+    notes:
+      - Fill placeholders before treating the project as production-ready.
+  report_task:
+    route_order:
+      - doctor --project-root .
+      - route-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id>
+      - check-route-write --project-root . --task-id <task-id> --path <planned-path>
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: report_task
+    human_gate: final_reading
+    allowed_outputs:
+      - reports/drafts/
+      - reports/final/
+      - docs/
+      - outputs/
+      - knowledge/
+      - .agent-os/runs/
+      - .agent-os/receipts/
+      - .agent-os/handoffs/
+    notes:
+      - Preserve raw materials and record assumptions or uncertain claims.
+      - Keep major claims traceable to source material or mark them for human review.

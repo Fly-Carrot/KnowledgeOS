@@ -1,0 +1,20 @@
+capabilities:
+  mcp:
+    allow: []
+    deny: []
+    human_gate: []
+
+  skills:
+    allow_sources: []
+    require_reason_for:
+      - broad_external_skill_library
+
+  workflows:
+    allow: []
+
+  subagents:
+    orchestrator: none
+    execution_mode: ask
+    allowed: []
+    forbidden:
+      - generic_unscoped_agent

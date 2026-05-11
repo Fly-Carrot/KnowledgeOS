@@ -1,0 +1,83 @@
+evals:
+  documentation_task:
+    required_checks:
+      - public_private_boundary_clear
+      - no_secrets_or_keys
+      - architecture_terms_defined
+    human_gate: final_reading
+
+  migration_task:
+    required_checks:
+      - source_paths_listed
+      - no_secret_values_copied
+      - reversible_plan_exists
+    human_gate: explicit_approval
+
+  scaffold_task:
+    required_checks:
+      - required_control_files_exist
+      - write_policy_exists
+      - live_report_updated
+    human_gate: review_before_migration
+
+  inventory_task:
+    required_checks:
+      - local_sources_listed_without_secret_values
+      - governance_and_body_separated
+      - irreversible_actions_not_taken
+    human_gate: no_secret_materialization
+
+  template_task:
+    required_checks:
+      - placeholders_are_intentional
+      - template_routes_have_eval_profiles
+      - template_routes_have_allowed_outputs
+    human_gate: public_template_review
+
+  executable_control_plane:
+    required_checks:
+      - cli_parse_passes
+      - unit_tests_pass
+      - run_receipts_are_created
+    human_gate: test_before_release
+
+  guardrail_task:
+    required_checks:
+      - doctor_validates_project_schema
+      - agent_guide_is_current
+      - smoke_test_passes
+    human_gate: review_before_agent_adoption
+
+  workflow_router_task:
+    required_checks:
+      - task_types_have_routes
+      - unrouted_types_require_triage
+      - route_outputs_are_visible
+    human_gate: review_unrouted_task_types
+
+  tool_registry_task:
+    required_checks:
+      - tool_entries_have_id_kind_status_invocation
+      - no_inline_secret_markers
+      - risky_tools_have_human_gate
+      - orchestration_uses_ask_mode
+    human_gate: external_tool_policy_review
+
+  route_bound_guard_task:
+    required_checks:
+      - route_write_guard_blocks_out_of_scope_paths
+      - run_task_requires_routed_ready_task
+      - complete_task_requires_passed_eval
+      - doctor_summary_reduces_output
+      - scenario_checkpoints_block_distracted_agents
+      - smoke_test_passes
+    human_gate: security_review_before_release
+
+  capability_orchestration_task:
+    required_checks:
+      - dispatch_policy_exists
+      - dispatch_task_prefers_branch_builder_for_complex_work
+      - dispatch_task_prefers_orchestrator_before_mcp_and_skills
+      - consultation_checkpoints_are_present
+      - smoke_test_passes
+    human_gate: orchestration_policy_review

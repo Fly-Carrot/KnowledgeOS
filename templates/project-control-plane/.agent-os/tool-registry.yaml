@@ -1,0 +1,48 @@
+# KnowledgeOS tool registry template.
+# Keep concrete MCP commands, API keys, and private paths outside this template.
+tools:
+  - id: mcp-custom
+    kind: mcp
+    status: optional
+    scope: custom
+    invocation: capability_match
+    task_fit: research_task,knowledge_structuring
+    capability_fit: custom_mcp
+    human_gate: true
+
+  - id: skill-custom
+    kind: skill
+    status: optional
+    scope: custom
+    invocation: task_intent
+    task_fit: "*"
+    capability_fit: custom_skill
+    human_gate: false
+
+  - id: workflow-custom
+    kind: workflow
+    status: optional
+    scope: custom
+    invocation: runtime_workflow
+    task_fit: "*"
+    capability_fit: custom_workflow
+    human_gate: false
+
+  - id: maestro
+    kind: orchestrator
+    status: recommended
+    scope: subagent-orchestration
+    invocation: medium_complex_tasks
+    task_fit: engineering_change,architecture_design,security_audit
+    capability_fit: subagent_orchestration,expert_review
+    human_gate: true
+    execution_mode: ask
+
+  - id: mempalace
+    kind: memory
+    status: recommended
+    scope: process-memory
+    invocation: postflight_process_memory
+    task_fit: "*"
+    capability_fit: process_memory,postflight_memory
+    human_gate: false

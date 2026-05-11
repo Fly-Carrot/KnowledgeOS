@@ -1,0 +1,29 @@
+workspace_id: CHANGE_ME_WORKSPACE_ID
+name: CHANGE_ME_PROJECT_NAME
+root: CHANGE_ME_PROJECT_ROOT
+active_project: P001
+
+shared_fabric:
+  governance_root: CHANGE_ME_GLOBAL_AGENT_FABRIC_ROOT
+  capability_root: CHANGE_ME_KNOWLEDGEOS_CAPABILITY_ROOT
+  boot_hook: hooks/before-task.sh
+  phase_hook: hooks/log-phase.sh
+  postflight_hook: hooks/after-task.sh
+
+runtimes:
+  primary: codex
+  secondary: []
+
+paths:
+  materials: materials/
+  knowledge: knowledge/
+  source_code: src/
+  tests: tests/
+  outputs: outputs/
+  reports: reports/
+  docs: docs/
+
+state:
+  phase: initialized
+  last_run: null
+  last_sync_status: null

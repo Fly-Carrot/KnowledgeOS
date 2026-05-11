@@ -1,0 +1,242 @@
+tasks:
+  - id: KOS-T001
+    title: Create safe KnowledgeOS skeleton
+    type: os_scaffold
+    status: in_progress
+    outputs:
+      - README.md
+      - docs/LIVE-REPORT.md
+      - .agent-os/
+      - templates/
+    acceptance:
+      - public and local tracks are separated
+      - live report is created
+      - no local secrets are copied
+
+  - id: KOS-T002
+    title: Inventory existing Agent Shared Fabric workflow
+    type: migration_inventory
+    status: ready
+    inputs:
+      - templates/governance-core
+      - templates/capability-layer
+    outputs:
+      - .knowledgeos-local/inventory/current-workflow.md
+    acceptance:
+      - kernel module and capability layer are listed separately
+      - MCP, skills, workflows, and Branch Builder are summarized
+      - secrets are referenced only as env or presence checks
+
+  - id: KOS-T003
+    title: Define project template contract
+    type: template_design
+    status: backlog
+    outputs:
+      - templates/project-control-plane/
+    acceptance:
+      - workspace/project/task/eval/artifact schemas are present
+      - write policy is included
+      - capability policy is included
+
+  - id: KOS-T004
+    title: Build executable KnowledgeOS control plane
+    type: executable_control_plane
+    status: completed
+    outputs:
+      - knowledgeos/cli.py
+      - bin/knowledgeos
+      - tests/test_knowledgeos_cli.py
+      - docs/executable-control-plane.md
+    acceptance:
+      - doctor command validates public surface
+      - init-project preserves existing files by default
+      - check-write classifies controlled, immutable, human-gated, and unclassified paths
+      - run-task creates run evidence
+      - tests pass
+
+  - id: KOS-T005
+    title: Build unified doctor and agent guardrails
+    type: deep_validation
+    status: completed
+    outputs:
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - docs/doctor-guardrails.md
+      - docs/agent-guide.md
+    acceptance:
+      - doctor validates project schema and runtime guardrails
+      - unresolved placeholders are detected
+      - agent-guide provides a strict onboarding checklist
+      - smoke includes unified doctor
+      - tests pass
+
+  - id: KOS-T006
+    title: Build workflow router skeleton
+    type: workflow_routing
+    status: completed
+    outputs:
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - docs/workflow-router.md
+      - .agent-os/workflows/router.yaml
+      - templates/project-control-plane/.agent-os/workflows/router.yaml
+    acceptance:
+      - route-task maps task ids to observable workflow routes
+      - unrouted task types require human triage
+      - doctor validates that task types have route profiles
+      - tests pass
+
+  - id: KOS-T007
+    title: Add observable tool registry and orchestration checks
+    type: tool_registry
+    status: completed
+    outputs:
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - docs/tool-registry.md
+      - .agent-os/tool-registry.yaml
+      - templates/project-control-plane/.agent-os/tool-registry.yaml
+    acceptance:
+      - tool-registry reports MCP, skills, workflows, orchestrators, and subagents
+      - doctor validates tool registry shape and secret hygiene
+      - legacy duplicate validation command is removed
+      - smoke includes tool registry validation
+
+  - id: KOS-T008
+    title: Add route-bound execution guard
+    type: route_bound_execution_guard
+    status: completed
+    outputs:
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - docs/route-bound-execution-guard.md
+      - .agent-os/workflows/router.yaml
+      - templates/project-control-plane/.agent-os/workflows/router.yaml
+      - templates/project-control-plane/AGENTS.md
+    acceptance:
+      - check-route-write enforces both write policy and route allowed outputs
+      - run-task requires routed ready or in-progress tasks
+      - complete-task requires passed eval by default
+      - doctor validates route eval profiles and allowed outputs
+      - smoke and unit tests pass
+
+  - id: KOS-T009
+    title: Add capability-oriented orchestration
+    type: capability_orchestration
+    status: completed
+    complexity: complex
+    risk: orchestration_policy_review
+    outputs:
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - docs/capability-orchestration.md
+      - .agent-os/dispatch-policy.yaml
+      - .agent-os/tool-registry.yaml
+      - .agent-os/evals.yaml
+      - .agent-os/tasks.yaml
+      - .agent-os/workflows/router.yaml
+      - templates/project-control-plane/.agent-os/dispatch-policy.yaml
+      - templates/project-control-plane/.agent-os/tool-registry.yaml
+      - templates/project-control-plane/AGENTS.md
+    acceptance:
+      - dispatch-task produces an observable capability plan
+      - Branch Builder is prioritized for complex work
+      - orchestrator/subagents are considered before MCP and skills
+      - agent consultation checkpoints are explicit
+      - doctor and smoke tests pass
+
+  - id: KOS-T010
+    title: Normalize functional document names and OS capability layer
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: public_structure_cleanup
+    outputs:
+      - README.md
+      - Makefile
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - docs/
+      - templates/
+      - .agent-os/tasks.yaml
+      - .agent-os/workflows/router.yaml
+      - .agent-os/workspace.yaml
+      - .agent-os/fabric-link.yaml
+      - .agent-os/project.yaml
+    acceptance:
+      - public docs use functional names instead of phase-number names
+      - capability layer replaces old body terminology in templates and public copy
+      - init-project exposes capability-root while preserving implementation-root compatibility
+      - doctor, smoke, and unit tests pass
+
+  - id: KOS-T011
+    title: Add minimal runnable KnowledgeOS kernel scaffold
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: kernel_template_purity
+    outputs:
+      - README.md
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - docs/
+      - templates/governance-core/
+      - templates/capability-layer/
+      - .agent-os/tasks.yaml
+      - .agent-os/write-policy.yaml
+    acceptance:
+      - governance-core includes rules, hooks, registries, schemas, memory lanes, and sync ledgers
+      - init-os creates global-agent-fabric and capability-layer from templates
+      - generated hooks return BOOT_OK, PHASE_OK, and SYNC_OK in a temp runtime
+      - initialized projects can mount the generated kernel and pass doctor
+      - public templates remain secret-free and minimal
+
+  - id: KOS-T012
+    title: Add concise doctor summary and distracted-agent scenarios
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: guardrail_regression
+    outputs:
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - examples/scenarios/
+      - README.md
+      - Makefile
+      - .agent-os/tasks.yaml
+      - .agent-os/evals.yaml
+      - .agent-os/workflows/router.yaml
+      - .agent-os/write-policy.yaml
+    acceptance:
+      - doctor --summary returns concise pass/fail counts
+      - full doctor output remains available by default
+      - scenarios create isolated temporary projects
+      - distracted-agent mistakes are blocked by doctor, route, write, and eval guards
+      - smoke, unit tests, and scenario checkpoints pass
+
+  - id: KOS-T013
+    title: Migrate capability layer into KnowledgeOS
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: runtime_link_migration
+    inputs:
+      - templates/governance-core
+      - templates/capability-layer
+    outputs:
+      - templates/governance-core/
+      - templates/capability-layer/
+      - .agent-os/fabric-link.yaml
+      - .agent-os/workspace.yaml
+      - .agent-os/tool-registry.yaml
+      - .agent-os/startup-prompt.md
+      - AGENTS.md
+      - .agent-os/tasks.yaml
+      - .agent-os/workflows/router.yaml
+      - .agent-os/write-policy.yaml
+    acceptance:
+      - capability-layer contains mcp, skills, workflows, subagents, agents, and registries
+      - capability-layer skills and workflows are copied by capability type
+      - full external skill catalogs are not copied and are not active runtime dependencies
+      - active KnowledgeOS and Gemini links point to KnowledgeOS paths
+      - doctor, tool-registry, unit tests, and guardrail scenarios pass

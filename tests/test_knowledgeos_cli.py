@@ -1,0 +1,702 @@
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+BIN = ROOT / "bin" / "knowledgeos"
+
+
+class KnowledgeOSCliTests(unittest.TestCase):
+    def run_cli(self, *args, cwd=None, check=True):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        result = subprocess.run(
+            [str(BIN), *args],
+            cwd=cwd or ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if check and result.returncode != 0:
+            self.fail(f"command failed: {result.args}\nstdout={result.stdout}\nstderr={result.stderr}")
+        return result
+
+    def test_doctor_public_root_passes(self):
+        result = self.run_cli("doctor", "--root", str(ROOT), "--json")
+        payload = json.loads(result.stdout)
+        self.assertTrue(all(item["ok"] for item in payload), payload)
+        self.assertTrue(any(item["label"] == "public_scan" for item in payload))
+
+    def test_doctor_summary_reduces_output(self):
+        full = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(ROOT))
+        summary = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(ROOT), "--summary")
+        self.assertIn("status: ok", summary.stdout)
+        self.assertIn("checks:", summary.stdout)
+        self.assertIn("failed: 0", summary.stdout)
+        self.assertNotIn("[OK]", summary.stdout)
+        self.assertLess(len(summary.stdout.splitlines()), len(full.stdout.splitlines()))
+
+        json_summary = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(ROOT), "--summary", "--json")
+        payload = json.loads(json_summary.stdout)
+        self.assertEqual(payload["status"], "ok")
+        self.assertGreater(payload["checks"], 0)
+        self.assertEqual(payload["failed"], 0)
+        self.assertEqual(payload["failed_checks"], [])
+
+    def test_deep_doctor_command_is_removed(self):
+        help_result = self.run_cli("--help", check=False)
+        self.assertEqual(help_result.returncode, 0)
+        self.assertNotIn("deep-doctor", help_result.stdout)
+        result = self.run_cli("deep-doctor", "--project-root", str(ROOT), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid choice", result.stderr)
+
+    def test_init_project_preserves_existing_agents_md(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            global_root = Path(tmp) / "global-agent-fabric"
+            capability_root = Path(tmp) / "capability-layer"
+            global_root.mkdir()
+            capability_root.mkdir()
+            existing = project / "AGENTS.md"
+            existing.write_text("existing rules\n", encoding="utf-8")
+            result = self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Example Project",
+                "--global-root",
+                str(global_root),
+                "--capability-root",
+                str(capability_root),
+                "--json",
+            )
+            actions = json.loads(result.stdout)
+            self.assertIn("skip", {item["action"] for item in actions})
+            self.assertEqual(existing.read_text(encoding="utf-8"), "existing rules\n")
+            workspace = project / ".agent-os" / "workspace.yaml"
+            self.assertTrue(workspace.exists())
+            text = workspace.read_text(encoding="utf-8")
+            self.assertIn("Example Project", text)
+            self.assertIn(str(global_root), text)
+            self.assertNotIn("Example Project_GLOBAL_AGENT_FABRIC_ROOT", text)
+
+    def test_init_os_creates_minimal_kernel_and_project_can_mount_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = Path(tmp) / "KnowledgeOSRuntime"
+            init_os = self.run_cli("init-os", "--root", str(ROOT), "--os-root", str(runtime), "--json")
+            actions = json.loads(init_os.stdout)
+            self.assertTrue(any(item.get("action") == "ready" for item in actions))
+
+            global_root = runtime / "global-agent-fabric"
+            capability_root = runtime / "capability-layer"
+            self.assertTrue((global_root / "hooks" / "before-task.sh").exists())
+            self.assertTrue(os.access(global_root / "hooks" / "before-task.sh", os.X_OK))
+            self.assertTrue((global_root / "rules" / "global.md").exists())
+            self.assertTrue((global_root / "sync" / "receipts.ndjson").exists())
+            self.assertTrue((capability_root / "README.md").exists())
+
+            boot = subprocess.run(
+                [str(global_root / "hooks" / "before-task.sh")],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(boot.returncode, 0, boot.stderr)
+            self.assertIn("[BOOT_OK]", boot.stdout)
+
+            phase = subprocess.run(
+                [str(global_root / "hooks" / "log-phase.sh"), "route", "test route"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(phase.returncode, 0, phase.stderr)
+            self.assertIn("[PHASE_OK]", phase.stdout)
+
+            postflight = subprocess.run(
+                [str(global_root / "hooks" / "after-task.sh"), "test postflight"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(postflight.returncode, 0, postflight.stderr)
+            self.assertIn("[SYNC_OK]", postflight.stdout)
+
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Example",
+                "--global-root",
+                str(global_root),
+                "--capability-root",
+                str(capability_root),
+            )
+            doctor = self.run_cli("doctor", "--project-root", str(project), "--project-only", "--json")
+            payload = json.loads(doctor.stdout)
+            self.assertTrue(all(item["ok"] for item in payload), payload)
+
+    def test_check_write_classifies_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+
+            allowed = self.run_cli("check-write", "--project-root", str(project), "--path", "src/main.py", "--json")
+            self.assertEqual(json.loads(allowed.stdout)["decision"], "allow")
+
+            immutable = self.run_cli(
+                "check-write", "--project-root", str(project), "--path", "materials/raw/input.pdf", "--json", check=False
+            )
+            self.assertEqual(immutable.returncode, 2)
+            self.assertEqual(json.loads(immutable.stdout)["decision"], "deny")
+
+            gated = self.run_cli(
+                "check-write", "--project-root", str(project), "--path", "reports/final/report.md", "--json", check=False
+            )
+            self.assertEqual(gated.returncode, 2)
+            self.assertEqual(json.loads(gated.stdout)["decision"], "human_gate_required")
+
+            unclassified = self.run_cli("check-write", "--project-root", str(project), "--path", "scratch.txt", "--json")
+            self.assertEqual(json.loads(unclassified.stdout)["decision"], "unclassified")
+
+            strict = self.run_cli(
+                "check-write", "--project-root", str(project), "--path", "scratch.txt", "--strict", "--json", check=False
+            )
+            self.assertEqual(strict.returncode, 2)
+
+    def test_run_task_creates_run_envelope_and_latest_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            result = self.run_cli(
+                "run-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--summary",
+                "Start initialization.",
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+            run_id = payload["run_id"]
+            run_dir = project / ".agent-os" / "runs" / run_id
+            self.assertTrue((run_dir / "run.yaml").exists())
+            self.assertTrue((run_dir / "receipt.md").exists())
+            run_yaml = (run_dir / "run.yaml").read_text(encoding="utf-8")
+            self.assertIn("route_status: routed", run_yaml)
+            self.assertIn("eval_profile: workspace_initialization", run_yaml)
+            latest = project / ".agent-os" / "receipts" / "latest.md"
+            self.assertIn(run_id, latest.read_text(encoding="utf-8"))
+
+    def test_check_route_write_enforces_route_allowed_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+
+            allowed = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                ".agent-os/workspace.yaml",
+                "--json",
+            )
+            payload = json.loads(allowed.stdout)
+            self.assertEqual(payload["decision"], "allow")
+            self.assertEqual(payload["route_status"], "allowed_by_route")
+
+            out_of_route = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                "src/main.py",
+                "--json",
+                check=False,
+            )
+            self.assertEqual(out_of_route.returncode, 2)
+            self.assertEqual(json.loads(out_of_route.stdout)["decision"], "route_output_denied")
+
+            immutable = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                "materials/raw/source.pdf",
+                "--json",
+                check=False,
+            )
+            self.assertEqual(immutable.returncode, 2)
+            self.assertEqual(json.loads(immutable.stdout)["decision"], "deny")
+
+    def test_run_task_requires_routed_ready_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            tasks_path = project / ".agent-os" / "tasks.yaml"
+            tasks_path.write_text(tasks_path.read_text(encoding="utf-8").replace("status: ready", "status: backlog", 1), encoding="utf-8")
+            blocked = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", check=False)
+            self.assertEqual(blocked.returncode, 1)
+            self.assertIn("expected one of", blocked.stderr)
+
+            tasks_path.write_text(
+                tasks_path.read_text(encoding="utf-8")
+                + "\n  - id: T999\n    title: Unknown work\n    type: unknown_type\n    status: ready\n",
+                encoding="utf-8",
+            )
+            unrouted = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T999", check=False)
+            self.assertEqual(unrouted.returncode, 1)
+            self.assertIn("routing failed", unrouted.stderr)
+
+    def test_complete_task_requires_passed_eval_and_updates_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli(
+                "run-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--summary",
+                "Run guarded completion.",
+                "--json",
+            )
+            run_id = json.loads(started.stdout)["run_id"]
+
+            unsafe_run = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                "../escape",
+                "--summary",
+                "Should fail.",
+                check=False,
+            )
+            self.assertEqual(unsafe_run.returncode, 1)
+            self.assertIn("run_id must not contain path separators", unsafe_run.stderr)
+
+            missing_eval = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Should fail.",
+                check=False,
+            )
+            self.assertEqual(missing_eval.returncode, 1)
+            self.assertIn("Status: passed", missing_eval.stderr)
+
+            run_dir = project / ".agent-os" / "runs" / run_id
+            (run_dir / "eval.md").write_text("# Eval\n\nStatus: passed\n", encoding="utf-8")
+            manual_eval = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Should fail.",
+                check=False,
+            )
+            self.assertEqual(manual_eval.returncode, 1)
+            self.assertIn("eval-task", manual_eval.stderr)
+
+            eval_result = self.run_cli(
+                "eval-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+            )
+            self.assertEqual(json.loads(eval_result.stdout)["status"], "passed")
+            completed = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Guarded task complete.",
+                "--json",
+            )
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["status"], "completed")
+            self.assertIn("status: completed", (run_dir / "run.yaml").read_text(encoding="utf-8"))
+            self.assertIn("status: completed", (project / ".agent-os" / "tasks.yaml").read_text(encoding="utf-8"))
+            self.assertIn("Guarded task complete", (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8"))
+
+    def test_eval_and_complete_require_declared_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            tasks_path = project / ".agent-os" / "tasks.yaml"
+            tasks_path.write_text(
+                tasks_path.read_text(encoding="utf-8")
+                + "\n  - id: T777\n"
+                + "    title: Missing output task\n"
+                + "    type: initialization\n"
+                + "    status: ready\n"
+                + "    outputs:\n"
+                + "      - docs/missing.md\n",
+                encoding="utf-8",
+            )
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T777", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            eval_result = self.run_cli(
+                "eval-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T777",
+                "--run-id",
+                run_id,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(eval_result.returncode, 2)
+            self.assertEqual(json.loads(eval_result.stdout)["status"], "failed")
+            run_dir = project / ".agent-os" / "runs" / run_id
+            (run_dir / "eval.md").write_text("# Eval\n\nGenerated By: knowledgeos eval-task\nStatus: passed\n", encoding="utf-8")
+            complete_result = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T777",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Should fail.",
+                check=False,
+            )
+            self.assertEqual(complete_result.returncode, 1)
+            self.assertIn("declared task outputs are missing", complete_result.stderr)
+
+    def test_receipt_writes_latest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            result = self.run_cli(
+                "receipt",
+                "--project-root",
+                str(project),
+                "--receipt-id",
+                "R001",
+                "--summary",
+                "Manual receipt.",
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+            self.assertTrue(Path(payload["path"]).exists())
+            self.assertIn("Manual receipt", (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8"))
+
+    def test_doctor_passes_initialized_project(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            global_root = Path(tmp) / "global-agent-fabric"
+            capability_root = Path(tmp) / "capability-layer"
+            global_root.mkdir()
+            capability_root.mkdir()
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Example",
+                "--global-root",
+                str(global_root),
+                "--capability-root",
+                str(capability_root),
+            )
+            result = self.run_cli("doctor", "--project-root", str(project), "--project-only", "--json")
+            payload = json.loads(result.stdout)
+            self.assertTrue(all(item["ok"] for item in payload), payload)
+            self.assertTrue(any(item["label"] == "phase_keys" for item in payload))
+            self.assertTrue(any(item["label"] == "workflow_router" for item in payload))
+            self.assertTrue(any(item["label"] == "tool_registry" for item in payload))
+
+    def test_doctor_rejects_router_without_eval_task_lifecycle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            global_root = Path(tmp) / "global-agent-fabric"
+            capability_root = Path(tmp) / "capability-layer"
+            global_root.mkdir()
+            capability_root.mkdir()
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Example",
+                "--global-root",
+                str(global_root),
+                "--capability-root",
+                str(capability_root),
+            )
+            router = project / ".agent-os" / "workflows" / "router.yaml"
+            router.write_text("\n".join(line for line in router.read_text(encoding="utf-8").splitlines() if "eval-task" not in line) + "\n", encoding="utf-8")
+            result = self.run_cli("doctor", "--project-root", str(project), "--project-only", "--json", check=False)
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertTrue(any(item["label"] == "workflow_router_lifecycle" and not item["ok"] for item in payload))
+
+    def test_doctor_detects_unresolved_placeholders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            result = self.run_cli("doctor", "--project-root", str(project), "--project-only", "--json", check=False)
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertTrue(any(item["label"] == "placeholders" and not item["ok"] for item in payload))
+            self.assertTrue(any(item["label"] == "fabric_link" and not item["ok"] for item in payload))
+
+    def test_reopen_task_archives_outputs_and_requires_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            output = project / ".agent-os" / "workspace.yaml"
+            result = self.run_cli(
+                "reopen-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--reason",
+                "rerun initialization",
+                "--archive-outputs",
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "ready")
+            self.assertTrue(output.exists(), "control-plane outputs should be protected from output cleanup")
+            self.assertIn("rerun initialization", (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8"))
+
+    def test_reset_project_soft_and_hard_modes_are_reversible_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            self.assertTrue((project / ".agent-os" / "runs" / json.loads(started.stdout)["run_id"]).exists())
+
+            soft = self.run_cli("reset-project", "--project-root", str(project), "--mode", "soft", "--json")
+            soft_payload = json.loads(soft.stdout)
+            self.assertEqual(soft_payload["mode"], "soft")
+            self.assertTrue((project / ".agent-os").exists())
+            self.assertFalse((project / ".agent-os" / "runs").exists())
+            self.assertTrue((project / ".knowledgeos-reset-backups").exists())
+
+            hard = self.run_cli("reset-project", "--project-root", str(project), "--mode", "hard", "--json")
+            hard_payload = json.loads(hard.stdout)
+            self.assertEqual(hard_payload["mode"], "hard")
+            self.assertFalse((project / ".agent-os").exists())
+            self.assertTrue((project / ".knowledgeos-reset-backups").exists())
+
+    def test_migrate_legacy_project_writes_plan_and_applies_safe_moves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "LegacyProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Legacy")
+            (project / "前期材料").mkdir()
+            (project / "code").mkdir()
+            (project / "capability-layer").mkdir()
+            (project / "global-agent-fabric").mkdir()
+            (project / "loose_note.md").write_text("note\n", encoding="utf-8")
+            plan = self.run_cli("migrate-legacy-project", "--project-root", str(project), "--write-plan", "--json")
+            payload = json.loads(plan.stdout)
+            targets = {item["target"] for item in payload["plan"]}
+            sources = {item["source"] for item in payload["plan"]}
+            self.assertIn("materials/raw/前期材料", targets)
+            self.assertIn("src/code", targets)
+            self.assertNotIn("capability-layer", sources)
+            self.assertNotIn("global-agent-fabric", sources)
+            self.assertTrue((project / ".agent-os" / "inbox" / "legacy-reorganization-plan.md").exists())
+
+            applied = self.run_cli("migrate-legacy-project", "--project-root", str(project), "--apply", "--json")
+            applied_payload = json.loads(applied.stdout)
+            self.assertTrue(any(item.get("action") == "move" for item in applied_payload["actions"]))
+            self.assertTrue((project / "materials" / "raw" / "前期材料").exists())
+            self.assertTrue((project / "src" / "code").exists())
+            self.assertTrue((project / "docs" / "loose_note.md").exists())
+
+    def test_route_task_resolves_initialized_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            result = self.run_cli("route-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "routed")
+            self.assertEqual(payload["task_type"], "initialization")
+            self.assertIn("doctor --project-root .", payload["route_order"])
+
+    def test_route_task_requires_human_triage_for_unknown_type(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            result = self.run_cli(
+                "route-task",
+                "--project-root",
+                str(project),
+                "--task-type",
+                "unregistered_task_type",
+                "--json",
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "human_triage_required")
+
+    def test_tool_registry_reports_configured_tools(self):
+        result = self.run_cli("tool-registry", "--project-root", str(ROOT), "--check-paths", "--json")
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"], payload)
+        self.assertGreaterEqual(payload["counts"].get("mcp", 0), 1)
+        self.assertGreaterEqual(payload["counts"].get("skill", 0), 1)
+        self.assertGreaterEqual(payload["counts"].get("orchestrator", 0), 1)
+
+    def test_tool_registry_rejects_inline_secret_markers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            registry = project / ".agent-os" / "tool-registry.yaml"
+            registry.write_text(
+                "tools:\n"
+                "  - id: bad-tool\n"
+                "    kind: mcp\n"
+                "    status: enabled\n"
+                "    scope: docs\n"
+                "    invocation: capability_match\n"
+                "    human_gate: false\n"
+                "    token: API_KEY=bad\n",
+                encoding="utf-8",
+            )
+            result = self.run_cli("tool-registry", "--project-root", str(project), "--json", check=False)
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertTrue(any(item["label"] == "tool_registry_secret" and not item["ok"] for item in payload["checks"]))
+
+    def test_agent_guide_outputs_operational_checklist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            result = self.run_cli("agent-guide", "--project-root", str(project))
+            self.assertIn("KnowledgeOS Agent Guide", result.stdout)
+            self.assertIn("doctor --project-root", result.stdout)
+            self.assertIn("route-task", result.stdout)
+            self.assertIn("tool-registry", result.stdout)
+            self.assertIn("check-route-write", result.stdout)
+            self.assertIn("complete-task", result.stdout)
+
+    def test_dispatch_task_prioritizes_branch_builder_and_consultation(self):
+        result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "dispatch_ready")
+        stages = [step["stage"] for step in payload["steps"]]
+        self.assertIn("branch_builder", stages)
+        self.assertIn("orchestrator", stages)
+        self.assertIn("mcp", stages)
+        self.assertIn("skill", stages)
+        self.assertLess(stages.index("branch_builder"), stages.index("orchestrator"))
+        self.assertLess(stages.index("orchestrator"), stages.index("mcp"))
+        self.assertLess(stages.index("mcp"), stages.index("skill"))
+        self.assertIn("execute", payload["dispatch_policy"]["consultation_checkpoints"])
+        self.assertIn("complete", payload["dispatch_policy"]["consultation_checkpoints"])
+        self.assertTrue(payload["agent_opinion_required"])
+        self.assertIn("Pause before execution", payload["agent_opinion_prompt"])
+
+    def test_dispatch_task_requires_route(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            tasks_path = project / ".agent-os" / "tasks.yaml"
+            tasks_path.write_text(
+                tasks_path.read_text(encoding="utf-8")
+                + "\n  - id: T999\n    title: Unknown work\n    type: unknown_type\n    status: ready\n",
+                encoding="utf-8",
+            )
+            result = self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", "T999", "--json", check=False)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(json.loads(result.stdout)["status"], "human_triage_required")
+
+    def test_guardrail_scenario_runner_blocks_distracted_agent_paths(self):
+        result = subprocess.run(
+            [str(ROOT / "examples" / "scenarios" / "run_guardrail_scenarios.sh")],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, f"stdout={result.stdout}\nstderr={result.stderr}")
+        self.assertIn("CHECKPOINT COMPLETE", result.stdout)
+        self.assertIn("raw-material-mutation-blocked", result.stdout)
+        self.assertIn("route-output-denied", result.stdout)
+        self.assertIn("unrouted-task-human-triage", result.stdout)
+        self.assertIn("completion-without-eval-blocked", result.stdout)
+        self.assertIn("failed: 0", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

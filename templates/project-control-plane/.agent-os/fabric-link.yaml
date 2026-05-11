@@ -1,0 +1,26 @@
+shared_fabric:
+  governance_root: CHANGE_ME_GLOBAL_AGENT_FABRIC_ROOT
+  capability_root: CHANGE_ME_KNOWLEDGEOS_CAPABILITY_ROOT
+
+hooks:
+  before_task: hooks/before-task.sh
+  log_phase: hooks/log-phase.sh
+  after_task: hooks/after-task.sh
+
+runtime_contract:
+  boot_required: true
+  phase_logging_required: true
+  postflight_required: true
+
+phase_keys:
+  - route
+  - plan
+  - review
+  - dispatch
+  - execute
+  - report
+
+writeback:
+  local_receipts: .agent-os/receipts/
+  local_runs: .agent-os/runs/
+  local_handoff: .agent-os/handoffs/current.md

@@ -1,0 +1,20 @@
+capabilities:
+  mcp:
+    source: external_shared_fabric_registry
+    policy: allow_by_task_intent
+    human_gate_for:
+      - browser_automation
+      - private_account_access
+      - external_write
+
+  skills:
+    source: external_shared_fabric_registry
+    preferred_order:
+      - generated_shared_fabric_skills
+      - curated_local_skills
+      - awesome_skills_by_index_only
+
+  subagents:
+    orchestrator: maestro_or_native_runtime
+    execution_mode: ask
+    require_role_specific_dispatch: true

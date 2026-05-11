@@ -1,0 +1,142 @@
+# KnowledgeOS tool registry.
+# This is observable configuration metadata, not an execution script.
+tools:
+  - id: chrome-devtools
+    kind: mcp
+    status: enabled
+    scope: browser-automation
+    invocation: capability_match
+    task_fit: research_task,documentation_task,release_task
+    capability_fit: browser_automation,external_docs
+    human_gate: true
+    source_path: templates/governance-core/mcp/servers.yaml
+
+  - id: context7
+    kind: mcp
+    status: enabled
+    scope: docs
+    invocation: capability_match
+    task_fit: capability_orchestration,documentation_task,engineering_change,research_task
+    capability_fit: official_docs,external_docs
+    human_gate: false
+    source_path: templates/governance-core/mcp/servers.yaml
+
+  - id: maestro
+    kind: orchestrator
+    status: enabled
+    scope: subagent-orchestration
+    invocation: medium_complex_tasks
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,security_audit,architecture_design
+    capability_fit: subagent_orchestration,parallel_execution,expert_review
+    human_gate: true
+    execution_mode: ask
+    source_path: external:maestro
+
+  - id: markitdown
+    kind: mcp
+    status: enabled
+    scope: document-conversion
+    invocation: capability_match
+    task_fit: knowledge_structuring,research_task,documentation_task
+    capability_fit: document_conversion,source_extraction
+    human_gate: false
+    source_path: templates/governance-core/mcp/servers.yaml
+
+  - id: mempalace
+    kind: memory
+    status: recommended
+    scope: process-memory
+    invocation: postflight_process_memory
+    task_fit: "*"
+    capability_fit: process_memory,postflight_memory
+    human_gate: false
+    source_path: templates/governance-core/mcp/servers.yaml
+
+  - id: notebooklm
+    kind: mcp
+    status: enabled
+    scope: research
+    invocation: capability_match
+    task_fit: research_task,knowledge_structuring
+    capability_fit: research,notebook_sources
+    human_gate: false
+    source_path: templates/governance-core/mcp/servers.yaml
+
+  - id: zotero
+    kind: mcp
+    status: enabled
+    scope: literature
+    invocation: capability_match
+    task_fit: research_task,knowledge_structuring,report_task
+    capability_fit: literature,citation,evidence
+    human_gate: false
+    source_path: templates/governance-core/mcp/servers.yaml
+
+  - id: qgis
+    kind: mcp
+    status: disabled
+    scope: gis
+    invocation: capability_match_when_enabled
+    human_gate: true
+    source_path: templates/governance-core/mcp/servers.yaml
+
+  - id: generated-shared-fabric-skills
+    kind: skill
+    status: configured
+    scope: shared-fabric-generated-skills
+    invocation: task_intent
+    task_fit: "*"
+    capability_fit: shared_fabric,generated_skill
+    human_gate: false
+    source_path: templates/governance-core/skills/generated
+
+  - id: curated-current-workflow-skills
+    kind: skill
+    status: configured
+    scope: curated-local-skills
+    invocation: task_intent
+    task_fit: capability_orchestration,engineering_change,knowledge_structuring,report_task
+    capability_fit: curated_method,current_workflow
+    human_gate: false
+    source_path: templates/capability-layer/skills/curated/current-workflow
+
+  - id: curated-top50-current-workflow-skills
+    kind: skill
+    status: indexed
+    scope: curated-local-skills
+    invocation: task_intent
+    task_fit: capability_orchestration,engineering_change,knowledge_structuring,report_task
+    capability_fit: curated_method,current_workflow
+    human_gate: false
+    source_path: templates/capability-layer/skills/curated/top50-current-workflow
+
+  - id: nature-skills
+    kind: skill
+    status: configured
+    scope: domain-skills
+    invocation: task_intent
+    task_fit: research_task,knowledge_structuring,report_task
+    capability_fit: domain_skill,ecology,life_science
+    human_gate: false
+    source_path: templates/capability-layer/skills
+
+  - id: fabric-global-workflows
+    kind: workflow
+    status: configured
+    scope: antigravity-global-workflows
+    invocation: slash_or_runtime_workflow
+    task_fit: capability_orchestration,workflow_routing,tool_registry
+    capability_fit: global_workflow
+    human_gate: false
+    source_path: templates/capability-layer/workflows/global
+
+  - id: branch-builder
+    kind: subagent
+    status: configured
+    scope: virtual-task-branch-planning
+    invocation: once_per_medium_or_complex_root_task
+    task_fit: capability_orchestration,executable_control_plane,workflow_routing,tool_registry,engineering_change,research_task,knowledge_structuring
+    capability_fit: virtual_branch_planning,dispatch_planning
+    human_gate: false
+    execution_mode: ask
+    source_path: templates/governance-core/skills/generated/branch-builder

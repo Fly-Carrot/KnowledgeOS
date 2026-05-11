@@ -1,0 +1,53 @@
+# KnowledgeOS dispatch policy template.
+# Keep lifecycle fixed; customize capability selection through this file.
+dispatch_policy:
+  default_order:
+    - branch_builder
+    - orchestrator
+    - subagent
+    - mcp
+    - skill
+    - script
+    - human_gate
+
+  always_consult_before:
+    - execute
+    - complete
+
+  consult_for_risks:
+    - external_write
+    - release
+    - destructive_change
+
+  human_gate_for:
+    - browser_automation
+    - private_account_access
+    - external_write
+    - release
+    - destructive_change
+
+  branch_builder_task_types:
+    - engineering_change
+    - research_task
+    - knowledge_structuring
+
+  subagent_task_types:
+    - engineering_change
+    - architecture_design
+    - security_audit
+
+  mcp_task_types:
+    - capability_orchestration
+    - research_task
+    - knowledge_structuring
+    - documentation_task
+
+  skill_task_types:
+    - knowledge_structuring
+    - report_task
+    - documentation_task
+    - engineering_change
+
+  script_task_types:
+    - engineering_eval
+    - release_task

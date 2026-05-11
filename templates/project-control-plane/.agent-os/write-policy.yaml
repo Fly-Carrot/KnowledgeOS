@@ -1,0 +1,30 @@
+write_policy:
+  immutable:
+    - materials/raw/**
+    - data/raw/**
+
+  controlled:
+    - AGENTS.md
+    - .agent-os/**
+    - "*.md"
+    - knowledge/**
+    - src/**
+    - tests/**
+    - notebooks/**
+    - scripts/**
+    - outputs/**
+    - reports/drafts/**
+    - docs/**
+
+  forbidden_without_human_gate:
+    - "**/.env"
+    - "**/*secret*"
+    - "**/*secrets*"
+    - reports/final/**
+
+  require_receipt_for:
+    - "*.md"
+    - knowledge/**
+    - src/**
+    - tests/**
+    - reports/**

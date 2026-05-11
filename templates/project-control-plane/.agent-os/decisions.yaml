@@ -1,0 +1,8 @@
+decisions:
+  - id: D001
+    date: CHANGE_ME_DATE
+    decision: "Keep raw materials immutable."
+    rationale: "Original evidence should remain recoverable."
+    applies_to:
+      - materials/raw/
+      - data/raw/

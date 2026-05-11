@@ -1,0 +1,21 @@
+shared_fabric:
+  governance_root: templates/governance-core
+  capability_root: templates/capability-layer
+
+runtime_contract:
+  boot_required: true
+  phase_logging_required: true
+  postflight_required: true
+
+phase_keys:
+  - route
+  - plan
+  - review
+  - dispatch
+  - execute
+  - report
+
+writeback:
+  local_receipts: .agent-os/receipts/
+  local_runs: .agent-os/runs/
+  local_handoff: .agent-os/handoffs/current.md

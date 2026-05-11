@@ -1,0 +1,19 @@
+project:
+  id: KOS001
+  name: KnowledgeOS
+  status: active
+  goal: >
+    Build an intent-driven OS control plane for knowledge work and development agents,
+    with a clean public version and a separate local migration path for the existing
+    Agent Shared Fabric workflow.
+  current_phase: skeleton
+  primary_outputs:
+    - public KnowledgeOS documentation
+    - reusable project templates
+    - local migration inventory
+    - write-guard and orchestration model
+  acceptance_criteria:
+    - public docs do not expose secrets
+    - local migration state is clearly separated
+    - Agent Shared Fabric is treated as the KnowledgeOS kernel module
+    - every substantial build step updates the live report

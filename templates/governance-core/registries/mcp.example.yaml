@@ -1,0 +1,2 @@
+# Minimal MCP registry. All concrete servers are opt-in.
+servers: []
