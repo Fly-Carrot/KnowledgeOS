@@ -1,0 +1,85 @@
+<svg width="1280" height="520" viewBox="0 0 1280 520" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">KnowledgeOS hero diagram</title>
+  <desc id="desc">Neon dashboard style architecture banner for an intent-driven operating layer for AI agents.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#020617"/>
+      <stop offset="0.48" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(280 90) rotate(42) scale(420 240)">
+      <stop stop-color="#00F5FF" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#00F5FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(1000 430) rotate(130) scale(520 260)">
+      <stop stop-color="#7C3AED" stop-opacity="0.46"/>
+      <stop offset="1" stop-color="#7C3AED" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="line" x1="160" y1="260" x2="1120" y2="260" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00F5FF"/>
+      <stop offset="0.5" stop-color="#A3E635"/>
+      <stop offset="1" stop-color="#F97316"/>
+    </linearGradient>
+    <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.2  0 0 0 0 0.9  0 0 0 0 1  0 0 0 .65 0"/>
+      <feBlend in="SourceGraphic" mode="screen"/>
+    </filter>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#334155" stroke-width="1" opacity="0.35"/>
+    </pattern>
+  </defs>
+
+  <rect width="1280" height="520" rx="34" fill="url(#bg)"/>
+  <rect width="1280" height="520" rx="34" fill="url(#grid)" opacity="0.42"/>
+  <rect width="1280" height="520" rx="34" fill="url(#glowA)"/>
+  <rect width="1280" height="520" rx="34" fill="url(#glowB)"/>
+
+  <path d="M160 300 C260 210 340 210 440 300 S620 390 720 300 900 210 1120 300" stroke="url(#line)" stroke-width="4" opacity="0.9" filter="url(#softGlow)"/>
+  <path d="M190 360 L1090 360" stroke="#334155" stroke-width="1.5" stroke-dasharray="10 12" opacity="0.75"/>
+
+  <g transform="translate(72 64)">
+    <text x="0" y="0" fill="#E5E7EB" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="700" letter-spacing="4">INTENT-DRIVEN AGENT OS</text>
+    <text x="0" y="72" fill="#F8FAFC" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="78" font-weight="900">KnowledgeOS</text>
+    <text x="4" y="118" fill="#A7F3D0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22">natural language shell -> route -> guard -> eval -> receipt</text>
+  </g>
+
+  <g transform="translate(75 238)">
+    <rect x="0" y="0" width="258" height="122" rx="24" fill="#0B1220" stroke="#00F5FF" stroke-width="1.6" opacity="0.92"/>
+    <text x="24" y="42" fill="#67E8F9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="800">CONTROL PLANE</text>
+    <text x="24" y="78" fill="#E2E8F0" font-family="ui-sans-serif, system-ui" font-size="18" font-weight="700">.agent-os/</text>
+    <text x="24" y="104" fill="#94A3B8" font-family="ui-sans-serif, system-ui" font-size="14">tasks, routes, decisions, evals</text>
+  </g>
+
+  <g transform="translate(375 238)">
+    <rect x="0" y="0" width="258" height="122" rx="24" fill="#111827" stroke="#A3E635" stroke-width="1.6" opacity="0.92"/>
+    <text x="24" y="42" fill="#BEF264" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="800">KERNEL MODULE</text>
+    <text x="24" y="78" fill="#E2E8F0" font-family="ui-sans-serif, system-ui" font-size="18" font-weight="700">shared fabric</text>
+    <text x="24" y="104" fill="#94A3B8" font-family="ui-sans-serif, system-ui" font-size="14">boot, phase logs, memory, sync</text>
+  </g>
+
+  <g transform="translate(675 238)">
+    <rect x="0" y="0" width="258" height="122" rx="24" fill="#111827" stroke="#818CF8" stroke-width="1.6" opacity="0.92"/>
+    <text x="24" y="42" fill="#A5B4FC" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="800">CAPABILITY BUS</text>
+    <text x="24" y="78" fill="#E2E8F0" font-family="ui-sans-serif, system-ui" font-size="18" font-weight="700">MCP + skills</text>
+    <text x="24" y="104" fill="#94A3B8" font-family="ui-sans-serif, system-ui" font-size="14">workflows, subagents, tools</text>
+  </g>
+
+  <g transform="translate(975 238)">
+    <rect x="0" y="0" width="230" height="122" rx="24" fill="#111827" stroke="#F97316" stroke-width="1.6" opacity="0.92"/>
+    <text x="24" y="42" fill="#FDBA74" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" font-weight="800">WORKBENCH</text>
+    <text x="24" y="78" fill="#E2E8F0" font-family="ui-sans-serif, system-ui" font-size="18" font-weight="700">future desktop</text>
+    <text x="24" y="104" fill="#94A3B8" font-family="ui-sans-serif, system-ui" font-size="14">graph, receipts, runtime view</text>
+  </g>
+
+  <g transform="translate(74 430)">
+    <rect x="0" y="0" width="170" height="36" rx="18" fill="#022C22" stroke="#34D399" opacity="0.95"/>
+    <text x="22" y="24" fill="#D1FAE5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="800">doctor: OK</text>
+    <rect x="190" y="0" width="178" height="36" rx="18" fill="#172554" stroke="#60A5FA" opacity="0.95"/>
+    <text x="212" y="24" fill="#DBEAFE" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="800">26 unit tests</text>
+    <rect x="388" y="0" width="214" height="36" rx="18" fill="#312E81" stroke="#A5B4FC" opacity="0.95"/>
+    <text x="410" y="24" fill="#E0E7FF" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="800">14 guardrail checks</text>
+    <rect x="622" y="0" width="244" height="36" rx="18" fill="#431407" stroke="#FB923C" opacity="0.95"/>
+    <text x="644" y="24" fill="#FFEDD5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="800">route-bound execution</text>
+  </g>
+</svg>
