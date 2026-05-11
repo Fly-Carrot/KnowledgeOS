@@ -22,6 +22,10 @@
 
 ---
 
+**Navigate:** [Architecture](docs/agentos-architecture.md) | [Quickstart](docs/quickstart.md) | [CLI](docs/executable-control-plane.md) | [Guardrails](docs/doctor-guardrails.md) | [Router](docs/workflow-router.md) | [Tool Registry](docs/tool-registry.md) | [Reset + Migration](docs/reset-and-migration.md)
+
+---
+
 ## The Short Version
 
 KnowledgeOS turns an ordinary project folder into an **observable agent workspace**.
