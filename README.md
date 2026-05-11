@@ -4,6 +4,8 @@ KnowledgeOS is an intent-driven operating layer for knowledge work and software 
 
 It is not a replacement for your editor, terminal, Obsidian vault, or agent runtime. It is the control plane that makes them behave like one observable system.
 
+Functional references: [AgentOS Architecture](docs/agentos-architecture.md), [Executable Control Plane](docs/executable-control-plane.md), [Doctor Guardrails](docs/doctor-guardrails.md), [Workflow Router](docs/workflow-router.md), [Tool Registry](docs/tool-registry.md), [Route-Bound Execution Guard](docs/route-bound-execution-guard.md), [Capability-Oriented Orchestration](docs/capability-orchestration.md), and [Reset And Legacy Migration](docs/reset-and-migration.md).
+
 ## What It Does
 
 KnowledgeOS gives agents a shared way to:
@@ -104,5 +106,3 @@ make smoke
 `doctor --summary` is the low-token health check for routine agent loops. It prints aggregate pass/fail counts and only expands failed checks. The full `doctor` output remains available when you need detailed evidence.
 
 Executable guardrail scenarios live under [examples/scenarios](examples/scenarios). They create temporary projects and verify that distracted-agent mistakes are blocked by doctor, route, write, dispatch, and eval gates.
-
-Functional references: [AgentOS Architecture](docs/agentos-architecture.md), [Executable Control Plane](docs/executable-control-plane.md), [Doctor Guardrails](docs/doctor-guardrails.md), [Workflow Router](docs/workflow-router.md), [Tool Registry](docs/tool-registry.md), [Route-Bound Execution Guard](docs/route-bound-execution-guard.md), [Capability-Oriented Orchestration](docs/capability-orchestration.md), and [Reset And Legacy Migration](docs/reset-and-migration.md).
