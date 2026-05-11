@@ -575,6 +575,60 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertTrue((project / "src" / "code").exists())
             self.assertTrue((project / "docs" / "loose_note.md").exists())
 
+    def test_archive_legacy_project_plans_and_applies_cold_storage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ArchiveProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Archive")
+            (project / "docs").mkdir(exist_ok=True)
+            (project / "outputs").mkdir(exist_ok=True)
+            (project / "docs" / "old-draft.md").write_text("old draft\n", encoding="utf-8")
+            (project / "outputs" / "results_old").mkdir()
+            (project / "src").mkdir(exist_ok=True)
+            (project / "src" / "active.py").write_text("print('active')\n", encoding="utf-8")
+
+            plan = self.run_cli("archive-legacy-project", "--project-root", str(project), "--write-plan", "--json")
+            payload = json.loads(plan.stdout)
+            targets = {item["target"] for item in payload["plan"] if item["action"] == "archive"}
+            self.assertIn("archive/superseded/docs/old-draft.md", targets)
+            self.assertIn("archive/generated/outputs/results_old", targets)
+            self.assertNotIn("archive/legacy/src/active.py", targets)
+            self.assertTrue((project / ".agent-os" / "inbox" / "cold-archive-plan.md").exists())
+
+            applied = self.run_cli("archive-legacy-project", "--project-root", str(project), "--apply", "--json")
+            applied_payload = json.loads(applied.stdout)
+            self.assertTrue(any(item.get("action") == "archive" for item in applied_payload["actions"]))
+            self.assertTrue((project / "archive" / "superseded" / "docs" / "old-draft.md").exists())
+            self.assertTrue((project / "archive" / "generated" / "outputs" / "results_old").exists())
+            self.assertTrue((project / "src" / "active.py").exists())
+
+            read_policy = (project / ".agent-os" / "read-policy.yaml").read_text(encoding="utf-8")
+            self.assertIn("archive/**", read_policy)
+
+    def test_archive_legacy_project_supports_explicit_include_and_skips_control_plane(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ArchiveProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Archive")
+            (project / "docs").mkdir(exist_ok=True)
+            (project / "docs" / "candidate.md").write_text("candidate\n", encoding="utf-8")
+
+            result = self.run_cli(
+                "archive-legacy-project",
+                "--project-root",
+                str(project),
+                "--include",
+                "docs/candidate.md",
+                "--include",
+                ".agent-os/tasks.yaml",
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+            archive_items = [item for item in payload["plan"] if item["action"] == "archive"]
+            skip_items = [item for item in payload["plan"] if item["action"] == "skip"]
+            self.assertEqual(archive_items[0]["target"], "archive/superseded/docs/candidate.md")
+            self.assertTrue(any(item["source"] == ".agent-os/tasks.yaml" for item in skip_items))
+
     def test_route_task_resolves_initialized_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
@@ -647,6 +701,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("tool-registry", result.stdout)
             self.assertIn("check-route-write", result.stdout)
             self.assertIn("complete-task", result.stdout)
+            self.assertIn("archive-legacy-project", result.stdout)
 
     def test_dispatch_task_prioritizes_branch_builder_and_consultation(self):
         result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")

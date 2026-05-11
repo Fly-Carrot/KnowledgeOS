@@ -142,6 +142,7 @@ workflows:
       - .agent-os/workspace.yaml
       - .agent-os/tool-registry.yaml
       - .agent-os/startup-prompt.md
+      - .agent-os/read-policy.yaml
       - .agent-os/write-policy.yaml
       - .agent-os/workflows/
       - templates/
@@ -179,3 +180,31 @@ workflows:
     notes:
       - Dispatch is observable and policy-driven, not hidden tool improvisation.
       - Agents must pause at consultation checkpoints, state their recommendation, and ask before proceeding.
+
+  archive_management:
+    route_order:
+      - doctor --project-root .
+      - route-task --project-root . --task-id <task-id>
+      - archive-legacy-project --project-root . --write-plan
+      - check-route-write --project-root . --task-id <task-id> --path archive/
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: archive_task
+    human_gate: explicit_archive_approval
+    allowed_outputs:
+      - archive/
+      - .agent-os/inbox/
+      - .agent-os/read-policy.yaml
+      - .agent-os/write-policy.yaml
+      - .agent-os/tasks.yaml
+      - .agent-os/evals.yaml
+      - .agent-os/workflows/
+      - templates/
+      - docs/
+      - knowledgeos/
+      - tests/
+      - README.md
+    notes:
+      - Archive is cold storage, not default context.
+      - Move files only after a reviewable plan or explicit human include.

@@ -39,3 +39,22 @@ workflows:
     notes:
       - Preserve raw materials and record assumptions or uncertain claims.
       - Keep major claims traceable to source material or mark them for human review.
+  archive_management:
+    route_order:
+      - doctor --project-root .
+      - route-task --project-root . --task-id <task-id>
+      - archive-legacy-project --project-root . --write-plan
+      - check-route-write --project-root . --task-id <task-id> --path archive/
+      - run-task --project-root . --task-id <task-id>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: archive_task
+    human_gate: explicit_archive_approval
+    allowed_outputs:
+      - archive/
+      - .agent-os/inbox/
+      - .agent-os/read-policy.yaml
+      - .agent-os/write-policy.yaml
+    notes:
+      - Archive is cold storage, not default context.
+      - Move files only after a reviewable plan or explicit human include.

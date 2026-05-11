@@ -12,6 +12,7 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
    - `.agent-os/decisions.yaml`
    - `.agent-os/evals.yaml`
    - `.agent-os/capabilities.yaml`
+   - `.agent-os/read-policy.yaml`
    - `.agent-os/write-policy.yaml`
 
 3. Run checks before acting.
@@ -22,11 +23,13 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
    - `knowledgeos route-task --project-root . --task-id <task-id>`
    - `knowledgeos dispatch-task --project-root . --task-id <task-id>`
    - `knowledgeos run-task --project-root . --task-id <task-id>`
+   - `knowledgeos archive-legacy-project --project-root . --write-plan` before cold-archiving old or superseded content.
 
 5. Never bypass the write guard.
    - Immutable paths are denied.
    - Human-gated paths require explicit approval.
    - Unclassified paths should be triaged before mutation.
+   - `archive/**` is cold storage and is not default context.
 
 6. Keep receipts local and concise.
    - Update `.agent-os/runs/RUN-*/receipt.md`.

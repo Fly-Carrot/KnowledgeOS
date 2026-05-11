@@ -22,7 +22,7 @@
 
 ---
 
-**Navigate:** [Architecture](docs/agentos-architecture.md) | [Quickstart](docs/quickstart.md) | [CLI](docs/executable-control-plane.md) | [Guardrails](docs/doctor-guardrails.md) | [Router](docs/workflow-router.md) | [Tool Registry](docs/tool-registry.md) | [Reset + Migration](docs/reset-and-migration.md)
+**Navigate:** [Architecture](docs/agentos-architecture.md) | [Quickstart](docs/quickstart.md) | [CLI](docs/executable-control-plane.md) | [Guardrails](docs/doctor-guardrails.md) | [Router](docs/workflow-router.md) | [Tool Registry](docs/tool-registry.md) | [Reset + Migration](docs/reset-and-migration.md) | [Archive Policy](docs/archive-policy.md)
 
 ---
 
@@ -35,6 +35,7 @@ Instead of letting an AI agent improvise from chat memory, KnowledgeOS gives eve
 - a project control plane under `.agent-os/`;
 - a fixed lifecycle for tasks, routes, runs, evals, receipts, and handoffs;
 - a write guard that protects raw materials and sensitive paths;
+- a cold archive policy for historical files that should be stored but not read by default;
 - a capability bus for MCP servers, skills, workflows, subagents, and orchestrators;
 - a kernel module for boot discipline, phase logs, memory lanes, and postflight sync;
 - a future-ready workbench model for visualizing the whole system.
@@ -213,6 +214,7 @@ examples/scenarios/         distracted-agent guardrail tests
 templates/governance-core/  minimal kernel module template
 templates/capability-layer/ MCP, skills, workflows, subagents, agents, registries
 templates/project-control-plane/ project bootstrap template
+templates/project-control-plane/archive/ cold-storage convention for superseded project material
 docs/                       architecture, guardrails, routing, reset, orchestration
 ```
 
@@ -256,6 +258,7 @@ The scenario suite verifies that distracted-agent mistakes are blocked by doctor
 - [Route-Bound Execution Guard](docs/route-bound-execution-guard.md)
 - [Capability-Oriented Orchestration](docs/capability-orchestration.md)
 - [Reset And Legacy Migration](docs/reset-and-migration.md)
+- [Cold Archive Policy](docs/archive-policy.md)
 
 ---
 

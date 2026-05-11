@@ -34,3 +34,11 @@ evals:
       - dispatch_plan_is_observable
       - consultation_checkpoints_are_present
     human_gate: orchestration_policy_review
+
+  archive_task:
+    required_checks:
+      - cold_archive_plan_exists
+      - archive_paths_are_cold_storage
+      - no_archive_content_read_by_default
+      - apply_requires_human_review
+    human_gate: explicit_archive_approval

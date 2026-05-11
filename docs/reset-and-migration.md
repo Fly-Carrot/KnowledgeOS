@@ -103,6 +103,41 @@ Apply is conservative:
 
 It moves only confidently classified top-level entries and skips any target conflict. Raw materials remain protected by the write policy after migration.
 
+## Cold Archive For Historical Leftovers
+
+Use this when an old project contains previous drafts, old code, obsolete generated outputs, or other material that should be retained but removed from default agent context.
+
+```bash
+./bin/knowledgeos archive-legacy-project \
+  --project-root /path/to/project \
+  --write-plan
+```
+
+The command writes a review-first plan to:
+
+```text
+.agent-os/inbox/cold-archive-plan.md
+```
+
+Apply is separate and reversible by normal filesystem move semantics:
+
+```bash
+./bin/knowledgeos archive-legacy-project \
+  --project-root /path/to/project \
+  --apply
+```
+
+The archive command moves strong legacy/archive candidates into:
+
+```text
+archive/legacy/
+archive/generated/
+archive/superseded/
+archive/trash-candidates/
+```
+
+`archive/**` is cold storage. Agents should not read it during default context loading; they should inspect it only after explicit human request or through an `archive_management` route.
+
 ## Natural-Language Use
 
 A user can say:
@@ -120,3 +155,11 @@ Please reorganize this old project into KnowledgeOS structure.
 ```
 
 The agent should run `migrate-legacy-project --write-plan`, present the plan, and only use `--apply` after approval.
+
+A user can say:
+
+```text
+Please move old leftovers into cold archive so agents stop treating them as active context.
+```
+
+The agent should run `archive-legacy-project --write-plan`, present the plan, and only use `--apply` after approval.

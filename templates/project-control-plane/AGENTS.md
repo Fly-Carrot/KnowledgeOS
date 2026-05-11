@@ -14,6 +14,7 @@ Before substantial work:
 During substantial work:
 
 - Follow the phase lifecycle: `route -> plan -> review -> dispatch -> execute -> report`.
+- Check `.agent-os/read-policy.yaml` before using broad project context; `archive/**` is cold storage and is not default context.
 - Check `.agent-os/write-policy.yaml` before writing.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN route-task --project-root . --task-id <task-id>` before dispatching work.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN check-route-write --project-root . --task-id <task-id> --path <planned-path>` before planned mutations.
@@ -38,6 +39,7 @@ Reset and migration:
 - If the user asks to rerun an unsatisfactory task, use `CHANGE_ME_KNOWLEDGEOS_BIN reopen-task --project-root . --task-id <task-id> --reason "<reason>"` before rerunning.
 - If the user asks to reset the project OS state, run `CHANGE_ME_KNOWLEDGEOS_BIN reset-project --project-root . --mode <soft|hard> --dry-run` first and show the planned actions.
 - If the user asks to reorganize an old project, run `CHANGE_ME_KNOWLEDGEOS_BIN migrate-legacy-project --project-root . --write-plan` first; use `--apply` only after human approval.
+- If the user asks to store old or superseded project content without reading it by default, run `CHANGE_ME_KNOWLEDGEOS_BIN archive-legacy-project --project-root . --write-plan` first; use `--apply` only after human approval.
 
 Never:
 

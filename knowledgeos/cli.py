@@ -35,6 +35,7 @@ REQUIRED_PUBLIC_FILES = [
     "docs/route-bound-execution-guard.md",
     "docs/capability-orchestration.md",
     "docs/reset-and-migration.md",
+    "docs/archive-policy.md",
     "templates/governance-core/README.md",
     "templates/governance-core/STRUCTURE-CHECK.md",
     "templates/governance-core/rules/global.md",
@@ -66,7 +67,9 @@ REQUIRED_PUBLIC_FILES = [
     "templates/project-control-plane/.agent-os/project.yaml",
     "templates/project-control-plane/.agent-os/startup-prompt.md",
     "templates/project-control-plane/.agent-os/tasks.yaml",
+    "templates/project-control-plane/.agent-os/read-policy.yaml",
     "templates/project-control-plane/.agent-os/write-policy.yaml",
+    "templates/project-control-plane/archive/README.md",
     "templates/project-control-plane/.agent-os/capabilities.yaml",
     "templates/project-control-plane/.agent-os/dispatch-policy.yaml",
     "templates/project-control-plane/.agent-os/workflows/router.yaml",
@@ -85,6 +88,7 @@ REQUIRED_PROJECT_FILES = [
     ".agent-os/fabric-link.yaml",
     ".agent-os/capabilities.yaml",
     ".agent-os/dispatch-policy.yaml",
+    ".agent-os/read-policy.yaml",
     ".agent-os/write-policy.yaml",
     ".agent-os/workflows/router.yaml",
     ".agent-os/tool-registry.yaml",
@@ -103,6 +107,12 @@ WRITE_POLICY_SECTIONS = {
     "controlled",
     "forbidden_without_human_gate",
     "require_receipt_for",
+}
+READ_POLICY_SECTIONS = {
+    "default_context",
+    "cold_storage",
+    "require_explicit_human_request",
+    "deny_indexing",
 }
 
 EXPECTED_PHASE_KEYS = ["route", "plan", "review", "dispatch", "execute", "report"]
@@ -132,6 +142,7 @@ REQUIRED_AGENT_GUIDE_FILES = [
     ".agent-os/evals.yaml",
     ".agent-os/capabilities.yaml",
     ".agent-os/dispatch-policy.yaml",
+    ".agent-os/read-policy.yaml",
     ".agent-os/write-policy.yaml",
     ".agent-os/tool-registry.yaml",
 ]
@@ -155,6 +166,7 @@ CANONICAL_PROJECT_DIRS = {
     ".git",
     ".knowledgeos-local",
     ".knowledgeos-reset-backups",
+    "archive",
     "bin",
     "capability-layer",
     "materials",
@@ -448,6 +460,35 @@ def load_write_policy(project_root: Path) -> dict[str, list[str]]:
     if not policy_path.exists():
         raise FileNotFoundError(f"missing write policy: {policy_path}")
     return parse_simple_list_sections(policy_path, WRITE_POLICY_SECTIONS)
+
+
+def load_read_policy(project_root: Path) -> dict[str, list[str]]:
+    policy_path = project_root / ".agent-os" / "read-policy.yaml"
+    if not policy_path.exists():
+        raise FileNotFoundError(f"missing read policy: {policy_path}")
+    return parse_simple_list_sections(policy_path, READ_POLICY_SECTIONS)
+
+
+def validate_read_policy(project_root: Path) -> list[CheckResult]:
+    try:
+        policy = load_read_policy(project_root)
+    except FileNotFoundError as exc:
+        return [CheckResult(False, "read_policy", str(exc))]
+
+    results: list[CheckResult] = []
+    for section in sorted(READ_POLICY_SECTIONS):
+        results.append(CheckResult(bool(policy.get(section)), "read_policy", f"{section} has entries"))
+
+    cold_storage = " ".join(policy.get("cold_storage", []))
+    explicit = " ".join(policy.get("require_explicit_human_request", []))
+    deny_indexing = " ".join(policy.get("deny_indexing", []))
+    for label, text in [
+        ("cold storage", cold_storage),
+        ("explicit human request", explicit),
+        ("deny indexing", deny_indexing),
+    ]:
+        results.append(CheckResult("archive/**" in text, "archive_read_guard", f"archive/** covered by {label}"))
+    return results
 
 
 def load_tool_registry(project_root: Path) -> list[dict[str, str]]:
@@ -1249,6 +1290,219 @@ def migrate_legacy_project(project_root: Path, *, write_plan: bool = False, appl
     return {"project_root": str(project_root), "dry_run": dry_run, "plan": plan, "actions": actions}
 
 
+ARCHIVE_NAME_MARKERS = {
+    "old",
+    "legacy",
+    "archive",
+    "archived",
+    "backup",
+    "backups",
+    "bak",
+    "deprecated",
+    "obsolete",
+    "unused",
+    "superseded",
+    "previous",
+    "trash",
+    "tmp",
+    "temp",
+    "copy",
+    "draft-old",
+    "旧",
+    "备份",
+    "历史",
+    "废弃",
+    "过时",
+    "副本",
+}
+ARCHIVE_SCAN_DIRS = {"docs", "reports", "outputs", "src", "scripts", "notebooks", "tests"}
+
+
+def archive_marker_reason(path: Path) -> str | None:
+    name = path.name.lower()
+    stem = path.stem.lower()
+    parts = set(re.split(r"[^a-z0-9\u4e00-\u9fff]+", name))
+    if parts & ARCHIVE_NAME_MARKERS:
+        return "name contains legacy/archive marker"
+    if any(marker in name for marker in ["旧", "备份", "历史", "废弃", "过时", "副本"]):
+        return "name contains Chinese legacy/archive marker"
+    if stem.endswith(("_old", "-old", ".old", "_bak", "-bak", ".bak")):
+        return "name suffix indicates old or backup content"
+    return None
+
+
+def archive_category_for(path: Path, relative: Path) -> str:
+    lower_parts = [part.lower() for part in relative.parts]
+    name = path.name.lower()
+    suffix = path.suffix.lower()
+    if any(token in name for token in ["trash", "tmp", "temp", "delete", "删除", "废弃"]):
+        return "trash-candidates"
+    if lower_parts and lower_parts[0] in {"outputs", "results"}:
+        return "generated"
+    if any(token in name for token in ["result", "output", "generated", "figure", "plot"]):
+        return "generated"
+    if lower_parts and lower_parts[0] in {"docs", "reports"}:
+        return "superseded"
+    if suffix in {".md", ".txt", ".doc", ".docx", ".pdf", ".ppt", ".pptx"}:
+        return "superseded"
+    return "legacy"
+
+
+def plan_archive_item(project_root: Path, path: Path, reason: str) -> dict[str, str]:
+    relative = path.resolve().relative_to(project_root.resolve())
+    category = archive_category_for(path, relative)
+    return {
+        "source": relative.as_posix(),
+        "target": (Path("archive") / category / relative).as_posix(),
+        "kind": "directory" if path.is_dir() else "file",
+        "reason": reason,
+        "action": "archive",
+        "read_policy": "cold_storage",
+    }
+
+
+def iter_archive_candidates(project_root: Path) -> Iterable[tuple[Path, str]]:
+    for entry in sorted(project_root.iterdir(), key=lambda p: p.name.lower()):
+        if entry.name.startswith(".") or entry.name in CANONICAL_PROJECT_DIRS or entry.name in {"AGENTS.md", "README.md", "Makefile"}:
+            continue
+        reason = archive_marker_reason(entry)
+        if reason:
+            yield entry, reason
+
+    for root_name in sorted(ARCHIVE_SCAN_DIRS):
+        root = project_root / root_name
+        if not root.is_dir():
+            continue
+        for entry in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+            reason = archive_marker_reason(entry)
+            if reason:
+                yield entry, reason
+
+
+def build_archive_plan(project_root: Path, includes: list[str] | None = None) -> list[dict[str, str]]:
+    ensure_safe_project_root(project_root)
+    seen: set[str] = set()
+    plan: list[dict[str, str]] = []
+
+    if includes:
+        for raw in includes:
+            absolute, relative, inside = path_for_policy(project_root, raw)
+            if not inside:
+                plan.append(
+                    {
+                        "source": raw,
+                        "target": "",
+                        "kind": "unknown",
+                        "reason": "outside project root",
+                        "action": "skip",
+                        "read_policy": "not_applicable",
+                    }
+                )
+                continue
+            if relative.startswith(".agent-os/") or relative == ".agent-os":
+                plan.append(
+                    {
+                        "source": relative,
+                        "target": "",
+                        "kind": "control-plane",
+                        "reason": "control-plane paths are not cold-archived",
+                        "action": "skip",
+                        "read_policy": "not_applicable",
+                    }
+                )
+                continue
+            if relative.startswith("archive/") or relative == "archive":
+                plan.append(
+                    {
+                        "source": relative,
+                        "target": "",
+                        "kind": "archive",
+                        "reason": "already in cold archive",
+                        "action": "skip",
+                        "read_policy": "cold_storage",
+                    }
+                )
+                continue
+            if relative in seen:
+                continue
+            seen.add(relative)
+            plan.append(plan_archive_item(project_root, absolute, "explicit include"))
+        return plan
+
+    for candidate, reason in iter_archive_candidates(project_root):
+        relative = candidate.resolve().relative_to(project_root.resolve()).as_posix()
+        if relative in seen:
+            continue
+        seen.add(relative)
+        plan.append(plan_archive_item(project_root, candidate, reason))
+    return plan
+
+
+def render_archive_plan(project_root: Path, plan: list[dict[str, str]]) -> str:
+    lines = [
+        "# Cold Archive Plan",
+        "",
+        f"Project root: `{project_root}`",
+        "",
+        "This is a review-first plan for moving historical or superseded files into `archive/`.",
+        "`archive/**` is cold storage: agents should not read it as default context and should only inspect it after explicit human request.",
+        "",
+        "| Source | Target | Action | Read Policy | Reason |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    if not plan:
+        lines.append("| _none_ | _none_ | no-op | cold_storage | No strong legacy/archive markers found |")
+    for item in plan:
+        lines.append(
+            f"| `{item['source']}` | `{item.get('target', '')}` | `{item['action']}` | `{item.get('read_policy', '')}` | {item['reason']} |"
+        )
+    lines.extend(
+        [
+            "",
+            "Apply only after human review. Use `--include <path>` for explicit one-off archival decisions.",
+            "Do not use this as deletion; cold archive is reversible storage.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def archive_legacy_project(
+    project_root: Path,
+    *,
+    write_plan: bool = False,
+    apply: bool = False,
+    dry_run: bool = False,
+    includes: list[str] | None = None,
+) -> dict[str, Any]:
+    if (write_plan or apply) and not (project_root / ".agent-os").is_dir():
+        raise FileNotFoundError(f"missing KnowledgeOS control plane: {project_root / '.agent-os'}")
+    plan = build_archive_plan(project_root, includes)
+    actions: list[dict[str, str]] = []
+    if write_plan:
+        plan_path = project_root / ".agent-os" / "inbox" / "cold-archive-plan.md"
+        actions.append({"action": "write-plan", "path": str(plan_path)})
+        if not dry_run:
+            write_text(plan_path, render_archive_plan(project_root, plan))
+    if apply:
+        for item in plan:
+            if item["action"] != "archive":
+                actions.append({"action": "skip", "path": item["source"], "reason": item["reason"]})
+                continue
+            source = project_root / item["source"]
+            target = project_root / item["target"]
+            if not source.exists():
+                actions.append({"action": "skip", "path": item["source"], "target": item["target"], "reason": "source missing"})
+                continue
+            if target.exists():
+                actions.append({"action": "skip", "path": item["source"], "target": item["target"], "reason": "target exists"})
+                continue
+            actions.append({"action": "archive", "path": item["source"], "target": item["target"]})
+            if not dry_run:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(source), str(target))
+    return {"project_root": str(project_root), "dry_run": dry_run, "plan": plan, "actions": actions}
+
+
 def write_task_eval(project_root: Path, task_id: str, run_id: str, notes: str = "") -> dict[str, Any]:
     task = find_task(project_root, task_id)
     run_dir = resolve_run_dir(project_root, run_id)
@@ -1357,6 +1611,9 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
     forbidden_patterns = " ".join(policy.get("forbidden_without_human_gate", []))
     for required in [".env", "secret", "reports/final"]:
         results.append(CheckResult(required in forbidden_patterns, "write_guard_risk", f"forbidden policy covers {required}"))
+    controlled_patterns = " ".join(policy.get("controlled", []))
+    results.append(CheckResult("archive/**" in controlled_patterns, "archive_write_guard", "archive/** is a controlled write zone"))
+    results.extend(validate_read_policy(project_root))
 
     tasks = parse_tasks(agent_os / "tasks.yaml")
     task_outputs = parse_task_list_field(agent_os / "tasks.yaml", "outputs")
@@ -1485,6 +1742,7 @@ def build_agent_guide(project_root: Path) -> str:
             "   - .agent-os/decisions.yaml",
             "   - .agent-os/evals.yaml",
             "   - .agent-os/capabilities.yaml",
+            "   - .agent-os/read-policy.yaml",
             "   - .agent-os/write-policy.yaml",
             "",
             "3. Run checks before acting.",
@@ -1516,6 +1774,7 @@ def build_agent_guide(project_root: Path) -> str:
             f"   - {bin_path} reopen-task --project-root {project_root} --task-id <task-id> --reason <reason>",
             f"   - {bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run",
             f"   - {bin_path} migrate-legacy-project --project-root {project_root} --write-plan",
+            f"   - {bin_path} archive-legacy-project --project-root {project_root} --write-plan",
             "",
         ]
     )
@@ -1536,7 +1795,7 @@ def build_startup_prompt(project_root: Path) -> str:
             "Before substantial work:",
             "",
             "1. Read `AGENTS.md`.",
-            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
+            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
             f"3. Run `{bin_path} doctor --project-root {project_root} --summary` and do not proceed if it fails.",
             "4. Select or confirm one task id from `.agent-os/tasks.yaml`.",
             f"5. Run `{bin_path} route-task --project-root {project_root} --task-id <task-id>`.",
@@ -1549,6 +1808,7 @@ def build_startup_prompt(project_root: Path) -> str:
             "12. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after it succeeds.",
             f"13. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
             f"14. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
+            f"15. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
             "",
             "Never claim boot, route, dispatch, write safety, eval, or sync success without command evidence.",
             "",
@@ -1938,6 +2198,28 @@ def cmd_migrate_legacy_project(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_archive_legacy_project(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = archive_legacy_project(
+            project_root,
+            write_plan=args.write_plan,
+            apply=args.apply,
+            dry_run=args.dry_run,
+            includes=args.include,
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(render_archive_plan(project_root, result["plan"]))
+        for action in result["actions"]:
+            print(action)
+    return 0
+
+
 def cmd_eval_task(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
@@ -2153,6 +2435,15 @@ def build_parser() -> argparse.ArgumentParser:
     migrate.add_argument("--dry-run", action="store_true")
     migrate.add_argument("--json", action="store_true")
     migrate.set_defaults(func=cmd_migrate_legacy_project)
+
+    archive = sub.add_parser("archive-legacy-project", help="plan or apply cold archival of historical or superseded project files")
+    archive.add_argument("--project-root", required=True)
+    archive.add_argument("--write-plan", action="store_true", help="write .agent-os/inbox/cold-archive-plan.md")
+    archive.add_argument("--apply", action="store_true", help="move planned archive candidates into archive/ cold storage")
+    archive.add_argument("--include", action="append", default=[], help="explicit relative path to include in the cold archive plan")
+    archive.add_argument("--dry-run", action="store_true")
+    archive.add_argument("--json", action="store_true")
+    archive.set_defaults(func=cmd_archive_legacy_project)
 
     eval_task_parser = sub.add_parser("eval-task", help="write deterministic run eval evidence for a task")
     eval_task_parser.add_argument("--project-root", required=True)

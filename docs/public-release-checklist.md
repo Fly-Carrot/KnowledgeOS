@@ -9,4 +9,5 @@ Before publishing KnowledgeOS, verify:
 - templates use placeholders such as `CHANGE_ME`;
 - governance core and capability layer are documented as separate layers;
 - Agent Shared Fabric is described as a kernel module, not copied project content;
-- Any future app is described as a workbench that consumes receipts/wiki/graph outputs.
+- Any future app is described as a workbench that consumes receipts/wiki/graph outputs;
+- `archive/**` is documented as cold storage, not default context.

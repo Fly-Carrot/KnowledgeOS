@@ -50,6 +50,7 @@ Then fill the `CHANGE_ME` placeholders in:
 .agent-os/project.yaml
 .agent-os/fabric-link.yaml
 .agent-os/capabilities.yaml
+.agent-os/read-policy.yaml
 .agent-os/write-policy.yaml
 .agent-os/tool-registry.yaml
 ```
@@ -66,6 +67,7 @@ migration_inventory
 knowledge_structuring
 engineering_eval
 report_task
+archive_management
 ```
 
 If you invent a new task type, add a route profile for it in `.agent-os/workflows/router.yaml` before asking an agent to mutate files.
@@ -96,6 +98,14 @@ data/raw/
 ```
 
 Then protect them through `.agent-os/write-policy.yaml`.
+
+For old drafts, obsolete generated outputs, or previous code that should be kept but not used as default context, use cold archive:
+
+```bash
+./bin/knowledgeos archive-legacy-project --project-root /path/to/project --write-plan
+```
+
+`archive/**` is governed by `.agent-os/read-policy.yaml`: it is storage, not default context.
 
 ## 6. Observe The System
 
@@ -130,6 +140,7 @@ Core commands:
 ./bin/knowledgeos reopen-task --project-root /path/to/project --task-id T001 --reason "Rerun required."
 ./bin/knowledgeos reset-project --project-root /path/to/project --mode soft
 ./bin/knowledgeos migrate-legacy-project --project-root /path/to/project --write-plan
+./bin/knowledgeos archive-legacy-project --project-root /path/to/project --write-plan
 ```
 
 Command meanings:
@@ -148,6 +159,7 @@ complete-task close a task only after eval-task passes and declared outputs exis
 reopen-task  reopen a task for rerun and optionally archive its declared outputs
 reset-project reset volatile OS state or archive/remove the project control plane
 migrate-legacy-project plan or apply conservative old-folder reorganization
+archive-legacy-project plan or apply cold archival for old/superseded content
 receipt      write a lightweight local receipt
 ```
 

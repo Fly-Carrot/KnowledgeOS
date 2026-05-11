@@ -24,5 +24,6 @@ task selected
 
 - Immutable: raw materials, raw data, kernel schemas, secrets.
 - Controlled: project state, knowledge, source code, tests, outputs, draft reports.
+- Cold archive: historical files under `archive/**`; write-controlled and not read as default context.
 - Human-gated: final reports, credentials, deployment, global kernel changes.
 - Generated: run receipts, evals, logs, graph, wiki indexes.

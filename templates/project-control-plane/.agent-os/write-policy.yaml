@@ -15,6 +15,7 @@ write_policy:
     - outputs/**
     - reports/drafts/**
     - docs/**
+    - archive/**
 
   forbidden_without_human_gate:
     - "**/.env"
@@ -28,3 +29,4 @@ write_policy:
     - src/**
     - tests/**
     - reports/**
+    - archive/**

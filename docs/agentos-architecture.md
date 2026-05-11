@@ -133,12 +133,12 @@ flowchart TB
 | Syscall | `knowledgeos` CLI command | A deterministic action boundary |
 | Kernel | `global-agent-fabric/` | Boot, phase logs, memory lanes, postflight receipts |
 | Process table | `.agent-os/tasks.yaml` and `.agent-os/runs/` | What is running, ready, blocked, or completed |
-| Filesystem policy | `.agent-os/write-policy.yaml` | Which paths are immutable, controlled, or gated |
+| Filesystem policy | `.agent-os/read-policy.yaml` and `.agent-os/write-policy.yaml` | Which paths are default context, cold storage, immutable, controlled, or gated |
 | Scheduler/router | `.agent-os/workflows/router.yaml` | Which workflow should handle a task type |
 | Device drivers | `capability-layer/` | MCP, skills, workflows, subagents, local scripts |
 | System log | `.agent-os/receipts/` and `.agent-os/runs/` | Evidence that work happened and was checked |
 | Desktop | Future workbench app | Visual monitoring, graph, wiki, terminal, preflight |
-| Recovery mode | `reset-project`, `reopen-task` | Clean recovery from bad runs or bad project state |
+| Recovery mode | `reset-project`, `reopen-task`, `archive-legacy-project` | Clean recovery from bad runs, bad project state, or historical context clutter |
 
 This analogy matters because it prevents a common mistake: treating an agent as a single smart text box. In real work, the problem is not only intelligence. The problem is **state, permission, routing, recovery, and evidence**.
 
@@ -155,11 +155,13 @@ flowchart LR
     Route --> Reset["reset-project\nsoft / hard / dry-run / purge"]:::guard
     Route --> Reopen["reopen-task\nrerun one task"]:::guard
     Route --> Migrate["migrate-legacy-project\nwrite-plan / apply"]:::guard
+    Route --> Archive["archive-legacy-project\ncold storage plan / apply"]:::guard
     Route --> Execute["route-task -> dispatch-task -> check-route-write -> run-task -> eval-task -> complete-task"]:::guard
 
     Reset --> Evidence["Plan or receipt"]:::kernel
     Reopen --> Evidence
     Migrate --> Evidence
+    Archive --> Evidence
     Execute --> Evidence
     Evidence --> HumanReview["Human review / approval"]:::human
 
@@ -179,6 +181,7 @@ Example natural-language requests and expected system calls:
 | "I dislike the result of task T002; redo it." | `knowledgeos reopen-task --project-root . --task-id T002 --reason "..."` | Reopens one task instead of wiping the whole project |
 | "Reorganize this old project into KnowledgeOS structure." | `knowledgeos migrate-legacy-project --project-root . --write-plan` | Produces a review-first migration plan |
 | "Now apply the approved migration plan." | `knowledgeos migrate-legacy-project --project-root . --apply` | Moves only confidently classified top-level entries |
+| "Move old leftovers out of active context but keep them." | `knowledgeos archive-legacy-project --project-root . --write-plan` | Produces a cold archive plan before moving anything |
 | "Write code for this task." | `route-task -> dispatch-task -> check-route-write -> run-task -> eval-task -> complete-task` | Prevents blind file mutation |
 
 ## Fixed Lifecycle, Extensible Classification
@@ -422,6 +425,9 @@ knowledgeos reset-project --project-root . --mode hard --dry-run
 
 # Plan old-project reorganization
 knowledgeos migrate-legacy-project --project-root . --write-plan
+
+# Plan cold archive for historical leftovers
+knowledgeos archive-legacy-project --project-root . --write-plan
 ```
 
 ## Safety Model

@@ -13,3 +13,24 @@ tasks:
       - workspace.yaml is filled
       - project.yaml is filled
       - write-policy.yaml is reviewed
+      - read-policy.yaml is reviewed
+
+  - id: T002
+    title: Plan cold archive for historical project leftovers
+    type: archive_management
+    status: backlog
+    inputs:
+      - docs/
+      - reports/
+      - outputs/
+      - src/
+    outputs:
+      - archive/
+      - .agent-os/inbox/cold-archive-plan.md
+    allowed_agents:
+      - codex
+      - gemini-cli
+    acceptance:
+      - archive plan is written before any move
+      - archive/** is treated as cold storage
+      - archived files are not read as default context

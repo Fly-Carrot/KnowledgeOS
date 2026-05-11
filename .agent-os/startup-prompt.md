@@ -9,7 +9,7 @@ This prompt is only the session trigger. Durable rules live in `AGENTS.md`, `.ag
 Before substantial work:
 
 1. Read `AGENTS.md`.
-2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.
+2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.
 3. Run `./bin/knowledgeos doctor --project-root . --summary` and do not proceed if it fails.
 4. Select or confirm one task id from `.agent-os/tasks.yaml`.
 5. Run `./bin/knowledgeos route-task --project-root . --task-id <task-id>`.
@@ -22,5 +22,6 @@ Before substantial work:
 12. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after it succeeds.
 13. For reset requests, run `./bin/knowledgeos reset-project --project-root . --mode <soft|hard> --dry-run` before destructive action.
 14. For old-project reorganization requests, run `./bin/knowledgeos migrate-legacy-project --project-root . --write-plan` before moving files.
+15. For historical or superseded files that should be stored but not read by default, run `./bin/knowledgeos archive-legacy-project --project-root . --write-plan` before moving files into `archive/`.
 
 Never claim boot, route, dispatch, write safety, eval, or sync success without command evidence.

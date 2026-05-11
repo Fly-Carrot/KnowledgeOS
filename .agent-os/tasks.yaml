@@ -240,3 +240,35 @@ tasks:
       - full external skill catalogs are not copied and are not active runtime dependencies
       - active KnowledgeOS and Gemini links point to KnowledgeOS paths
       - doctor, tool-registry, unit tests, and guardrail scenarios pass
+
+  - id: KOS-T014
+    title: Add cold archive strategy for legacy project leftovers
+    type: archive_management
+    status: completed
+    complexity: medium
+    risk: migration_safety
+    outputs:
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - docs/archive-policy.md
+      - docs/reset-and-migration.md
+      - docs/migration-boundary.md
+      - docs/executable-control-plane.md
+      - docs/agentos-architecture.md
+      - .agent-os/read-policy.yaml
+      - .agent-os/write-policy.yaml
+      - .agent-os/evals.yaml
+      - .agent-os/workflows/router.yaml
+      - .agent-os/tasks.yaml
+      - templates/project-control-plane/.agent-os/read-policy.yaml
+      - templates/project-control-plane/.agent-os/write-policy.yaml
+      - templates/project-control-plane/.agent-os/workflows/router.yaml
+      - templates/project-control-plane/archive/README.md
+      - README.md
+      - AGENTS.md
+    acceptance:
+      - archive/** is cold storage and not default context
+      - archive-legacy-project writes a review-first plan
+      - apply moves only strong candidates or explicit includes
+      - existing migration and reset behavior remains unchanged
+      - doctor and unit tests pass

@@ -13,6 +13,7 @@ write_policy:
     - global-agent-fabric/**
     - capability-layer/**
     - docs/**
+    - archive/**
     - examples/**
     - templates/**
     - .agent-os/**
@@ -36,6 +37,7 @@ write_policy:
     - global-agent-fabric/**
     - capability-layer/**
     - docs/**
+    - archive/**
     - examples/**
     - templates/**
     - .agent-os/**

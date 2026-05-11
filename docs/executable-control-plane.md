@@ -208,6 +208,18 @@ Plan or apply a conservative reorganization for old project folders.
 
 The plan is written to `.agent-os/inbox/legacy-reorganization-plan.md`. `--apply` moves only confidently classified top-level entries and skips conflicts.
 
+### `archive-legacy-project`
+
+Plan or apply cold archival for old, superseded, or generated leftovers that should be kept but not read by default.
+
+```bash
+./bin/knowledgeos archive-legacy-project \
+  --project-root /path/to/project \
+  --write-plan
+```
+
+The plan is written to `.agent-os/inbox/cold-archive-plan.md`. `--apply` moves strong candidates into `archive/` without deleting them. Use `--include <path>` for explicit one-off archive decisions.
+
 ### `receipt`
 
 Write a lightweight project-local receipt.
@@ -225,3 +237,4 @@ Write a lightweight project-local receipt.
 - `run-task` creates the envelope; it does not yet execute the task or call agents.
 - `check-write` classifies planned paths; it does not yet intercept file-system writes automatically.
 - `migrate-legacy-project --apply` is intentionally conservative and leaves unknown items for human triage.
+- `archive-legacy-project --apply` is intentionally conservative and moves only strong marker matches or explicit includes into cold storage.
