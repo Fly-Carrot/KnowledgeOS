@@ -4,6 +4,8 @@ read_policy:
     - .agent-os/workspace.yaml
     - .agent-os/project.yaml
     - .agent-os/tasks.yaml
+    - .agent-os/specs.yaml
+    - .agent-os/specs/**
     - .agent-os/decisions.yaml
     - .agent-os/evals.yaml
     - .agent-os/fabric-link.yaml

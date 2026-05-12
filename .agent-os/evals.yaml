@@ -68,6 +68,8 @@ evals:
       - route_write_guard_blocks_out_of_scope_paths
       - run_task_requires_routed_ready_task
       - complete_task_requires_passed_eval
+      - complete_task_requires_context_plan
+      - spec_drift_blocks_completion
       - doctor_summary_reduces_output
       - scenario_checkpoints_block_distracted_agents
       - smoke_test_passes

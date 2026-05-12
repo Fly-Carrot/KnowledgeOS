@@ -41,7 +41,11 @@ workflows:
       - route-task --project-root . --task-id <task-id>
       - check-route-write --project-root . --task-id <task-id> --path <planned-path>
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: workspace_initialization
     human_gate: review_generated_control_plane

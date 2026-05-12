@@ -132,10 +132,16 @@ Core commands:
 ./bin/knowledgeos route-task --project-root /path/to/project --task-id T001
 ./bin/knowledgeos dispatch-task --project-root /path/to/project --task-id T001
 ./bin/knowledgeos tool-registry --project-root /path/to/project
+./bin/knowledgeos create-spec --project-root /path/to/project --title "Project operating spec"
+./bin/knowledgeos align-spec --project-root /path/to/project --task-id T001
 ./bin/knowledgeos check-write --project-root /path/to/project --path src/main.py
 ./bin/knowledgeos check-route-write --project-root /path/to/project --task-id T001 --path .agent-os/workspace.yaml
 ./bin/knowledgeos run-task --project-root /path/to/project --task-id T001
+./bin/knowledgeos context-pack --project-root /path/to/project --task-id T001 --run-id RUN-...
+./bin/knowledgeos plan-task --project-root /path/to/project --task-id T001 --run-id RUN-... --summary "Task plan."
 ./bin/knowledgeos eval-task --project-root /path/to/project --task-id T001 --run-id RUN-...
+./bin/knowledgeos verify-context --project-root /path/to/project --task-id T001 --run-id RUN-...
+./bin/knowledgeos verify-lifecycle --project-root /path/to/project --task-id T001 --run-id RUN-...
 ./bin/knowledgeos complete-task --project-root /path/to/project --task-id T001 --run-id RUN-... --summary "Task complete."
 ./bin/knowledgeos reopen-task --project-root /path/to/project --task-id T001 --reason "Rerun required."
 ./bin/knowledgeos reset-project --project-root /path/to/project --mode soft
@@ -151,11 +157,17 @@ init-project copy the project-control-plane template safely
 route-task   map a task id/type to an observable workflow route
 dispatch-task build an observable capability plan from dispatch-policy.yaml and tool-registry.yaml
 tool-registry inspect MCP, skills, workflows, orchestration, and subagents
+create-spec  create durable spec state under .agent-os/specs/
+align-spec   align active/selected spec with a task before execution
 check-write  classify a planned write against write-policy.yaml
 check-route-write classify a planned write against both write-policy.yaml and the task route allowed_outputs
 run-task     create a run envelope for a routed ready/in-progress task
-eval-task     write deterministic run eval evidence and output-existence checks
-complete-task close a task only after eval-task passes and declared outputs exist
+context-pack write/refresh spec-snapshot.md and context-pack.md for a run
+plan-task    write plan.md after the context pack exists
+eval-task    write deterministic run eval evidence and output-existence checks
+verify-context verify spec/context/plan evidence and spec drift
+verify-lifecycle verify required public phase checkpoint evidence
+complete-task close a task only after context, lifecycle, eval, outputs, and postflight gates pass
 reopen-task  reopen a task for rerun and optionally archive its declared outputs
 reset-project reset volatile OS state or archive/remove the project control plane
 migrate-legacy-project plan or apply conservative old-folder reorganization

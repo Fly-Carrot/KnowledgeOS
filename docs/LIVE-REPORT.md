@@ -422,3 +422,22 @@ Hardening added:
 Residual boundary:
 
 - This is still a harness-level guard, not a kernel permission boundary. A fully malicious process with arbitrary filesystem write access can forge local files. Strong tamper-proofing would require a protected external ledger, signing key, or OS-level sandbox.
+
+## 2026-05-12 - Milestone Update: Spec Context Plan Gate
+
+Status: implemented in isolated worktree; validation in progress.
+
+Changes:
+
+- Added `create-spec` and `align-spec` so durable user intent can live under `.agent-os/specs/` instead of only in a pasted prompt.
+- Added `.agent-os/specs.yaml` to the project control plane and project template.
+- `run-task` now writes `spec-snapshot.md` and `context-pack.md` for each run.
+- Added `context-pack`, `plan-task`, and `verify-context` commands.
+- Hardened `complete-task` so completion now requires command-generated spec/context/plan evidence before postflight.
+- Added spec drift detection: if the active spec changes after a run snapshot, completion fails until the context is realigned.
+- Human-gated direct writes to spec registry, spec bodies, context packs, spec snapshots, and plans.
+- Updated guardrail scenarios to include checkpoint-visible spec creation, spec alignment, context verification, and plan generation.
+
+Design note:
+
+- Spec and plan records are public execution contracts. They preserve attention and intent without storing hidden chain-of-thought.

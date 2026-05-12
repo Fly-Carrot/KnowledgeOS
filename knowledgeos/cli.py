@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -35,6 +36,7 @@ REQUIRED_PUBLIC_FILES = [
     "docs/tool-registry.md",
     "docs/route-bound-execution-guard.md",
     "docs/capability-orchestration.md",
+    "docs/spec-context-plan.md",
     "docs/reset-and-migration.md",
     "docs/archive-policy.md",
     "templates/governance-core/README.md",
@@ -68,6 +70,7 @@ REQUIRED_PUBLIC_FILES = [
     "templates/project-control-plane/.agent-os/project.yaml",
     "templates/project-control-plane/.agent-os/startup-prompt.md",
     "templates/project-control-plane/.agent-os/tasks.yaml",
+    "templates/project-control-plane/.agent-os/specs.yaml",
     "templates/project-control-plane/.agent-os/phase-policy.yaml",
     "templates/project-control-plane/.agent-os/read-policy.yaml",
     "templates/project-control-plane/.agent-os/write-policy.yaml",
@@ -84,6 +87,7 @@ REQUIRED_PROJECT_FILES = [
     ".agent-os/project.yaml",
     ".agent-os/startup-prompt.md",
     ".agent-os/tasks.yaml",
+    ".agent-os/specs.yaml",
     ".agent-os/phase-policy.yaml",
     ".agent-os/decisions.yaml",
     ".agent-os/evals.yaml",
@@ -142,6 +146,7 @@ REQUIRED_AGENT_GUIDE_FILES = [
     ".agent-os/project.yaml",
     ".agent-os/startup-prompt.md",
     ".agent-os/tasks.yaml",
+    ".agent-os/specs.yaml",
     ".agent-os/phase-policy.yaml",
     ".agent-os/decisions.yaml",
     ".agent-os/evals.yaml",
@@ -213,6 +218,10 @@ def now_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def date_stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d")
+
+
 def safe_slug(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
     return cleaned.strip("-.") or "item"
@@ -225,6 +234,10 @@ def read_text(path: Path) -> str:
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def content_fingerprint(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def iter_files(root: Path, relative_paths: Iterable[str]) -> Iterable[Path]:
@@ -402,6 +415,10 @@ def parse_named_blocks(path: Path) -> list[dict[str, str]]:
     if current:
         blocks.append(current)
     return blocks
+
+
+def parse_task_acceptance(path: Path) -> dict[str, list[str]]:
+    return parse_task_list_field(path, "acceptance")
 
 
 def parse_indented_profile_keys(path: Path, root_key: str) -> list[str]:
@@ -1045,6 +1062,388 @@ def create_task(
         "acceptance": acceptance,
         "dry_run": dry_run,
         "path": str(tasks_path),
+    }
+
+
+def specs_registry_path(project_root: Path) -> Path:
+    return project_root / ".agent-os" / "specs.yaml"
+
+
+def specs_root(project_root: Path) -> Path:
+    return project_root / ".agent-os" / "specs"
+
+
+def load_specs_registry(project_root: Path) -> dict[str, Any]:
+    path = specs_registry_path(project_root)
+    if not path.exists():
+        raise FileNotFoundError(f"missing specs registry: {path}")
+    active = parse_scalar_values(path, {"active_spec"}).get("active_spec", "")
+    if active.lower() in {"null", "none"}:
+        active = ""
+    return {"active_spec": active, "specs": parse_named_blocks(path)}
+
+
+def next_spec_id(project_root: Path) -> str:
+    existing = load_specs_registry(project_root).get("specs", [])
+    prefix = f"SPEC-{date_stamp()}-"
+    numbers: list[int] = []
+    for item in existing:
+        spec_id = item.get("id", "")
+        if spec_id.startswith(prefix):
+            match = re.fullmatch(rf"{re.escape(prefix)}(\d+)", spec_id)
+            if match:
+                numbers.append(int(match.group(1)))
+    return f"{prefix}{(max(numbers) + 1) if numbers else 1:03d}"
+
+
+def spec_dir(project_root: Path, spec_id: str) -> Path:
+    if Path(spec_id).name != spec_id:
+        raise ValueError("spec_id must not contain path separators")
+    return specs_root(project_root) / spec_id
+
+
+def spec_markdown(project_root: Path, spec_id: str) -> str:
+    directory = spec_dir(project_root, spec_id)
+    parts: list[str] = []
+    for name in ["spec.md", "acceptance.md", "non-goals.md"]:
+        path = directory / name
+        if path.exists():
+            parts.append(read_text(path).strip())
+    return "\n\n".join(part for part in parts if part)
+
+
+def spec_fingerprint(project_root: Path, spec_id: str) -> str:
+    if not spec_id:
+        return "none"
+    return content_fingerprint(spec_markdown(project_root, spec_id))
+
+
+def find_spec(project_root: Path, spec_id: str | None = None) -> dict[str, str]:
+    registry = load_specs_registry(project_root)
+    selected = spec_id or registry.get("active_spec", "")
+    if not selected:
+        raise ValueError("no active spec; run create-spec or pass --spec-id")
+    for item in registry.get("specs", []):
+        if item.get("id") == selected:
+            return item
+    raise KeyError(f"spec not found: {selected}")
+
+
+def set_active_spec(project_root: Path, spec_id: str) -> None:
+    path = specs_registry_path(project_root)
+    lines = read_text(path).splitlines()
+    output: list[str] = []
+    updated = False
+    for line in lines:
+        if line.strip().startswith("active_spec:"):
+            indent = line[: len(line) - len(line.lstrip())]
+            output.append(f"{indent}active_spec: {spec_id}")
+            updated = True
+        else:
+            output.append(line)
+    if not updated:
+        output.insert(0, f"active_spec: {spec_id}")
+    write_text(path, "\n".join(output).rstrip() + "\n")
+
+
+def append_spec_change(project_root: Path, spec_id: str, event: dict[str, Any]) -> None:
+    event = {"timestamp": datetime.now(timezone.utc).isoformat(), **event}
+    change_log = spec_dir(project_root, spec_id) / "change-log.ndjson"
+    change_log.parent.mkdir(parents=True, exist_ok=True)
+    with change_log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def create_spec(
+    project_root: Path,
+    *,
+    title: str,
+    intent: str = "",
+    acceptance: list[str] | None = None,
+    non_goal: list[str] | None = None,
+    set_active: bool = True,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    ensure_safe_project_root(project_root)
+    if not title.strip():
+        raise ValueError("--title is required")
+    registry_path = specs_registry_path(project_root)
+    if not registry_path.exists():
+        raise FileNotFoundError(f"missing specs registry: {registry_path}")
+    spec_id = next_spec_id(project_root)
+    directory = spec_dir(project_root, spec_id)
+    acceptance = [item.strip() for item in (acceptance or []) if item.strip()]
+    non_goal = [item.strip() for item in (non_goal or []) if item.strip()]
+    created_at = datetime.now(timezone.utc).isoformat()
+    spec_status = "active" if set_active else "draft"
+    spec_text = "\n".join(
+        [
+            f"# {title.strip()}",
+            "",
+            f"Spec ID: {spec_id}",
+            f"Status: {spec_status}",
+            f"Created At: {created_at}",
+            "",
+            "## Intent",
+            "",
+            intent.strip() or "Describe the durable user intent, constraints, and success shape for this project or task family.",
+            "",
+        ]
+    )
+    acceptance_text = "\n".join(["# Acceptance Criteria", "", *[f"- {item}" for item in acceptance], ""])
+    non_goal_text = "\n".join(["# Non-Goals", "", *[f"- {item}" for item in non_goal], ""])
+    alignment_text = "# Alignment\n\nNo alignment has been run yet.\n"
+    if not dry_run:
+        write_text(directory / "spec.md", spec_text)
+        write_text(directory / "acceptance.md", acceptance_text)
+        write_text(directory / "non-goals.md", non_goal_text)
+        write_text(directory / "alignment.md", alignment_text)
+        append_spec_change(project_root, spec_id, {"event_type": "create-spec", "title": title.strip(), "set_active": set_active})
+        current = read_text(registry_path).rstrip()
+        if not current:
+            current = "active_spec: null\nspecs:"
+        block = "\n".join(
+            [
+                f"  - id: {spec_id}",
+                f"    title: {yaml_scalar(title.strip())}",
+                f"    status: {spec_status}",
+                f"    created_at: {created_at}",
+                f"    path: .agent-os/specs/{spec_id}",
+            ]
+        )
+        write_text(registry_path, current + "\n" + block + "\n")
+        if set_active:
+            set_active_spec(project_root, spec_id)
+    return {
+        "spec_id": spec_id,
+        "title": title.strip(),
+        "active": set_active,
+        "path": str(directory),
+        "dry_run": dry_run,
+    }
+
+
+def align_spec(project_root: Path, *, task_id: str | None = None, spec_id: str | None = None, note: str = "") -> dict[str, Any]:
+    ensure_safe_project_root(project_root)
+    spec = find_spec(project_root, spec_id)
+    selected = spec["id"]
+    task: dict[str, str] | None = find_task(project_root, task_id) if task_id else None
+    task_acceptance = parse_task_acceptance(project_root / ".agent-os" / "tasks.yaml").get(task_id or "", [])
+    task_outputs = parse_task_list_field(project_root / ".agent-os" / "tasks.yaml", "outputs").get(task_id or "", [])
+    missing: list[str] = []
+    if task and not task_acceptance:
+        missing.append("task has no acceptance criteria")
+    if task and not task_outputs:
+        missing.append("task has no declared outputs")
+    if not spec_markdown(project_root, selected).strip():
+        missing.append("spec body is empty")
+    status = "aligned" if not missing else "needs_review"
+    lines = [
+        "# Alignment",
+        "",
+        f"Spec: {selected}",
+        f"Task: {task_id or 'none'}",
+        f"Status: {status}",
+        f"Generated At: {datetime.now(timezone.utc).isoformat()}",
+        "",
+        "## Public Alignment Note",
+        "",
+        note.strip() or "Spec alignment checked through KnowledgeOS.",
+        "",
+        "## Task Summary",
+        "",
+        f"- Title: {task.get('title', '') if task else 'none'}",
+        f"- Type: {task.get('type', '') if task else 'none'}",
+        f"- Outputs: {', '.join(task_outputs) if task_outputs else 'none'}",
+        "",
+        "## Findings",
+        "",
+    ]
+    lines.extend([f"- {item}" for item in missing] or ["- No blocking spec/task alignment gaps detected."])
+    alignment_path = spec_dir(project_root, selected) / "alignment.md"
+    write_text(alignment_path, "\n".join(lines).rstrip() + "\n")
+    append_spec_change(project_root, selected, {"event_type": "align-spec", "task_id": task_id or "", "status": status})
+    return {"status": status, "spec_id": selected, "task_id": task_id or "", "alignment": str(alignment_path), "findings": missing}
+
+
+def active_spec_snapshot(project_root: Path) -> dict[str, str]:
+    registry = load_specs_registry(project_root)
+    active = registry.get("active_spec", "")
+    if not active:
+        return {"spec_id": "", "title": "", "fingerprint": "none", "body": "No active spec is registered for this project."}
+    spec = find_spec(project_root, active)
+    body = spec_markdown(project_root, active) or "Active spec exists but has no body."
+    return {
+        "spec_id": active,
+        "title": spec.get("title", ""),
+        "fingerprint": content_fingerprint(body),
+        "body": body,
+    }
+
+
+def write_context_pack(project_root: Path, task_id: str, run_id: str, *, summary: str = "") -> dict[str, Any]:
+    task = find_task(project_root, task_id)
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    route = build_task_route(project_root, task_id, None)
+    dispatch = build_dispatch_plan(project_root, task_id)
+    snapshot = active_spec_snapshot(project_root)
+    decisions = parse_named_blocks(project_root / ".agent-os" / "decisions.yaml")
+    eval_profiles = parse_indented_profile_keys(project_root / ".agent-os" / "evals.yaml", "evals")
+    spec_snapshot = [
+        "# Spec Snapshot",
+        "",
+        f"Spec ID: {snapshot['spec_id'] or 'none'}",
+        f"Spec Title: {snapshot['title'] or 'none'}",
+        f"Spec Fingerprint: {snapshot['fingerprint']}",
+        "",
+        "## Body",
+        "",
+        snapshot["body"],
+        "",
+    ]
+    context_lines = [
+        "# Context Pack",
+        "",
+        "Generated By: knowledgeos context-pack",
+        f"Generated At: {datetime.now(timezone.utc).isoformat()}",
+        f"Run: {run_id}",
+        f"Task: {task_id}",
+        f"Task Title: {task.get('title', '')}",
+        f"Task Type: {task.get('type', '')}",
+        f"Spec ID: {snapshot['spec_id'] or 'none'}",
+        f"Spec Fingerprint: {snapshot['fingerprint']}",
+        "",
+        "## User/Run Summary",
+        "",
+        summary.strip() or "No additional run summary supplied.",
+        "",
+        "## Route",
+        "",
+        f"- Status: {route.get('status', '')}",
+        f"- Eval Profile: {route.get('eval_profile', '')}",
+        f"- Human Gate: {route.get('human_gate', '')}",
+        "",
+        "## Dispatch",
+        "",
+        *[f"- {step.get('stage')}: {step.get('reason')}" for step in dispatch.get("steps", [])],
+        "",
+        "## Decisions",
+        "",
+        *[f"- {item.get('id', '')}: {item.get('decision', '')}" for item in decisions],
+        "",
+        "## Eval Profiles",
+        "",
+        *[f"- {item}" for item in eval_profiles],
+        "",
+        "## Attention Contract",
+        "",
+        "- Load this context pack before execution.",
+        "- Use plan.md as the current execution contract.",
+        "- If user intent conflicts with the spec snapshot, stop and run align-spec.",
+        "",
+    ]
+    write_text(run_dir / "spec-snapshot.md", "\n".join(spec_snapshot).rstrip() + "\n")
+    write_text(run_dir / "context-pack.md", "\n".join(context_lines).rstrip() + "\n")
+    append_command_event(run_dir, "context-pack", task_id, run_id, spec_id=snapshot["spec_id"] or "none", spec_fingerprint=snapshot["fingerprint"])
+    return {
+        "status": "written",
+        "task_id": task_id,
+        "run_id": run_id,
+        "spec_id": snapshot["spec_id"] or "none",
+        "spec_fingerprint": snapshot["fingerprint"],
+        "context_pack": str(run_dir / "context-pack.md"),
+        "spec_snapshot": str(run_dir / "spec-snapshot.md"),
+    }
+
+
+def write_task_plan(project_root: Path, task_id: str, run_id: str, *, summary: str = "") -> dict[str, Any]:
+    task = find_task(project_root, task_id)
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    context = run_dir / "context-pack.md"
+    snapshot = run_dir / "spec-snapshot.md"
+    if not context.exists() or not snapshot.exists():
+        raise ValueError("context-pack.md and spec-snapshot.md are required before plan-task")
+    route = build_task_route(project_root, task_id, None)
+    outputs = task_declared_outputs(project_root, task_id)
+    acceptance = parse_task_acceptance(project_root / ".agent-os" / "tasks.yaml").get(task_id, [])
+    lines = [
+        "# Plan",
+        "",
+        "Generated By: knowledgeos plan-task",
+        f"Generated At: {datetime.now(timezone.utc).isoformat()}",
+        f"Run: {run_id}",
+        f"Task: {task_id}",
+        f"Task Title: {task.get('title', '')}",
+        "",
+        "## Recommended Next Move",
+        "",
+        summary.strip() or "Execute the task through the routed lifecycle while preserving the spec snapshot and context pack.",
+        "",
+        "## Route-Bound Scope",
+        "",
+        f"- Route Status: {route.get('status', '')}",
+        f"- Eval Profile: {route.get('eval_profile', '')}",
+        f"- Human Gate: {route.get('human_gate', '')}",
+        "",
+        "## Declared Outputs",
+        "",
+        *[f"- {item}" for item in outputs],
+        "",
+        "## Acceptance Checks",
+        "",
+        *[f"- {item}" for item in acceptance],
+        "",
+        "## Checkpoint Requirement",
+        "",
+        "- Record public lifecycle checkpoints with phase-task.",
+        "- Complete only after eval-task, verify-lifecycle, and postflight pass.",
+        "",
+    ]
+    write_text(run_dir / "plan.md", "\n".join(lines).rstrip() + "\n")
+    append_command_event(run_dir, "plan-task", task_id, run_id, status="written")
+    return {"status": "written", "task_id": task_id, "run_id": run_id, "plan": str(run_dir / "plan.md")}
+
+
+def snapshot_metadata(path: Path) -> dict[str, str]:
+    return parse_scalar_values(path, {"Spec ID", "Spec Title", "Spec Fingerprint"})
+
+
+def verify_context_contract(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    errors: list[dict[str, Any]] = []
+    context = run_dir / "context-pack.md"
+    snapshot = run_dir / "spec-snapshot.md"
+    plan = run_dir / "plan.md"
+    for label, path in [("context_pack", context), ("spec_snapshot", snapshot), ("plan", plan)]:
+        if not path.exists():
+            errors.append({"label": f"missing_{label}", "detail": str(path)})
+    if context.exists() and "Generated By: knowledgeos context-pack" not in read_text(context):
+        errors.append({"label": "invalid_context_pack", "detail": "context-pack.md missing generator marker"})
+    if plan.exists() and "Generated By: knowledgeos plan-task" not in read_text(plan):
+        errors.append({"label": "invalid_plan", "detail": "plan.md missing generator marker"})
+    if not has_command_event(run_dir, "context-pack", task_id, run_id):
+        errors.append({"label": "missing_context_pack_command_event", "detail": "context-pack command evidence is missing"})
+    if not has_command_event(run_dir, "plan-task", task_id, run_id, status="written"):
+        errors.append({"label": "missing_plan_command_event", "detail": "plan-task command evidence is missing"})
+    if snapshot.exists():
+        metadata = snapshot_metadata(snapshot)
+        snap_spec = metadata.get("Spec ID", "")
+        snap_fingerprint = metadata.get("Spec Fingerprint", "")
+        registry = load_specs_registry(project_root)
+        active = registry.get("active_spec", "") or "none"
+        if snap_spec != active:
+            errors.append({"label": "spec_drift", "detail": f"snapshot spec {snap_spec or 'none'} != active spec {active}"})
+        expected = "none" if snap_spec in {"", "none"} else spec_fingerprint(project_root, snap_spec)
+        if snap_fingerprint != expected:
+            errors.append({"label": "spec_drift", "detail": f"snapshot fingerprint {snap_fingerprint} != current {expected}"})
+    return {
+        "status": "passed" if not errors else "failed",
+        "task_id": task_id,
+        "run_id": run_id,
+        "errors": errors,
+        "context_pack": str(context),
+        "spec_snapshot": str(snapshot),
+        "plan": str(plan),
     }
 
 
@@ -1771,6 +2170,23 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
     for key in ["id", "name", "status", "current_phase"]:
         results.append(CheckResult(bool(project.get(key)), "project_schema", f"{key} present"))
 
+    try:
+        specs = load_specs_registry(project_root)
+        active_spec = specs.get("active_spec", "")
+        spec_items = specs.get("specs", [])
+        results.append(CheckResult("active_spec" in parse_scalar_values(agent_os / "specs.yaml", {"active_spec"}), "specs_schema", "active_spec present"))
+        results.extend(unique_id_results(spec_items, "spec_ids"))
+        if active_spec:
+            active_known = any(item.get("id") == active_spec for item in spec_items)
+            results.append(CheckResult(active_known, "specs_schema", f"active spec {active_spec} is registered"))
+        for spec in spec_items:
+            item_id = spec.get("id", "")
+            directory = spec_dir(project_root, item_id) if item_id else agent_os / "specs" / "<missing>"
+            for name in ["spec.md", "acceptance.md", "non-goals.md", "alignment.md", "change-log.ndjson"]:
+                results.append(CheckResult((directory / name).exists(), "spec_files", f"{item_id}/{name}"))
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        results.append(CheckResult(False, "specs_schema", str(exc)))
+
     fabric = parse_scalar_values(
         agent_os / "fabric-link.yaml",
         {"governance_root", "capability_root", "implementation_root", "boot_required", "phase_logging_required", "postflight_required"},
@@ -1835,6 +2251,8 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                 )
                 lifecycle = verify_lifecycle(project_root, metadata.get("task_id", ""), run_id)
                 results.append(CheckResult(lifecycle.get("status") == "passed", "completed_run_lifecycle", f"{run_id} lifecycle status={lifecycle.get('status')}"))
+                context_contract = verify_context_contract(project_root, metadata.get("task_id", ""), run_id)
+                results.append(CheckResult(context_contract.get("status") == "passed", "completed_run_context", f"{run_id} context contract status={context_contract.get('status')}"))
 
     decisions = parse_named_blocks(agent_os / "decisions.yaml")
     results.extend(unique_id_results(decisions, "decision_ids"))
@@ -1890,23 +2308,47 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
             )
             if isinstance(route_order, list):
                 has_run = any("run-task" in item for item in route_order)
+                has_context = any("context-pack" in item for item in route_order)
+                has_plan = any("plan-task" in item for item in route_order)
                 has_phase = any("phase-task" in item for item in route_order)
                 has_eval = any("eval-task" in item for item in route_order)
+                has_verify_context = any("verify-context" in item for item in route_order)
                 has_verify = any("verify-lifecycle" in item for item in route_order)
                 has_complete = any("complete-task" in item for item in route_order)
+                run_index = next((idx for idx, item in enumerate(route_order) if "run-task" in item), -1)
+                context_index = next((idx for idx, item in enumerate(route_order) if "context-pack" in item), -1)
+                plan_index = next((idx for idx, item in enumerate(route_order) if "plan-task" in item), -1)
                 eval_index = next((idx for idx, item in enumerate(route_order) if "eval-task" in item), -1)
+                verify_context_index = next((idx for idx, item in enumerate(route_order) if "verify-context" in item), -1)
                 verify_index = next((idx for idx, item in enumerate(route_order) if "verify-lifecycle" in item), -1)
                 complete_index = next((idx for idx, item in enumerate(route_order) if "complete-task" in item), -1)
                 results.append(CheckResult(has_run, "workflow_router_lifecycle", f"{name} includes run-task"))
+                results.append(CheckResult(has_context, "workflow_router_lifecycle", f"{name} includes context-pack"))
+                results.append(CheckResult(has_plan, "workflow_router_lifecycle", f"{name} includes plan-task"))
                 results.append(CheckResult(has_phase, "workflow_router_lifecycle", f"{name} includes phase-task"))
                 results.append(CheckResult(has_eval, "workflow_router_lifecycle", f"{name} includes eval-task"))
+                results.append(CheckResult(has_verify_context, "workflow_router_lifecycle", f"{name} includes verify-context"))
                 results.append(CheckResult(has_verify, "workflow_router_lifecycle", f"{name} includes verify-lifecycle"))
                 results.append(CheckResult(has_complete, "workflow_router_lifecycle", f"{name} includes complete-task"))
+                results.append(
+                    CheckResult(
+                        run_index >= 0 and context_index >= 0 and plan_index >= 0 and run_index < context_index < plan_index,
+                        "workflow_router_lifecycle",
+                        f"{name} run-task before context-pack before plan-task",
+                    )
+                )
                 results.append(
                     CheckResult(
                         eval_index >= 0 and complete_index >= 0 and eval_index < complete_index,
                         "workflow_router_lifecycle",
                         f"{name} eval-task before complete-task",
+                    )
+                )
+                results.append(
+                    CheckResult(
+                        verify_context_index >= 0 and complete_index >= 0 and verify_context_index < complete_index,
+                        "workflow_router_lifecycle",
+                        f"{name} verify-context before complete-task",
                     )
                 )
                 results.append(
@@ -1939,6 +2381,7 @@ def build_agent_guide(project_root: Path) -> str:
             "   - .agent-os/workspace.yaml",
             "   - .agent-os/project.yaml",
             "   - .agent-os/tasks.yaml",
+            "   - .agent-os/specs.yaml",
             "   - .agent-os/phase-policy.yaml",
             "   - .agent-os/decisions.yaml",
             "   - .agent-os/evals.yaml",
@@ -1949,6 +2392,8 @@ def build_agent_guide(project_root: Path) -> str:
             "3. Run checks before acting.",
             f"   - {bin_path} doctor --project-root {project_root} --summary",
             f"   - {bin_path} tool-registry --project-root {project_root}",
+            f"   - {bin_path} create-spec --project-root {project_root} --title <title>  # when the user asks to create/align spec",
+            f"   - {bin_path} align-spec --project-root {project_root} --task-id <task-id>",
             f"   - {bin_path} create-task --project-root {project_root} --title <title> --type <type> --output <path> --acceptance <check>",
             f"   - {bin_path} route-task --project-root {project_root} --task-id <task-id>",
             f"   - {bin_path} dispatch-task --project-root {project_root} --task-id <task-id>",
@@ -1956,6 +2401,8 @@ def build_agent_guide(project_root: Path) -> str:
             "",
             "4. Start work through a run envelope.",
             f"   - {bin_path} run-task --project-root {project_root} --task-id <task-id>",
+            f"   - {bin_path} context-pack --project-root {project_root} --task-id <task-id> --run-id <run-id>",
+            f"   - {bin_path} plan-task --project-root {project_root} --task-id <task-id> --run-id <run-id>",
             "",
             "5. Never bypass write guard.",
             "   - immutable paths are denied;",
@@ -1963,12 +2410,11 @@ def build_agent_guide(project_root: Path) -> str:
             "   - unclassified paths should be triaged before mutation.",
             "   - pause at consultation checkpoints, state your recommendation, and ask before proceeding.",
             "",
-            "6. Keep receipts.",
-            "   - update .agent-os/runs/RUN-*/receipt.md;",
+            "6. Keep receipts and checkpoint evidence command-generated.",
             f"   - {bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>;",
             f"   - {bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
+            f"   - {bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
             f"   - {bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
-            "   - update .agent-os/handoffs/current.md.",
             f"   - {bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary <summary>",
             "",
             "7. For shared-fabric hosts, finish with canonical postflight.",
@@ -1999,24 +2445,26 @@ def build_startup_prompt(project_root: Path) -> str:
             "Before substantial work:",
             "",
             "1. Read `AGENTS.md`.",
-            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/phase-policy.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
+            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/specs.yaml`, `.agent-os/phase-policy.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
             f"3. Run `{bin_path} doctor --project-root {project_root} --summary` and do not proceed if it fails.",
-            f"4. Select or confirm one task id from `.agent-os/tasks.yaml`; if the user asks for new work and no ready task fits, run `{bin_path} create-task --project-root {project_root} --title \"<title>\" --type <type> --output <path> --acceptance \"<check>\"`.",
-            f"5. Run `{bin_path} route-task --project-root {project_root} --task-id <task-id>`.",
-            f"6. Run `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id>` before invoking subagents, MCP tools, skills, workflows, or scripts.",
-            f"7. Before planned mutation, run `{bin_path} check-route-write --project-root {project_root} --task-id <task-id> --path <planned-path>`.",
-            f"8. Create run evidence with `{bin_path} run-task --project-root {project_root} --task-id <task-id>`.",
-            "9. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.",
-            f"10. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`.",
-            f"11. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
-            f"12. Run `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
-            f"13. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce lifecycle and required postflight.",
-            "14. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
-            f"15. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
-            f"16. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
-            f"17. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
+            f"4. If the user says `create spec`, `align spec`, `对齐spec`, or equivalent, run `{bin_path} create-spec --project-root {project_root} --title \"<title>\"` or `{bin_path} align-spec --project-root {project_root} --task-id <task-id>` before execution.",
+            f"5. Select or confirm one task id from `.agent-os/tasks.yaml`; if the user asks for new work and no ready task fits, run `{bin_path} create-task --project-root {project_root} --title \"<title>\" --type <type> --output <path> --acceptance \"<check>\"`.",
+            f"6. Run `{bin_path} route-task --project-root {project_root} --task-id <task-id>`.",
+            f"7. Run `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id>` before invoking subagents, MCP tools, skills, workflows, or scripts.",
+            f"8. Before planned mutation, run `{bin_path} check-route-write --project-root {project_root} --task-id <task-id> --path <planned-path>`.",
+            f"9. Create run evidence with `{bin_path} run-task --project-root {project_root} --task-id <task-id>`; this writes `spec-snapshot.md` and `context-pack.md`.",
+            f"10. Write/update the execution context with `{bin_path} context-pack --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} plan-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
+            "11. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.",
+            f"12. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`.",
+            f"13. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
+            f"14. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
+            f"15. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, and required postflight.",
+            "16. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
+            f"17. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
+            f"18. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
+            f"19. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
             "",
-            "Never claim boot, route, dispatch, write safety, eval, or sync success without command evidence.",
+            "Never claim boot, route, dispatch, write safety, spec alignment, context pack, plan, checkpoint, eval, completion, or sync success without command evidence.",
             "",
         ]
     )
@@ -2039,6 +2487,8 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
         run_dir / "diff_summary.md",
         run_dir / "eval.md",
         run_dir / "handoff.md",
+        run_dir / "spec-snapshot.md",
+        run_dir / "context-pack.md",
     ]
     if not dry_run:
         run_dir.mkdir(parents=True, exist_ok=False)
@@ -2069,6 +2519,7 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
         write_text(run_dir / "eval.md", "# Eval\n\nNo eval has run yet.\n")
         write_text(run_dir / "handoff.md", f"# Handoff\n\nCurrent run: {run_id}\n\nNext agent should inspect `run.yaml` and `receipt.md`.\n")
         append_command_event(run_dir, "run-task", task_id, run_id, status="started")
+        write_context_pack(project_root, task_id, run_id, summary=summary)
         write_text(project_root / ".agent-os" / "receipts" / "latest.md", receipt)
         write_text(project_root / ".agent-os" / "handoffs" / "current.md", f"# Current Handoff\n\nCurrent run: {run_id}\n\nTask: {task_id}\n")
     return {"run_id": run_id, "task": task, "route": route, "created": [str(p) for p in created], "dry_run": dry_run}
@@ -2388,6 +2839,9 @@ def complete_task(
     lifecycle = verify_lifecycle(project_root, task_id, run_id)
     if lifecycle.get("status") != "passed":
         raise ValueError("lifecycle verification failed: " + json.dumps(lifecycle.get("errors", []), ensure_ascii=False))
+    context_contract = verify_context_contract(project_root, task_id, run_id)
+    if context_contract.get("status") != "passed":
+        raise ValueError("context contract verification failed: " + json.dumps(context_contract.get("errors", []), ensure_ascii=False))
 
     postflight = run_postflight_gate(project_root, run_dir, summary, allow_pending_postflight)
     completed_at = datetime.now(timezone.utc).isoformat()
@@ -2405,6 +2859,8 @@ def complete_task(
         f"Summary: {summary}",
         "",
         f"Lifecycle Status: {lifecycle.get('status')}",
+        "",
+        f"Context Contract Status: {context_contract.get('status')}",
         "",
         f"Sync Status: {postflight.get('sync_status')}",
         "",
@@ -2450,6 +2906,7 @@ def complete_task(
         "run_id": run_id,
         "status": "completed",
         "lifecycle_status": lifecycle.get("status"),
+        "context_contract_status": context_contract.get("status"),
         "sync_status": postflight.get("sync_status"),
         "status_marker": postflight.get("status_marker", ""),
         "postflight": postflight.get("postflight", ""),
@@ -2679,6 +3136,36 @@ def cmd_create_task(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_create_spec(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = create_spec(
+            project_root,
+            title=args.title,
+            intent=args.intent or "",
+            acceptance=args.acceptance or [],
+            non_goal=args.non_goal or [],
+            set_active=not args.no_activate,
+            dry_run=args.dry_run,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0
+
+
+def cmd_align_spec(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = align_spec(project_root, task_id=args.task_id, spec_id=args.spec_id, note=args.note or "")
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0 if result.get("status") == "aligned" else 2
+
+
 def cmd_reopen_task(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
@@ -2783,6 +3270,39 @@ def cmd_phase_task(args: argparse.Namespace) -> int:
         return 1
     emit(result, args.json)
     return 0
+
+
+def cmd_context_pack(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = write_context_pack(project_root, args.task_id, args.run_id, summary=args.summary or "")
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0
+
+
+def cmd_plan_task(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = write_task_plan(project_root, args.task_id, args.run_id, summary=args.summary or "")
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0
+
+
+def cmd_verify_context(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = verify_context_contract(project_root, args.task_id, args.run_id)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0 if result.get("status") == "passed" else 2
 
 
 def cmd_verify_lifecycle(args: argparse.Namespace) -> int:
@@ -2987,6 +3507,25 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--json", action="store_true")
     create.set_defaults(func=cmd_create_task)
 
+    create_spec_parser = sub.add_parser("create-spec", help="create a durable spec contract under .agent-os/specs")
+    create_spec_parser.add_argument("--project-root", required=True)
+    create_spec_parser.add_argument("--title", required=True)
+    create_spec_parser.add_argument("--intent", default="")
+    create_spec_parser.add_argument("--acceptance", action="append", default=[], help="spec-level acceptance criterion; repeat for multiple checks")
+    create_spec_parser.add_argument("--non-goal", action="append", default=[], help="explicit non-goal; repeat for multiple items")
+    create_spec_parser.add_argument("--no-activate", action="store_true", help="create the spec without making it active")
+    create_spec_parser.add_argument("--dry-run", action="store_true")
+    create_spec_parser.add_argument("--json", action="store_true")
+    create_spec_parser.set_defaults(func=cmd_create_spec)
+
+    align_spec_parser = sub.add_parser("align-spec", help="align active or selected spec with the current task")
+    align_spec_parser.add_argument("--project-root", required=True)
+    align_spec_parser.add_argument("--task-id")
+    align_spec_parser.add_argument("--spec-id")
+    align_spec_parser.add_argument("--note", default="")
+    align_spec_parser.add_argument("--json", action="store_true")
+    align_spec_parser.set_defaults(func=cmd_align_spec)
+
     reopen = sub.add_parser("reopen-task", help="reopen a task for rerun and optionally archive/delete declared outputs")
     reopen.add_argument("--project-root", required=True)
     reopen.add_argument("--task-id", required=True)
@@ -3044,6 +3583,29 @@ def build_parser() -> argparse.ArgumentParser:
     phase_task_parser.add_argument("--skip-reason", default="", help="required when --status skipped")
     phase_task_parser.add_argument("--json", action="store_true")
     phase_task_parser.set_defaults(func=cmd_phase_task)
+
+    context_pack_parser = sub.add_parser("context-pack", help="write run context-pack.md and spec-snapshot.md")
+    context_pack_parser.add_argument("--project-root", required=True)
+    context_pack_parser.add_argument("--task-id", required=True)
+    context_pack_parser.add_argument("--run-id", required=True)
+    context_pack_parser.add_argument("--summary", default="")
+    context_pack_parser.add_argument("--json", action="store_true")
+    context_pack_parser.set_defaults(func=cmd_context_pack)
+
+    plan_task_parser = sub.add_parser("plan-task", help="write run plan.md after context pack generation")
+    plan_task_parser.add_argument("--project-root", required=True)
+    plan_task_parser.add_argument("--task-id", required=True)
+    plan_task_parser.add_argument("--run-id", required=True)
+    plan_task_parser.add_argument("--summary", default="")
+    plan_task_parser.add_argument("--json", action="store_true")
+    plan_task_parser.set_defaults(func=cmd_plan_task)
+
+    verify_context_parser = sub.add_parser("verify-context", help="verify run spec snapshot, context pack, and plan evidence")
+    verify_context_parser.add_argument("--project-root", required=True)
+    verify_context_parser.add_argument("--task-id", required=True)
+    verify_context_parser.add_argument("--run-id", required=True)
+    verify_context_parser.add_argument("--json", action="store_true")
+    verify_context_parser.set_defaults(func=cmd_verify_context)
 
     verify_lifecycle_parser = sub.add_parser("verify-lifecycle", help="verify a run has all required public lifecycle phases")
     verify_lifecycle_parser.add_argument("--project-root", required=True)

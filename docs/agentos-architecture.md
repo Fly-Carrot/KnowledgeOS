@@ -156,7 +156,7 @@ flowchart LR
     Route --> Reopen["reopen-task\nrerun one task"]:::guard
     Route --> Migrate["migrate-legacy-project\nwrite-plan / apply"]:::guard
     Route --> Archive["archive-legacy-project\ncold storage plan / apply"]:::guard
-    Route --> Execute["route-task -> dispatch-task -> check-route-write -> run-task -> eval-task -> complete-task"]:::guard
+    Route --> Execute["route-task -> dispatch-task -> check-route-write -> run-task -> context-pack -> plan-task -> eval-task -> verify-context -> complete-task"]:::guard
 
     Reset --> Evidence["Plan or receipt"]:::kernel
     Reopen --> Evidence
@@ -182,7 +182,7 @@ Example natural-language requests and expected system calls:
 | "Reorganize this old project into KnowledgeOS structure." | `knowledgeos migrate-legacy-project --project-root . --write-plan` | Produces a review-first migration plan |
 | "Now apply the approved migration plan." | `knowledgeos migrate-legacy-project --project-root . --apply` | Moves only confidently classified top-level entries |
 | "Move old leftovers out of active context but keep them." | `knowledgeos archive-legacy-project --project-root . --write-plan` | Produces a cold archive plan before moving anything |
-| "Write code for this task." | `route-task -> dispatch-task -> check-route-write -> run-task -> eval-task -> complete-task` | Prevents blind file mutation |
+| "Write code for this task." | `route-task -> dispatch-task -> check-route-write -> run-task -> context-pack -> plan-task -> eval-task -> verify-context -> complete-task` | Prevents blind file mutation and stale context |
 
 ## Fixed Lifecycle, Extensible Classification
 
@@ -411,7 +411,11 @@ knowledgeos route-task --project-root . --task-id T001
 knowledgeos dispatch-task --project-root . --task-id T001
 knowledgeos check-route-write --project-root . --task-id T001 --path docs/output.md
 knowledgeos run-task --project-root . --task-id T001
+knowledgeos context-pack --project-root . --task-id T001 --run-id RUN-...
+knowledgeos plan-task --project-root . --task-id T001 --run-id RUN-... --summary "Task plan"
 knowledgeos eval-task --project-root . --task-id T001 --run-id RUN-...
+knowledgeos verify-context --project-root . --task-id T001 --run-id RUN-...
+knowledgeos verify-lifecycle --project-root . --task-id T001 --run-id RUN-...
 knowledgeos complete-task --project-root . --task-id T001 --run-id RUN-... --summary "Done"
 
 # Reopen one unsatisfactory task
@@ -441,8 +445,10 @@ flowchart TB
     Route --> Dispatch["dispatch-task\ncapability plan visible?"]:::capability
     Dispatch --> Write["check-route-write\nwrite policy + route outputs agree?"]:::guard
     Write --> Run["run-task\ncreate run evidence"]:::kernel
-    Run --> Eval["eval-task\ndeclared outputs exist and checks pass"]:::guard
-    Eval --> Complete["complete-task\nclose state only after eval"]:::kernel
+    Run --> Context["context-pack + plan-task\nfreeze spec, context, and plan"]:::kernel
+    Context --> Eval["eval-task\ndeclared outputs exist and checks pass"]:::guard
+    Eval --> Verify["verify-context + verify-lifecycle\ncontext and checkpoint gates pass"]:::guard
+    Verify --> Complete["complete-task\nclose state only after all gates"]:::kernel
     Complete --> Receipt["receipt + handoff\nobservable continuation"]:::kernel
 
     Doctor -. fail .-> Stop["stop and report"]:::human

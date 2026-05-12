@@ -9,19 +9,23 @@ This prompt is only the session trigger. Durable rules live in `AGENTS.md`, `.ag
 Before substantial work:
 
 1. Read `AGENTS.md`.
-2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.
+2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/specs.yaml`, `.agent-os/phase-policy.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.
 3. Run `./bin/knowledgeos doctor --project-root . --summary` and do not proceed if it fails.
-4. Select or confirm one task id from `.agent-os/tasks.yaml`.
-5. Run `./bin/knowledgeos route-task --project-root . --task-id <task-id>`.
-6. Run `./bin/knowledgeos dispatch-task --project-root . --task-id <task-id>` before invoking subagents, MCP tools, skills, workflows, or scripts.
-7. Before planned mutation, run `./bin/knowledgeos check-route-write --project-root . --task-id <task-id> --path <planned-path>`.
-8. Create run evidence with `./bin/knowledgeos run-task --project-root . --task-id <task-id>`.
-9. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.
-10. Run `./bin/knowledgeos eval-task --project-root . --task-id <task-id> --run-id <run-id>`; do not manually append eval status.
-11. Use `./bin/knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`.
-12. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after it succeeds.
-13. For reset requests, run `./bin/knowledgeos reset-project --project-root . --mode <soft|hard> --dry-run` before destructive action.
-14. For old-project reorganization requests, run `./bin/knowledgeos migrate-legacy-project --project-root . --write-plan` before moving files.
-15. For historical or superseded files that should be stored but not read by default, run `./bin/knowledgeos archive-legacy-project --project-root . --write-plan` before moving files into `archive/`.
+4. If the user says `create spec`, `align spec`, `创建spec`, `对齐spec`, or equivalent, run `./bin/knowledgeos create-spec --project-root . --title "<title>"` or `./bin/knowledgeos align-spec --project-root . --task-id <task-id>` before execution.
+5. Select or confirm one task id from `.agent-os/tasks.yaml`.
+6. Run `./bin/knowledgeos route-task --project-root . --task-id <task-id>`.
+7. Run `./bin/knowledgeos dispatch-task --project-root . --task-id <task-id>` before invoking subagents, MCP tools, skills, workflows, or scripts.
+8. Before planned mutation, run `./bin/knowledgeos check-route-write --project-root . --task-id <task-id> --path <planned-path>`.
+9. Create run evidence with `./bin/knowledgeos run-task --project-root . --task-id <task-id>`.
+10. Write/update the execution context with `./bin/knowledgeos context-pack --project-root . --task-id <task-id> --run-id <run-id>` and `./bin/knowledgeos plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`.
+11. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.
+12. Record public phase evidence with `./bin/knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<command/file/user confirmation>"`.
+13. Run `./bin/knowledgeos eval-task --project-root . --task-id <task-id> --run-id <run-id>`; do not manually append eval status.
+14. Run `./bin/knowledgeos verify-context --project-root . --task-id <task-id> --run-id <run-id>` and `./bin/knowledgeos verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>`.
+15. Use `./bin/knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`; it enforces spec/context/plan, lifecycle, and required postflight.
+16. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.
+17. For reset requests, run `./bin/knowledgeos reset-project --project-root . --mode <soft|hard> --dry-run` before destructive action.
+18. For old-project reorganization requests, run `./bin/knowledgeos migrate-legacy-project --project-root . --write-plan` before moving files.
+19. For historical or superseded files that should be stored but not read by default, run `./bin/knowledgeos archive-legacy-project --project-root . --write-plan` before moving files into `archive/`.
 
-Never claim boot, route, dispatch, write safety, eval, or sync success without command evidence.
+Never claim boot, route, dispatch, write safety, spec alignment, context pack, plan, checkpoint, eval, completion, or sync success without command evidence.

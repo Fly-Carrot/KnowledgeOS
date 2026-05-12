@@ -74,8 +74,10 @@ else
 fi
 
 run_checkpoint "doctor-summary-clean-project" 0 "$BIN" doctor --project-root "$PROJECT" --project-only --summary
+run_checkpoint "create-spec-contract" 0 "$BIN" create-spec --project-root "$PROJECT" --title "Distracted agent guardrail spec" --intent "Keep spec, context, plan, checkpoint, eval, and sync evidence visible." --acceptance "run context includes the spec snapshot" --json
 run_checkpoint "route-initialization-task" 0 "$BIN" route-task --project-root "$PROJECT" --task-id T001 --json
 run_checkpoint "dispatch-initialization-task" 0 "$BIN" dispatch-task --project-root "$PROJECT" --task-id T001 --json
+run_checkpoint "align-spec-before-run" 0 "$BIN" align-spec --project-root "$PROJECT" --task-id T001 --json
 run_checkpoint "raw-material-mutation-blocked" 2 "$BIN" check-route-write --project-root "$PROJECT" --task-id T001 --path materials/raw/source.pdf --json
 run_checkpoint "route-output-denied" 2 "$BIN" check-route-write --project-root "$PROJECT" --task-id T001 --path src/main.py --json
 run_checkpoint "unrouted-task-human-triage" 2 "$BIN" route-task --project-root "$PROJECT" --task-type invented_unregistered_work --json
@@ -102,6 +104,9 @@ else
 fi
 
 if [[ -n "$RUN_ID" ]]; then
+  run_checkpoint "verify-context-without-plan-blocked" 2 "$BIN" verify-context --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --json
+  run_checkpoint "plan-task-writes-checkpoint-plan" 0 "$BIN" plan-task --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --summary "Scenario plan loads spec snapshot and context before work." --json
+  run_checkpoint "verify-context-passed" 0 "$BIN" verify-context --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --json
   run_checkpoint "completion-without-eval-blocked" 1 "$BIN" complete-task --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --summary "Should not complete yet."
   run_checkpoint "eval-task-generates-evidence" 0 "$BIN" eval-task --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --json
   for phase in route plan review dispatch execute report; do

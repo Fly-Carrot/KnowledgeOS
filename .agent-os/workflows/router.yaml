@@ -6,8 +6,11 @@ workflows:
       - doctor --root .
       - check-write --project-root . --path templates/
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: scaffold_task
@@ -25,8 +28,11 @@ workflows:
       - doctor --project-root .
       - check-write --project-root . --path .knowledgeos-local/inventory/
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: inventory_task
@@ -41,8 +47,11 @@ workflows:
       - doctor --root . --project-root templates/project-control-plane --template
       - check-write --project-root . --path templates/project-control-plane/
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: template_task
@@ -58,8 +67,11 @@ workflows:
       - doctor --root . --project-root .
       - check-write --project-root . --path knowledgeos/cli.py
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: executable_control_plane
@@ -77,8 +89,11 @@ workflows:
       - doctor --project-root .
       - agent-guide --project-root .
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: guardrail_task
@@ -97,8 +112,11 @@ workflows:
       - route-task --project-root . --task-id <task-id>
       - check-write --project-root . --path .agent-os/workflows/router.yaml
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: workflow_router_task
@@ -118,8 +136,11 @@ workflows:
       - tool-registry --project-root . --check-paths
       - check-write --project-root . --path .agent-os/tool-registry.yaml
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: tool_registry_task
@@ -140,8 +161,11 @@ workflows:
       - route-task --project-root . --task-id <task-id>
       - check-route-write --project-root . --task-id <task-id> --path <planned-path>
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: route_bound_guard_task
@@ -178,8 +202,11 @@ workflows:
       - dispatch-task --project-root . --task-id <task-id>
       - check-route-write --project-root . --task-id <task-id> --path <planned-path>
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: capability_orchestration_task
@@ -207,8 +234,11 @@ workflows:
       - archive-legacy-project --project-root . --write-plan
       - check-route-write --project-root . --task-id <task-id> --path archive/
       - run-task --project-root . --task-id <task-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: archive_task

@@ -55,8 +55,10 @@ check-route-write
   allow writes only when both write-policy and route.allowed_outputs agree
 run-task
   create run evidence only for routed ready/in-progress tasks
+context-pack / plan-task
+  freeze active spec, current context, and public execution plan before work
 complete-task
-  close task state only after eval-task passes and declared outputs exist
+  close task state only after context, lifecycle, eval, outputs, and postflight gates pass
 ```
 
 This makes the project control plane a route-bound harness rather than a purely advisory checklist.

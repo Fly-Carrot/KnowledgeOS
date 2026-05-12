@@ -29,6 +29,8 @@ write_policy:
     - "**/*secrets*"
     - reports/final/**
     - .agent-os/tasks.yaml
+    - .agent-os/specs.yaml
+    - .agent-os/specs/**
     - .agent-os/evals.yaml
     - .agent-os/read-policy.yaml
     - .agent-os/write-policy.yaml
@@ -38,6 +40,9 @@ write_policy:
     - .agent-os/phase-policy.yaml
     - .agent-os/fabric-link.yaml
     - .agent-os/runs/**/run.yaml
+    - .agent-os/runs/**/context-pack.md
+    - .agent-os/runs/**/spec-snapshot.md
+    - .agent-os/runs/**/plan.md
     - .agent-os/runs/**/eval.md
     - .agent-os/runs/**/phases.ndjson
     - .agent-os/runs/**/command-events.ndjson

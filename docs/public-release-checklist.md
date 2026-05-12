@@ -11,6 +11,9 @@ Before publishing KnowledgeOS, verify:
 - Agent Shared Fabric is described as a kernel module, not copied project content;
 - Any future app is described as a workbench that consumes receipts/wiki/graph outputs;
 - `archive/**` is documented as cold storage, not default context.
+- `create-spec` and `align-spec` work for durable user intent;
+- `context-pack`, `plan-task`, and `verify-context` work;
+- `complete-task` refuses missing plan/context evidence and spec drift;
 - `create-task` works and new work does not require abusing `reopen-task`;
 - `phase-task` and `verify-lifecycle` work;
 - `complete-task` refuses missing phases;
