@@ -272,3 +272,31 @@ tasks:
       - apply moves only strong candidates or explicit includes
       - existing migration and reset behavior remains unchanged
       - doctor and unit tests pass
+  - id: KOS-T015
+    title: "Add task intake and lifecycle gates"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "guardrail_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/LIVE-REPORT.md"
+      - "docs/executable-control-plane.md"
+      - "docs/route-bound-execution-guard.md"
+      - "docs/public-release-checklist.md"
+      - "docs/reset-and-migration.md"
+      - "AGENTS.md"
+      - ".agent-os/tasks.yaml"
+      - ".agent-os/phase-policy.yaml"
+      - ".agent-os/workflows/router.yaml"
+      - "templates/project-control-plane/AGENTS.md"
+      - "templates/project-control-plane/.agent-os/startup-prompt.md"
+      - "templates/project-control-plane/.agent-os/phase-policy.yaml"
+      - "templates/project-control-plane/.agent-os/workflows/router.yaml"
+      - "examples/scenarios/run_guardrail_scenarios.sh"
+    acceptance:
+      - "create-task works for new task intake"
+      - "phase-task and verify-lifecycle enforce required phases"
+      - "complete-task runs required postflight or records explicit pending reason"
+      - "doctor, unit tests, scenarios, and smoke pass"

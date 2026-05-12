@@ -27,6 +27,26 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.fail(f"command failed: {result.args}\nstdout={result.stdout}\nstderr={result.stderr}")
         return result
 
+    def log_required_phases(self, project: Path, task_id: str, run_id: str) -> None:
+        for phase in ["route", "plan", "review", "dispatch", "execute", "report"]:
+            self.run_cli(
+                "phase-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--phase",
+                phase,
+                "--status",
+                "completed",
+                "--note",
+                f"Recorded {phase} decision trace.",
+                "--evidence",
+                f"test evidence for {phase}",
+            )
+
     def test_doctor_public_root_passes(self):
         result = self.run_cli("doctor", "--root", str(ROOT), "--json")
         payload = json.loads(result.stdout)
@@ -278,6 +298,122 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertEqual(unrouted.returncode, 1)
             self.assertIn("routing failed", unrouted.stderr)
 
+    def test_create_task_assigns_unique_ids_and_routes_unknown_type_to_triage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            tasks_path = project / ".agent-os" / "tasks.yaml"
+            tasks_path.write_text(
+                "tasks:\n"
+                "  - id: T001\n"
+                "    title: Existing initialization\n"
+                "    type: initialization\n"
+                "    status: completed\n"
+                "    outputs:\n"
+                "      - .agent-os/workspace.yaml\n",
+                encoding="utf-8",
+            )
+
+            created = self.run_cli(
+                "create-task",
+                "--project-root",
+                str(project),
+                "--title",
+                "Draft new work",
+                "--type",
+                "unregistered_task_type",
+                "--output",
+                "docs/new-work.md",
+                "--acceptance",
+                "new task can be routed or triaged",
+                "--json",
+            )
+            payload = json.loads(created.stdout)
+            self.assertEqual(payload["task_id"], "T002")
+            self.assertEqual(payload["status"], "ready")
+            self.assertIn("id: T002", tasks_path.read_text(encoding="utf-8"))
+
+            route = self.run_cli(
+                "route-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T002",
+                "--json",
+                check=False,
+            )
+            self.assertEqual(route.returncode, 2)
+            self.assertEqual(json.loads(route.stdout)["status"], "human_triage_required")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "KosProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Kos")
+            tasks_path = project / ".agent-os" / "tasks.yaml"
+            tasks_path.write_text(
+                "tasks:\n"
+                "  - id: KOS-T022\n"
+                "    title: Existing KnowledgeOS task\n"
+                "    type: initialization\n"
+                "    status: completed\n"
+                "    outputs:\n"
+                "      - .agent-os/workspace.yaml\n",
+                encoding="utf-8",
+            )
+            created = self.run_cli(
+                "create-task",
+                "--project-root",
+                str(project),
+                "--title",
+                "Follow up task",
+                "--type",
+                "initialization",
+                "--output",
+                ".agent-os/project.yaml",
+                "--acceptance",
+                "new task can be routed",
+                "--json",
+            )
+            self.assertEqual(json.loads(created.stdout)["task_id"], "KOS-T023")
+            routed = self.run_cli("route-task", "--project-root", str(project), "--task-id", "KOS-T023", "--json")
+            self.assertEqual(json.loads(routed.stdout)["status"], "routed")
+
+    def test_create_task_requires_output_and_acceptance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            missing_output = self.run_cli(
+                "create-task",
+                "--project-root",
+                str(project),
+                "--title",
+                "No output",
+                "--type",
+                "initialization",
+                "--acceptance",
+                "must have output",
+                check=False,
+            )
+            self.assertNotEqual(missing_output.returncode, 0)
+            self.assertIn("--output", missing_output.stderr)
+
+            missing_acceptance = self.run_cli(
+                "create-task",
+                "--project-root",
+                str(project),
+                "--title",
+                "No acceptance",
+                "--type",
+                "initialization",
+                "--output",
+                ".agent-os/project.yaml",
+                check=False,
+            )
+            self.assertNotEqual(missing_acceptance.returncode, 0)
+            self.assertIn("--acceptance", missing_acceptance.stderr)
+
     def test_complete_task_requires_passed_eval_and_updates_status(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
@@ -353,6 +489,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 "--json",
             )
             self.assertEqual(json.loads(eval_result.stdout)["status"], "passed")
+            self.log_required_phases(project, "T001", run_id)
             completed = self.run_cli(
                 "complete-task",
                 "--project-root",
@@ -363,13 +500,242 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 run_id,
                 "--summary",
                 "Guarded task complete.",
+                "--allow-pending-postflight",
+                "temporary project does not configure an executable postflight hook",
                 "--json",
             )
             payload = json.loads(completed.stdout)
             self.assertEqual(payload["status"], "completed")
+            self.assertEqual(payload["sync_status"], "PENDING")
             self.assertIn("status: completed", (run_dir / "run.yaml").read_text(encoding="utf-8"))
             self.assertIn("status: completed", (project / ".agent-os" / "tasks.yaml").read_text(encoding="utf-8"))
             self.assertIn("Guarded task complete", (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8"))
+
+    def test_complete_task_requires_lifecycle_phases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id)
+
+            blocked = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Should fail before lifecycle.",
+                check=False,
+            )
+            self.assertEqual(blocked.returncode, 1)
+            self.assertIn("lifecycle", blocked.stderr)
+
+            self.log_required_phases(project, "T001", run_id)
+            verified = self.run_cli(
+                "verify-lifecycle",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+            )
+            self.assertEqual(json.loads(verified.stdout)["status"], "passed")
+
+    def test_phase_task_requires_skip_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+
+            missing_reason = self.run_cli(
+                "phase-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--phase",
+                "review",
+                "--status",
+                "skipped",
+                "--note",
+                "Skip without reason should fail.",
+                check=False,
+            )
+            self.assertEqual(missing_reason.returncode, 1)
+            self.assertIn("skip reason", missing_reason.stderr)
+
+            self.run_cli(
+                "phase-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--phase",
+                "review",
+                "--status",
+                "skipped",
+                "--note",
+                "Skipped after human-approved simplification.",
+                "--skip-reason",
+                "human approved skipping review in this test",
+            )
+            verify = self.run_cli(
+                "verify-lifecycle",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(verify.returncode, 2)
+            self.assertIn("missing_phases", verify.stdout)
+
+    def test_complete_task_requires_postflight_or_records_pending_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.log_required_phases(project, "T001", run_id)
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id)
+
+            blocked = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Should fail without postflight.",
+                "--json",
+                check=False,
+            )
+            self.assertEqual(blocked.returncode, 1)
+            self.assertIn("postflight", blocked.stderr)
+
+            completed = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Completed with explicit pending postflight.",
+                "--allow-pending-postflight",
+                "temp project has no executable shared-fabric hook",
+                "--json",
+            )
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["status"], "completed")
+            self.assertEqual(payload["sync_status"], "PENDING")
+            receipt = (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("Pending Postflight", receipt)
+            self.assertIn("temp project has no executable shared-fabric hook", receipt)
+
+    def test_complete_task_runs_postflight_hook_when_required(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = Path(tmp) / "KnowledgeOSRuntime"
+            self.run_cli("init-os", "--root", str(ROOT), "--os-root", str(runtime), "--json")
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Example",
+                "--global-root",
+                str(runtime / "global-agent-fabric"),
+                "--capability-root",
+                str(runtime / "capability-layer"),
+            )
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.log_required_phases(project, "T001", run_id)
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id)
+            completed = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Completed with real postflight hook.",
+                "--json",
+            )
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["status"], "completed")
+            self.assertEqual(payload["sync_status"], "SYNC_OK")
+            self.assertEqual(payload["status_marker"], "[SYNC_OK]")
+            self.assertIn("[SYNC_OK]", (project / ".agent-os" / "runs" / run_id / "postflight.md").read_text(encoding="utf-8"))
+
+    def test_template_postflight_does_not_dirty_public_template_ledgers(self):
+        receipts = ROOT / "templates" / "governance-core" / "sync" / "receipts.ndjson"
+        handoffs = ROOT / "templates" / "governance-core" / "memory" / "handoffs.ndjson"
+        before_receipts = receipts.read_text(encoding="utf-8")
+        before_handoffs = handoffs.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Example",
+                "--global-root",
+                str(ROOT / "templates" / "governance-core"),
+                "--capability-root",
+                str(ROOT / "templates" / "capability-layer"),
+            )
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.log_required_phases(project, "T001", run_id)
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id)
+            completed = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Template hook should not dirty public ledgers.",
+                "--json",
+            )
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["sync_status"], "SYNC_OK")
+            self.assertTrue((project / ".agent-os" / "runs" / run_id / "kernel-postflight" / "sync" / "receipts.ndjson").exists())
+        self.assertEqual(receipts.read_text(encoding="utf-8"), before_receipts)
+        self.assertEqual(handoffs.read_text(encoding="utf-8"), before_handoffs)
 
     def test_eval_and_complete_require_declared_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -700,6 +1066,8 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("route-task", result.stdout)
             self.assertIn("tool-registry", result.stdout)
             self.assertIn("check-route-write", result.stdout)
+            self.assertIn("phase-task", result.stdout)
+            self.assertIn("verify-lifecycle", result.stdout)
             self.assertIn("complete-task", result.stdout)
             self.assertIn("archive-legacy-project", result.stdout)
 

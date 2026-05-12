@@ -79,6 +79,8 @@ run_checkpoint "dispatch-initialization-task" 0 "$BIN" dispatch-task --project-r
 run_checkpoint "raw-material-mutation-blocked" 2 "$BIN" check-route-write --project-root "$PROJECT" --task-id T001 --path materials/raw/source.pdf --json
 run_checkpoint "route-output-denied" 2 "$BIN" check-route-write --project-root "$PROJECT" --task-id T001 --path src/main.py --json
 run_checkpoint "unrouted-task-human-triage" 2 "$BIN" route-task --project-root "$PROJECT" --task-type invented_unregistered_work --json
+run_checkpoint "create-task-new-work-entry" 0 "$BIN" create-task --project-root "$PROJECT" --title "New unregistered work" --type invented_unregistered_work --output docs/new-work.md --acceptance "new task is visible for triage" --json
+run_checkpoint "created-task-human-triage" 2 "$BIN" route-task --project-root "$PROJECT" --task-id T003 --json
 run_checkpoint "reset-project-dry-run-visible" 0 "$BIN" reset-project --project-root "$PROJECT" --mode soft --dry-run --json
 
 mkdir -p "$PROJECT/code" "$PROJECT/前期材料"
@@ -102,7 +104,11 @@ fi
 if [[ -n "$RUN_ID" ]]; then
   run_checkpoint "completion-without-eval-blocked" 1 "$BIN" complete-task --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --summary "Should not complete yet."
   run_checkpoint "eval-task-generates-evidence" 0 "$BIN" eval-task --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --json
-  run_checkpoint "completion-after-eval-passed" 0 "$BIN" complete-task --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --summary "Scenario completed after eval evidence."
+  for phase in route plan review dispatch execute report; do
+    run_checkpoint "phase-$phase-recorded" 0 "$BIN" phase-task --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --phase "$phase" --status completed --note "Scenario recorded $phase public trace." --evidence "guardrail scenario"
+  done
+  run_checkpoint "verify-lifecycle-passed" 0 "$BIN" verify-lifecycle --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --json
+  run_checkpoint "completion-after-lifecycle-and-eval-passed" 0 "$BIN" complete-task --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --summary "Scenario completed after eval and lifecycle evidence."
 else
   print_header "completion-checks-skipped"
   printf 'exit: 1\nmissing run id; completion checkpoints skipped\ncheckpoint_status: FAIL\n'

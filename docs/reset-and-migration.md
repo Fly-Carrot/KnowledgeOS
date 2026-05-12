@@ -29,6 +29,17 @@ Optional output cleanup:
 
 By default, cleanup archives outputs instead of deleting them. Control-plane outputs under `.agent-os/` are protected.
 
+Do not use `reopen-task` as task intake. If the user asks for a new issue or a new piece of work, create a fresh task:
+
+```bash
+./bin/knowledgeos create-task \
+  --project-root /path/to/project \
+  --title "New work title" \
+  --type route_bound_execution_guard \
+  --output docs/new-work.md \
+  --acceptance "result is reviewable"
+```
+
 ### Soft Reset
 
 Use this when the project should keep its OS configuration but lose volatile run state.

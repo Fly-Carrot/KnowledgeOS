@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -67,6 +68,7 @@ REQUIRED_PUBLIC_FILES = [
     "templates/project-control-plane/.agent-os/project.yaml",
     "templates/project-control-plane/.agent-os/startup-prompt.md",
     "templates/project-control-plane/.agent-os/tasks.yaml",
+    "templates/project-control-plane/.agent-os/phase-policy.yaml",
     "templates/project-control-plane/.agent-os/read-policy.yaml",
     "templates/project-control-plane/.agent-os/write-policy.yaml",
     "templates/project-control-plane/archive/README.md",
@@ -82,6 +84,7 @@ REQUIRED_PROJECT_FILES = [
     ".agent-os/project.yaml",
     ".agent-os/startup-prompt.md",
     ".agent-os/tasks.yaml",
+    ".agent-os/phase-policy.yaml",
     ".agent-os/decisions.yaml",
     ".agent-os/evals.yaml",
     ".agent-os/artifacts.yaml",
@@ -116,6 +119,7 @@ READ_POLICY_SECTIONS = {
 }
 
 EXPECTED_PHASE_KEYS = ["route", "plan", "review", "dispatch", "execute", "report"]
+PHASE_STATUSES = {"completed", "skipped"}
 TASK_STATUSES = {"backlog", "ready", "in_progress", "blocked", "completed", "cancelled"}
 RUNNABLE_TASK_STATUSES = {"ready", "in_progress"}
 TOOL_KINDS = {"mcp", "skill", "workflow", "orchestrator", "subagent", "memory"}
@@ -138,6 +142,7 @@ REQUIRED_AGENT_GUIDE_FILES = [
     ".agent-os/project.yaml",
     ".agent-os/startup-prompt.md",
     ".agent-os/tasks.yaml",
+    ".agent-os/phase-policy.yaml",
     ".agent-os/decisions.yaml",
     ".agent-os/evals.yaml",
     ".agent-os/capabilities.yaml",
@@ -327,6 +332,56 @@ def parse_task_list_field(path: Path, field_name: str) -> dict[str, list[str]]:
             if value:
                 values.setdefault(current_id, []).append(value)
     return values
+
+
+def parse_phase_policy(project_root: Path) -> dict[str, Any]:
+    policy_path = project_root / ".agent-os" / "phase-policy.yaml"
+    if not policy_path.exists():
+        raise FileNotFoundError(f"missing phase policy: {policy_path}")
+    required_phases: list[str] = []
+    require_skip_reason = True
+    in_required = False
+    in_default = False
+    in_skip = False
+    for raw in read_text(policy_path).splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        stripped = raw.strip()
+        indent = len(raw) - len(raw.lstrip(" "))
+        if indent == 0:
+            in_required = stripped == "required_phases:"
+            in_skip = stripped == "skip_policy:"
+            in_default = False
+            continue
+        if in_required and indent == 2 and stripped == "default:":
+            in_default = True
+            continue
+        if in_required and in_default and stripped.startswith("-"):
+            value = stripped[1:].strip().strip('"').strip("'")
+            if value:
+                required_phases.append(value)
+            continue
+        if in_skip and ":" in stripped and not stripped.startswith("-"):
+            key, value = stripped.split(":", 1)
+            if key.strip() == "require_skip_reason":
+                require_skip_reason = value.strip().strip('"').strip("'").lower() == "true"
+    return {
+        "required_phases": {"default": required_phases},
+        "skip_policy": {"require_skip_reason": require_skip_reason},
+    }
+
+
+def validate_phase_policy(project_root: Path) -> list[CheckResult]:
+    try:
+        policy = parse_phase_policy(project_root)
+    except FileNotFoundError as exc:
+        return [CheckResult(False, "phase_policy", str(exc))]
+    required = policy["required_phases"]["default"]
+    require_skip_reason = policy["skip_policy"]["require_skip_reason"]
+    return [
+        CheckResult(required == EXPECTED_PHASE_KEYS, "phase_policy", f"default required phases={required}"),
+        CheckResult(require_skip_reason, "phase_policy", "skipped phases require a skip reason"),
+    ]
 
 
 def parse_named_blocks(path: Path) -> list[dict[str, str]]:
@@ -908,6 +963,89 @@ def find_task(project_root: Path, task_id: str) -> dict[str, str]:
         if task.get("id") == task_id:
             return task
     raise KeyError(f"task not found: {task_id}")
+
+
+def yaml_scalar(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def next_task_id(tasks: list[dict[str, str]]) -> str:
+    kos_numbers: list[int] = []
+    template_numbers: list[int] = []
+    for task in tasks:
+        task_id = task.get("id", "")
+        kos_match = re.fullmatch(r"KOS-T(\d+)", task_id)
+        if kos_match:
+            kos_numbers.append(int(kos_match.group(1)))
+            continue
+        template_match = re.fullmatch(r"T(\d+)", task_id)
+        if template_match:
+            template_numbers.append(int(template_match.group(1)))
+    if kos_numbers:
+        return f"KOS-T{max(kos_numbers) + 1:03d}"
+    if template_numbers:
+        return f"T{max(template_numbers) + 1:03d}"
+    return "T001"
+
+
+def create_task(
+    project_root: Path,
+    *,
+    title: str,
+    task_type: str,
+    status: str,
+    complexity: str,
+    risk: str,
+    outputs: list[str],
+    acceptance: list[str],
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    ensure_safe_project_root(project_root)
+    if status not in TASK_STATUSES:
+        raise ValueError(f"invalid task status: {status}")
+    if not title.strip():
+        raise ValueError("--title is required")
+    if not task_type.strip():
+        raise ValueError("--type is required")
+    if not outputs:
+        raise ValueError("at least one --output is required")
+    if not acceptance:
+        raise ValueError("at least one --acceptance is required")
+
+    tasks_path = project_root / ".agent-os" / "tasks.yaml"
+    if not tasks_path.exists():
+        raise FileNotFoundError(f"missing tasks file: {tasks_path}")
+    tasks = parse_tasks(tasks_path)
+    task_id = next_task_id(tasks)
+    block_lines = [
+        f"  - id: {task_id}",
+        f"    title: {yaml_scalar(title.strip())}",
+        f"    type: {yaml_scalar(task_type.strip())}",
+        f"    status: {status}",
+        f"    complexity: {yaml_scalar(complexity.strip() or 'medium')}",
+        f"    risk: {yaml_scalar(risk.strip() or 'normal')}",
+        "    outputs:",
+        *[f"      - {yaml_scalar(item.strip())}" for item in outputs if item.strip()],
+        "    acceptance:",
+        *[f"      - {yaml_scalar(item.strip())}" for item in acceptance if item.strip()],
+    ]
+    if not dry_run:
+        current = read_text(tasks_path).rstrip()
+        if not current:
+            current = "tasks:"
+        write_text(tasks_path, current + "\n" + "\n".join(block_lines) + "\n")
+    return {
+        "task_id": task_id,
+        "title": title.strip(),
+        "type": task_type.strip(),
+        "status": status,
+        "complexity": complexity.strip() or "medium",
+        "risk": risk.strip() or "normal",
+        "outputs": outputs,
+        "acceptance": acceptance,
+        "dry_run": dry_run,
+        "path": str(tasks_path),
+    }
 
 
 def resolve_run_dir(project_root: Path, run_id: str) -> Path:
@@ -1604,6 +1742,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
         results.append(CheckResult(fabric.get(key) == "true", "runtime_contract", f"{key}=true"))
     phases = parse_simple_list_sections(agent_os / "fabric-link.yaml", {"phase_keys"}).get("phase_keys", [])
     results.append(CheckResult(phases == EXPECTED_PHASE_KEYS, "phase_keys", f"{phases}"))
+    results.extend(validate_phase_policy(project_root))
 
     policy = load_write_policy(project_root)
     for section in sorted(WRITE_POLICY_SECTIONS):
@@ -1647,6 +1786,8 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                         f"{run_id} eval generated by knowledgeos eval-task",
                     )
                 )
+                lifecycle = verify_lifecycle(project_root, metadata.get("task_id", ""), run_id)
+                results.append(CheckResult(lifecycle.get("status") == "passed", "completed_run_lifecycle", f"{run_id} lifecycle status={lifecycle.get('status')}"))
 
     decisions = parse_named_blocks(agent_os / "decisions.yaml")
     results.extend(unique_id_results(decisions, "decision_ids"))
@@ -1702,18 +1843,30 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
             )
             if isinstance(route_order, list):
                 has_run = any("run-task" in item for item in route_order)
+                has_phase = any("phase-task" in item for item in route_order)
                 has_eval = any("eval-task" in item for item in route_order)
+                has_verify = any("verify-lifecycle" in item for item in route_order)
                 has_complete = any("complete-task" in item for item in route_order)
                 eval_index = next((idx for idx, item in enumerate(route_order) if "eval-task" in item), -1)
+                verify_index = next((idx for idx, item in enumerate(route_order) if "verify-lifecycle" in item), -1)
                 complete_index = next((idx for idx, item in enumerate(route_order) if "complete-task" in item), -1)
                 results.append(CheckResult(has_run, "workflow_router_lifecycle", f"{name} includes run-task"))
+                results.append(CheckResult(has_phase, "workflow_router_lifecycle", f"{name} includes phase-task"))
                 results.append(CheckResult(has_eval, "workflow_router_lifecycle", f"{name} includes eval-task"))
+                results.append(CheckResult(has_verify, "workflow_router_lifecycle", f"{name} includes verify-lifecycle"))
                 results.append(CheckResult(has_complete, "workflow_router_lifecycle", f"{name} includes complete-task"))
                 results.append(
                     CheckResult(
                         eval_index >= 0 and complete_index >= 0 and eval_index < complete_index,
                         "workflow_router_lifecycle",
                         f"{name} eval-task before complete-task",
+                    )
+                )
+                results.append(
+                    CheckResult(
+                        verify_index >= 0 and complete_index >= 0 and verify_index < complete_index,
+                        "workflow_router_lifecycle",
+                        f"{name} verify-lifecycle before complete-task",
                     )
                 )
             else:
@@ -1739,6 +1892,7 @@ def build_agent_guide(project_root: Path) -> str:
             "   - .agent-os/workspace.yaml",
             "   - .agent-os/project.yaml",
             "   - .agent-os/tasks.yaml",
+            "   - .agent-os/phase-policy.yaml",
             "   - .agent-os/decisions.yaml",
             "   - .agent-os/evals.yaml",
             "   - .agent-os/capabilities.yaml",
@@ -1748,6 +1902,7 @@ def build_agent_guide(project_root: Path) -> str:
             "3. Run checks before acting.",
             f"   - {bin_path} doctor --project-root {project_root} --summary",
             f"   - {bin_path} tool-registry --project-root {project_root}",
+            f"   - {bin_path} create-task --project-root {project_root} --title <title> --type <type> --output <path> --acceptance <check>",
             f"   - {bin_path} route-task --project-root {project_root} --task-id <task-id>",
             f"   - {bin_path} dispatch-task --project-root {project_root} --task-id <task-id>",
             f"   - {bin_path} check-route-write --project-root {project_root} --task-id <task-id> --path <planned-path>",
@@ -1763,7 +1918,9 @@ def build_agent_guide(project_root: Path) -> str:
             "",
             "6. Keep receipts.",
             "   - update .agent-os/runs/RUN-*/receipt.md;",
+            f"   - {bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>;",
             f"   - {bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
+            f"   - {bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
             "   - update .agent-os/handoffs/current.md.",
             f"   - {bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary <summary>",
             "",
@@ -1771,7 +1928,7 @@ def build_agent_guide(project_root: Path) -> str:
             "   - report [SYNC_OK] only after postflight succeeds.",
             "",
             "8. For reset or migration requests, stay reversible first.",
-            f"   - {bin_path} reopen-task --project-root {project_root} --task-id <task-id> --reason <reason>",
+            f"   - {bin_path} reopen-task --project-root {project_root} --task-id <task-id> --reason <reason>  # same-task rerun only",
             f"   - {bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run",
             f"   - {bin_path} migrate-legacy-project --project-root {project_root} --write-plan",
             f"   - {bin_path} archive-legacy-project --project-root {project_root} --write-plan",
@@ -1795,20 +1952,22 @@ def build_startup_prompt(project_root: Path) -> str:
             "Before substantial work:",
             "",
             "1. Read `AGENTS.md`.",
-            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
+            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/phase-policy.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
             f"3. Run `{bin_path} doctor --project-root {project_root} --summary` and do not proceed if it fails.",
-            "4. Select or confirm one task id from `.agent-os/tasks.yaml`.",
+            f"4. Select or confirm one task id from `.agent-os/tasks.yaml`; if the user asks for new work and no ready task fits, run `{bin_path} create-task --project-root {project_root} --title \"<title>\" --type <type> --output <path> --acceptance \"<check>\"`.",
             f"5. Run `{bin_path} route-task --project-root {project_root} --task-id <task-id>`.",
             f"6. Run `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id>` before invoking subagents, MCP tools, skills, workflows, or scripts.",
             f"7. Before planned mutation, run `{bin_path} check-route-write --project-root {project_root} --task-id <task-id> --path <planned-path>`.",
             f"8. Create run evidence with `{bin_path} run-task --project-root {project_root} --task-id <task-id>`.",
             "9. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.",
-            f"10. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
-            f"11. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`.",
-            "12. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after it succeeds.",
-            f"13. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
-            f"14. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
-            f"15. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
+            f"10. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`.",
+            f"11. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
+            f"12. Run `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
+            f"13. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce lifecycle and required postflight.",
+            "14. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
+            f"15. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
+            f"16. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
+            f"17. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
             "",
             "Never claim boot, route, dispatch, write safety, eval, or sync success without command evidence.",
             "",
@@ -1867,6 +2026,258 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
     return {"run_id": run_id, "task": task, "route": route, "created": [str(p) for p in created], "dry_run": dry_run}
 
 
+def ensure_run_belongs_to_task(project_root: Path, task_id: str, run_id: str) -> Path:
+    find_task(project_root, task_id)
+    run_dir = resolve_run_dir(project_root, run_id)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"missing run directory: {run_dir}")
+    run_yaml = run_dir / "run.yaml"
+    if not run_yaml.exists():
+        raise FileNotFoundError(f"missing run metadata: {run_yaml}")
+    metadata = parse_scalar_values(run_yaml, {"run_id", "task_id", "status"})
+    if metadata.get("task_id") != task_id:
+        raise ValueError(f"run {run_id} belongs to task {metadata.get('task_id')!r}, not {task_id!r}")
+    return run_dir
+
+
+def record_task_phase(
+    project_root: Path,
+    task_id: str,
+    run_id: str,
+    *,
+    phase: str,
+    status: str,
+    note: str,
+    evidence: str = "",
+    skip_reason: str = "",
+) -> dict[str, Any]:
+    policy = parse_phase_policy(project_root)
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    allowed_phases = policy["required_phases"]["default"]
+    if phase not in allowed_phases:
+        raise ValueError(f"invalid phase {phase!r}; expected one of {allowed_phases}")
+    if status not in PHASE_STATUSES:
+        raise ValueError(f"invalid phase status {status!r}; expected one of {sorted(PHASE_STATUSES)}")
+    if status == "skipped" and policy["skip_policy"]["require_skip_reason"] and not skip_reason.strip():
+        raise ValueError("skip reason is required when phase status is skipped")
+    if not note.strip():
+        raise ValueError("--note is required")
+    record = {
+        "task_id": task_id,
+        "run_id": run_id,
+        "phase": phase,
+        "status": status,
+        "note": note.strip(),
+        "evidence": evidence.strip(),
+        "skip_reason": skip_reason.strip(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    ledger_path = run_dir / "phases.ndjson"
+    with ledger_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return {"status": "recorded", "ledger": str(ledger_path), "record": record}
+
+
+def load_phase_records(run_dir: Path) -> list[dict[str, Any]]:
+    ledger_path = run_dir / "phases.ndjson"
+    if not ledger_path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(read_text(ledger_path).splitlines(), start=1):
+        if not raw.strip():
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            item = {"_invalid_json": raw, "_line": line_number}
+        records.append(item)
+    return records
+
+
+def verify_lifecycle(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
+    policy = parse_phase_policy(project_root)
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    required = policy["required_phases"]["default"]
+    require_skip_reason = policy["skip_policy"]["require_skip_reason"]
+    records = load_phase_records(run_dir)
+    latest_by_phase: dict[str, dict[str, Any]] = {}
+    errors: list[dict[str, Any]] = []
+
+    for record in records:
+        if "_invalid_json" in record:
+            errors.append({"label": "invalid_phase_record", "detail": f"line {record.get('_line')} is not JSON"})
+            continue
+        if record.get("task_id") != task_id or record.get("run_id") != run_id:
+            errors.append({"label": "phase_scope_mismatch", "detail": record})
+            continue
+        phase = str(record.get("phase", ""))
+        status = str(record.get("status", ""))
+        if phase not in required:
+            errors.append({"label": "invalid_phase", "detail": phase})
+            continue
+        if status not in PHASE_STATUSES:
+            errors.append({"label": "invalid_phase_status", "detail": {"phase": phase, "status": status}})
+            continue
+        if status == "skipped" and require_skip_reason and not str(record.get("skip_reason", "")).strip():
+            errors.append({"label": "skipped_phase_missing_reason", "detail": phase})
+        latest_by_phase[phase] = record
+
+    missing = [phase for phase in required if phase not in latest_by_phase]
+    if missing:
+        errors.append({"label": "missing_phases", "detail": missing})
+
+    return {
+        "status": "passed" if not errors else "failed",
+        "task_id": task_id,
+        "run_id": run_id,
+        "required_phases": required,
+        "observed_phases": sorted(latest_by_phase),
+        "errors": errors,
+        "ledger": str(run_dir / "phases.ndjson"),
+    }
+
+
+def fabric_contract(project_root: Path) -> dict[str, str]:
+    fabric_path = project_root / ".agent-os" / "fabric-link.yaml"
+    if not fabric_path.exists():
+        return {}
+    return parse_scalar_values(
+        fabric_path,
+        {"governance_root", "postflight_required"},
+    )
+
+
+def resolve_postflight_hook(project_root: Path, fabric: dict[str, str]) -> Path | None:
+    governance_root = fabric.get("governance_root", "")
+    if not governance_root:
+        return None
+    if "CHANGE_ME" in governance_root:
+        return Path(governance_root) / "hooks" / "after-task.sh"
+    root = Path(governance_root).expanduser()
+    if not root.is_absolute():
+        root = project_root / root
+    return root.resolve() / "hooks" / "after-task.sh"
+
+
+def write_postflight_evidence(run_dir: Path, lines: list[str]) -> None:
+    write_text(run_dir / "postflight.md", "\n".join(lines).rstrip() + "\n")
+
+
+def postflight_environment_for_hook(hook: Path, run_dir: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    template_kernel = knowledgeos_root_from_file() / "templates" / "governance-core"
+    try:
+        hook.resolve().relative_to(template_kernel.resolve())
+    except ValueError:
+        return env
+    # The source repository uses template hooks for smoke tests. Keep generated
+    # postflight ledgers inside the ignored run evidence rather than dirtying
+    # the public template files.
+    env["KNOWLEDGEOS_KERNEL_ROOT"] = str(run_dir / "kernel-postflight")
+    return env
+
+
+def run_postflight_gate(project_root: Path, run_dir: Path, summary: str, allow_pending_reason: str = "") -> dict[str, Any]:
+    fabric = fabric_contract(project_root)
+    required = fabric.get("postflight_required", "").lower() == "true"
+    if not required:
+        return {"sync_status": "NOT_REQUIRED", "status_marker": "", "postflight": ""}
+
+    hook = resolve_postflight_hook(project_root, fabric)
+    if not hook or not hook.exists() or not os.access(hook, os.X_OK):
+        detail = f"postflight hook missing or not executable: {hook}"
+        if allow_pending_reason.strip():
+            write_postflight_evidence(
+                run_dir,
+                [
+                    "# Postflight",
+                    "",
+                    "Status: pending",
+                    f"Reason: {allow_pending_reason.strip()}",
+                    f"Detail: {detail}",
+                    "",
+                ],
+            )
+            return {
+                "sync_status": "PENDING",
+                "status_marker": "",
+                "postflight": str(run_dir / "postflight.md"),
+                "pending_reason": allow_pending_reason.strip(),
+            }
+        raise ValueError(detail)
+
+    try:
+        completed = subprocess.run(
+            [str(hook), summary],
+            cwd=str(project_root),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=60,
+            env=postflight_environment_for_hook(hook, run_dir),
+        )
+    except subprocess.TimeoutExpired as exc:
+        if allow_pending_reason.strip():
+            write_postflight_evidence(
+                run_dir,
+                [
+                    "# Postflight",
+                    "",
+                    "Status: pending",
+                    f"Reason: {allow_pending_reason.strip()}",
+                    f"Detail: postflight hook timed out: {hook}",
+                    "",
+                ],
+            )
+            return {
+                "sync_status": "PENDING",
+                "status_marker": "",
+                "postflight": str(run_dir / "postflight.md"),
+                "pending_reason": allow_pending_reason.strip(),
+            }
+        raise ValueError(f"postflight hook timed out: {hook}") from exc
+    evidence_lines = [
+        "# Postflight",
+        "",
+        f"Hook: {hook}",
+        f"Exit Code: {completed.returncode}",
+        "",
+        "## Stdout",
+        "",
+        completed.stdout.rstrip(),
+        "",
+        "## Stderr",
+        "",
+        completed.stderr.rstrip(),
+        "",
+    ]
+    if completed.returncode == 0 and "[SYNC_OK]" in completed.stdout:
+        write_postflight_evidence(run_dir, evidence_lines + ["Status: SYNC_OK", "Status Marker: [SYNC_OK]", ""])
+        return {
+            "sync_status": "SYNC_OK",
+            "status_marker": "[SYNC_OK]",
+            "postflight": str(run_dir / "postflight.md"),
+        }
+    if allow_pending_reason.strip():
+        write_postflight_evidence(
+            run_dir,
+            evidence_lines
+            + [
+                "Status: pending",
+                f"Reason: {allow_pending_reason.strip()}",
+                "",
+            ],
+        )
+        return {
+            "sync_status": "PENDING",
+            "status_marker": "",
+            "postflight": str(run_dir / "postflight.md"),
+            "pending_reason": allow_pending_reason.strip(),
+        }
+    raise ValueError(f"postflight hook failed or did not emit [SYNC_OK]: {hook}")
+
+
 def complete_task(
     project_root: Path,
     task_id: str,
@@ -1875,18 +2286,12 @@ def complete_task(
     allow_missing_eval: bool = False,
     allow_manual_eval: bool = False,
     allow_missing_outputs: bool = False,
+    allow_missing_phases: bool = False,
+    allow_pending_postflight: str = "",
 ) -> dict[str, Any]:
     task = find_task(project_root, task_id)
-    run_dir = resolve_run_dir(project_root, run_id)
-    if not run_dir.exists():
-        raise FileNotFoundError(f"missing run directory: {run_dir}")
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     run_yaml = run_dir / "run.yaml"
-    if not run_yaml.exists():
-        raise FileNotFoundError(f"missing run metadata: {run_yaml}")
-
-    metadata = parse_scalar_values(run_yaml, {"run_id", "task_id", "status"})
-    if metadata.get("task_id") != task_id:
-        raise ValueError(f"run {run_id} belongs to task {metadata.get('task_id')!r}, not {task_id!r}")
 
     eval_path = run_dir / "eval.md"
     if not allow_missing_eval and not eval_has_passed(eval_path):
@@ -1898,23 +2303,37 @@ def complete_task(
         if missing_outputs:
             raise ValueError("declared task outputs are missing: " + "; ".join(missing_outputs))
 
+    lifecycle = {"status": "skipped", "reason": "allow_missing_phases override"}
+    if not allow_missing_phases:
+        lifecycle = verify_lifecycle(project_root, task_id, run_id)
+        if lifecycle.get("status") != "passed":
+            raise ValueError("lifecycle verification failed: " + json.dumps(lifecycle.get("errors", []), ensure_ascii=False))
+
+    postflight = run_postflight_gate(project_root, run_dir, summary, allow_pending_postflight)
     completed_at = datetime.now(timezone.utc).isoformat()
-    receipt = "\n".join(
-        [
-            "# Receipt",
-            "",
-            f"Run: {run_id}",
-            "",
-            f"Task: {task_id}",
-            "",
-            "Status: completed",
-            "",
-            f"Completed At: {completed_at}",
-            "",
-            f"Summary: {summary}",
-            "",
-        ]
-    )
+    receipt_lines = [
+        "# Receipt",
+        "",
+        f"Run: {run_id}",
+        "",
+        f"Task: {task_id}",
+        "",
+        "Status: completed",
+        "",
+        f"Completed At: {completed_at}",
+        "",
+        f"Summary: {summary}",
+        "",
+        f"Lifecycle Status: {lifecycle.get('status')}",
+        "",
+        f"Sync Status: {postflight.get('sync_status')}",
+        "",
+    ]
+    if postflight.get("status_marker"):
+        receipt_lines.extend([f"Status Marker: {postflight['status_marker']}", ""])
+    if postflight.get("pending_reason"):
+        receipt_lines.extend(["Pending Postflight:", "", str(postflight["pending_reason"]), ""])
+    receipt = "\n".join(receipt_lines)
     handoff = "\n".join(
         [
             "# Current Handoff",
@@ -1940,6 +2359,10 @@ def complete_task(
         "task_title": task.get("title", ""),
         "run_id": run_id,
         "status": "completed",
+        "lifecycle_status": lifecycle.get("status"),
+        "sync_status": postflight.get("sync_status"),
+        "status_marker": postflight.get("status_marker", ""),
+        "postflight": postflight.get("postflight", ""),
         "receipt": str(run_dir / "receipt.md"),
         "handoff": str(run_dir / "handoff.md"),
     }
@@ -2145,6 +2568,27 @@ def cmd_run_task(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_create_task(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = create_task(
+            project_root,
+            title=args.title,
+            task_type=args.type,
+            status=args.status,
+            complexity=args.complexity,
+            risk=args.risk,
+            outputs=args.output,
+            acceptance=args.acceptance,
+            dry_run=args.dry_run,
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0
+
+
 def cmd_reopen_task(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
@@ -2231,6 +2675,37 @@ def cmd_eval_task(args: argparse.Namespace) -> int:
     return 0 if result.get("status") == "passed" else 2
 
 
+def cmd_phase_task(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = record_task_phase(
+            project_root,
+            args.task_id,
+            args.run_id,
+            phase=args.phase,
+            status=args.status,
+            note=args.note,
+            evidence=args.evidence,
+            skip_reason=args.skip_reason,
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0
+
+
+def cmd_verify_lifecycle(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = verify_lifecycle(project_root, args.task_id, args.run_id)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0 if result.get("status") == "passed" else 2
+
+
 def cmd_complete_task(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
@@ -2242,6 +2717,8 @@ def cmd_complete_task(args: argparse.Namespace) -> int:
             allow_missing_eval=args.allow_missing_eval,
             allow_manual_eval=args.allow_manual_eval,
             allow_missing_outputs=args.allow_missing_outputs,
+            allow_missing_phases=args.allow_missing_phases,
+            allow_pending_postflight=args.allow_pending_postflight or "",
         )
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
@@ -2407,6 +2884,19 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--json", action="store_true")
     run.set_defaults(func=cmd_run_task)
 
+    create = sub.add_parser("create-task", help="append a new task to .agent-os/tasks.yaml")
+    create.add_argument("--project-root", required=True)
+    create.add_argument("--title", required=True)
+    create.add_argument("--type", required=True, help="task type to route through .agent-os/workflows/router.yaml")
+    create.add_argument("--status", default="ready", choices=sorted(TASK_STATUSES))
+    create.add_argument("--complexity", default="medium")
+    create.add_argument("--risk", default="normal")
+    create.add_argument("--output", action="append", required=True, help="declared task output path; repeat for multiple outputs")
+    create.add_argument("--acceptance", action="append", required=True, help="acceptance check; repeat for multiple checks")
+    create.add_argument("--dry-run", action="store_true")
+    create.add_argument("--json", action="store_true")
+    create.set_defaults(func=cmd_create_task)
+
     reopen = sub.add_parser("reopen-task", help="reopen a task for rerun and optionally archive/delete declared outputs")
     reopen.add_argument("--project-root", required=True)
     reopen.add_argument("--task-id", required=True)
@@ -2453,7 +2943,26 @@ def build_parser() -> argparse.ArgumentParser:
     eval_task_parser.add_argument("--json", action="store_true")
     eval_task_parser.set_defaults(func=cmd_eval_task)
 
-    complete = sub.add_parser("complete-task", help="complete a task only after its run eval has passed")
+    phase_task_parser = sub.add_parser("phase-task", help="append public lifecycle phase evidence for a run")
+    phase_task_parser.add_argument("--project-root", required=True)
+    phase_task_parser.add_argument("--task-id", required=True)
+    phase_task_parser.add_argument("--run-id", required=True)
+    phase_task_parser.add_argument("--phase", required=True, choices=EXPECTED_PHASE_KEYS)
+    phase_task_parser.add_argument("--status", required=True, choices=sorted(PHASE_STATUSES))
+    phase_task_parser.add_argument("--note", required=True, help="public decision trace; do not include hidden chain-of-thought")
+    phase_task_parser.add_argument("--evidence", default="", help="command, file, or user confirmation evidence")
+    phase_task_parser.add_argument("--skip-reason", default="", help="required when --status skipped")
+    phase_task_parser.add_argument("--json", action="store_true")
+    phase_task_parser.set_defaults(func=cmd_phase_task)
+
+    verify_lifecycle_parser = sub.add_parser("verify-lifecycle", help="verify a run has all required public lifecycle phases")
+    verify_lifecycle_parser.add_argument("--project-root", required=True)
+    verify_lifecycle_parser.add_argument("--task-id", required=True)
+    verify_lifecycle_parser.add_argument("--run-id", required=True)
+    verify_lifecycle_parser.add_argument("--json", action="store_true")
+    verify_lifecycle_parser.set_defaults(func=cmd_verify_lifecycle)
+
+    complete = sub.add_parser("complete-task", help="complete a task only after eval, lifecycle, outputs, and required postflight pass")
     complete.add_argument("--project-root", required=True)
     complete.add_argument("--task-id", required=True)
     complete.add_argument("--run-id", required=True)
@@ -2461,6 +2970,8 @@ def build_parser() -> argparse.ArgumentParser:
     complete.add_argument("--allow-missing-eval", action="store_true", help="manual override; normally eval.md must say Status: passed")
     complete.add_argument("--allow-manual-eval", action="store_true", help="manual override; normally eval.md must be generated by eval-task")
     complete.add_argument("--allow-missing-outputs", action="store_true", help="manual override; normally declared task outputs must exist")
+    complete.add_argument("--allow-missing-phases", action="store_true", help="manual override; normally lifecycle phases must verify")
+    complete.add_argument("--allow-pending-postflight", metavar="REASON", help="explicit escape hatch when required postflight cannot complete")
     complete.add_argument("--json", action="store_true")
     complete.set_defaults(func=cmd_complete_task)
 

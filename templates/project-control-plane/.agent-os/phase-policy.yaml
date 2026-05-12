@@ -1,0 +1,11 @@
+required_phases:
+  default:
+    - route
+    - plan
+    - review
+    - dispatch
+    - execute
+    - report
+
+skip_policy:
+  require_skip_reason: true

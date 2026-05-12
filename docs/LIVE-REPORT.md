@@ -380,3 +380,22 @@ Why this matters:
 
 - The public repository can communicate the AgentOS idea without binding the project to one local machine or one specific desktop app.
 - The repository can remain useful as source, documentation, and scaffolding while runtime evidence stays local.
+
+## 2026-05-12 - Milestone Update: Task Intake And Lifecycle Gates
+
+Status: implemented in isolated worktree; verified with targeted regression tests before full regression.
+
+Changes:
+
+- Added `create-task` as the official intake path for new work when no ready task fits.
+- Kept `reopen-task` scoped to same-task reruns after rejected outputs.
+- Added `.agent-os/phase-policy.yaml` and the matching project template file.
+- Added `phase-task` to write public lifecycle evidence to `.agent-os/runs/<RUN_ID>/phases.ndjson`.
+- Added `verify-lifecycle` to enforce `route -> plan -> review -> dispatch -> execute -> report` before completion.
+- Hardened `complete-task` so it now requires eval, declared outputs, lifecycle verification, and required postflight.
+- Added explicit pending-postflight escape hatch through `--allow-pending-postflight "<reason>"`; the reason is written into receipt evidence.
+- Updated guardrail scenarios so distracted agents must create new tasks and record phase evidence before completion.
+
+Design note:
+
+- Phase notes are public decision traces, not hidden chain-of-thought. The OS records what was decided, what evidence was used, and why a phase was skipped when applicable.

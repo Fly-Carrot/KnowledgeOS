@@ -6,7 +6,9 @@ workflows:
       - doctor --root .
       - check-write --project-root . --path templates/
       - run-task --project-root . --task-id <task-id>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: scaffold_task
     human_gate: review_public_surface
@@ -23,7 +25,9 @@ workflows:
       - doctor --project-root .
       - check-write --project-root . --path .knowledgeos-local/inventory/
       - run-task --project-root . --task-id <task-id>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: inventory_task
     human_gate: no_secret_materialization
@@ -37,7 +41,9 @@ workflows:
       - doctor --root . --project-root templates/project-control-plane --template
       - check-write --project-root . --path templates/project-control-plane/
       - run-task --project-root . --task-id <task-id>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: template_task
     human_gate: public_template_review
@@ -52,7 +58,9 @@ workflows:
       - doctor --root . --project-root .
       - check-write --project-root . --path knowledgeos/cli.py
       - run-task --project-root . --task-id <task-id>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: executable_control_plane
     human_gate: test_before_release
@@ -69,7 +77,9 @@ workflows:
       - doctor --project-root .
       - agent-guide --project-root .
       - run-task --project-root . --task-id <task-id>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: guardrail_task
     human_gate: review_before_agent_adoption
@@ -87,7 +97,9 @@ workflows:
       - route-task --project-root . --task-id <task-id>
       - check-write --project-root . --path .agent-os/workflows/router.yaml
       - run-task --project-root . --task-id <task-id>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: workflow_router_task
     human_gate: review_unrouted_task_types
@@ -106,7 +118,9 @@ workflows:
       - tool-registry --project-root . --check-paths
       - check-write --project-root . --path .agent-os/tool-registry.yaml
       - run-task --project-root . --task-id <task-id>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: tool_registry_task
     human_gate: external_tool_policy_review
@@ -126,7 +140,9 @@ workflows:
       - route-task --project-root . --task-id <task-id>
       - check-route-write --project-root . --task-id <task-id> --path <planned-path>
       - run-task --project-root . --task-id <task-id>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: route_bound_guard_task
     human_gate: security_review_before_release
@@ -142,6 +158,7 @@ workflows:
       - .agent-os/workspace.yaml
       - .agent-os/tool-registry.yaml
       - .agent-os/startup-prompt.md
+      - .agent-os/phase-policy.yaml
       - .agent-os/read-policy.yaml
       - .agent-os/write-policy.yaml
       - .agent-os/workflows/
@@ -161,7 +178,9 @@ workflows:
       - dispatch-task --project-root . --task-id <task-id>
       - check-route-write --project-root . --task-id <task-id> --path <planned-path>
       - run-task --project-root . --task-id <task-id>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: capability_orchestration_task
     human_gate: orchestration_policy_review
@@ -188,7 +207,9 @@ workflows:
       - archive-legacy-project --project-root . --write-plan
       - check-route-write --project-root . --task-id <task-id> --path archive/
       - run-task --project-root . --task-id <task-id>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: archive_task
     human_gate: explicit_archive_approval
