@@ -9,11 +9,14 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
    - `.agent-os/workspace.yaml`
    - `.agent-os/project.yaml`
    - `.agent-os/tasks.yaml`
+   - `.agent-os/phase-policy.yaml`
    - `.agent-os/decisions.yaml`
    - `.agent-os/evals.yaml`
-   - `.agent-os/capabilities.yaml`
+   - `.agent-os/fabric-link.yaml`
    - `.agent-os/read-policy.yaml`
    - `.agent-os/write-policy.yaml`
+   - `.agent-os/dispatch-policy.yaml`
+   - `.agent-os/tool-registry.yaml`
 
 3. Run checks before acting.
    - `knowledgeos doctor --project-root . --summary`
@@ -31,10 +34,11 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
    - Unclassified paths should be triaged before mutation.
    - `archive/**` is cold storage and is not default context.
 
-6. Keep receipts local and concise.
-   - Update `.agent-os/runs/RUN-*/receipt.md`.
-   - Update `.agent-os/runs/RUN-*/eval.md`.
-   - Update `.agent-os/handoffs/current.md`.
+6. Keep receipts local and command-generated.
+   - Use `knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note "<public note>" --evidence "<command or file evidence>"`.
+   - Use `knowledgeos eval-task --project-root . --task-id <task-id> --run-id <run-id>`; do not hand-write `Status: passed`.
+   - Use `knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`.
+   - Do not directly edit `.agent-os/runs/RUN-*/eval.md`, `.agent-os/runs/RUN-*/phases.ndjson`, `.agent-os/runs/RUN-*/command-events.ndjson`, or `.agent-os/runs/RUN-*/receipt.md`.
 
 7. Finish with the configured sync contract when a shared-fabric kernel module is active.
    - Report `SYNC_OK` only after the postflight command succeeds.

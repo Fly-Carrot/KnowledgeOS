@@ -22,6 +22,20 @@ write_policy:
     - "**/*secret*"
     - "**/*secrets*"
     - reports/final/**
+    - .agent-os/tasks.yaml
+    - .agent-os/evals.yaml
+    - .agent-os/read-policy.yaml
+    - .agent-os/write-policy.yaml
+    - .agent-os/dispatch-policy.yaml
+    - .agent-os/tool-registry.yaml
+    - .agent-os/workflows/router.yaml
+    - .agent-os/phase-policy.yaml
+    - .agent-os/fabric-link.yaml
+    - .agent-os/runs/**/run.yaml
+    - .agent-os/runs/**/eval.md
+    - .agent-os/runs/**/phases.ndjson
+    - .agent-os/runs/**/command-events.ndjson
+    - .agent-os/runs/**/postflight.md
 
   require_receipt_for:
     - "*.md"
