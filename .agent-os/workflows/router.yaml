@@ -176,6 +176,7 @@ workflows:
       - docs/
       - global-agent-fabric/
       - capability-layer/
+      - apps/
       - .agent-os/tasks.yaml
       - .agent-os/evals.yaml
       - .agent-os/fabric-link.yaml
@@ -191,6 +192,7 @@ workflows:
       - README.md
       - AGENTS.md
       - Makefile
+      - package.json
     notes:
       - Execution must be route-bound before mutation and eval-bound before completion.
       - The guard minimizes dirty-system risk by rejecting unclassified or out-of-route writes.

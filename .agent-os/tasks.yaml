@@ -272,7 +272,153 @@ tasks:
       - apply moves only strong candidates or explicit includes
       - existing migration and reset behavior remains unchanged
       - doctor and unit tests pass
+
   - id: KOS-T015
+    title: Harden archive and policy guard robustness
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: guardrail_regression
+    outputs:
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - .agent-os/tasks.yaml
+    acceptance:
+      - policy parser does not leak list items from unknown sections
+      - archive explicit includes skip missing paths and project root
+      - archive route write checks allow archive root and archive children
+      - doctor, smoke, and unit tests pass
+
+  - id: KOS-T016
+    title: Add read-only Workbench state interface
+    type: executable_control_plane
+    status: completed
+    complexity: medium
+    risk: workbench_state_contract
+    outputs:
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+    acceptance:
+      - workbench-state emits a stable JSON snapshot for managed projects
+      - unmanaged folders return observable unmanaged status without claiming boot
+      - project paths are redacted by default for UI privacy
+      - doctor and unit tests pass
+
+  - id: KOS-T017
+    title: Add static Workbench UI shell preview
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: ui_preview_scope
+    outputs:
+      - examples/workbench/
+      - tests/test_workbench_static.py
+    acceptance:
+      - static preview renders Human Layer and collapsible System Black Box
+      - preview uses workbench-state schema fixture without absolute local paths
+      - light and dark modes are available without external dependencies
+      - doctor, static integrity tests, and unit tests pass
+
+  - id: KOS-T018
+    title: Add read-only Workbench live preview bridge
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: live_preview_scope
+    outputs:
+      - knowledgeos/cli.py
+      - examples/workbench/
+      - tests/test_workbench_static.py
+    acceptance:
+      - workbench-preview serves static Workbench files locally
+      - live endpoint returns workbench-state JSON for the selected project
+      - fixture fallback remains available for static hosting
+      - preview remains read-only and does not mutate project state
+      - doctor, HTTP preview tests, guardrail scenarios, and unit tests pass
+
+  - id: KOS-T019
+    title: Add read-only Intent Console sandbox
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: sandbox_runtime_boundary
+    outputs:
+      - knowledgeos/cli.py
+      - examples/workbench/
+      - tests/test_workbench_static.py
+      - tests/test_knowledgeos_cli.py
+      - .agent-os/tasks.yaml
+    acceptance:
+      - ask-sandbox provides a read-only mock runtime for natural-language intent checks
+      - workbench-preview exposes a read-only sandbox endpoint without project mutation
+      - Workbench UI can call the sandbox while keeping OS execution disabled by default
+      - doctor resolves relative project mount paths from the selected project root
+      - doctor, unit tests, HTTP preview tests, guardrail scenarios, and tool-registry checks pass
+
+  - id: KOS-T020
+    title: Add Workbench runtime adapter readiness layer
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: cli_adapter_boundary
+    outputs:
+      - knowledgeos/cli.py
+      - examples/workbench/
+      - docs/workbench-runtime-adapters.md
+      - tests/test_workbench_static.py
+      - tests/test_knowledgeos_cli.py
+      - .agent-os/tasks.yaml
+    acceptance:
+      - runtime-adapters reports mock, gemini-cli, and codex-cli readiness without executing agents
+      - workbench-state includes adapter readiness for UI consumption
+      - Workbench UI shows adapter status separately from OS execution
+      - documentation defines when actual app construction can begin
+      - doctor, unit tests, HTTP preview tests, guardrail scenarios, and tool-registry checks pass
+
+  - id: KOS-T021
+    title: Add Electron Workbench desktop shell
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: desktop_shell_boundary
+    outputs:
+      - apps/workbench/
+      - examples/workbench/styles.css
+      - .agent-os/tasks.yaml
+      - .agent-os/workflows/router.yaml
+      - .agent-os/write-policy.yaml
+    acceptance:
+      - Electron shell launches the local Workbench preview bridge on 127.0.0.1
+      - bridge uses port 0 and loads the actual chosen port after startup
+      - closing the desktop shell terminates the bridge child process
+      - desktop shell does not execute Gemini or Codex adapters
+      - Workbench accent uses icy cyan rather than green
+      - smoke tests and KnowledgeOS validation pass
+
+  - id: KOS-T022
+    title: Calibrate Workbench UI and add observable lifecycle
+    type: route_bound_execution_guard
+    status: completed
+    complexity: medium
+    risk: workbench_observability_boundary
+    outputs:
+      - knowledgeos/cli.py
+      - tests/test_knowledgeos_cli.py
+      - tests/test_workbench_static.py
+      - examples/workbench/
+      - apps/workbench/
+      - docs/workbench-runtime-adapters.md
+      - .agent-os/tasks.yaml
+    acceptance:
+      - Workbench layout uses constrained centered proportions and lower-saturation graphite/cyan colors
+      - lifecycle view shows Doctor, Route, Dispatch, Write Guard, Run, Eval, and Receipt as read-only status
+      - workbench-lifecycle CLI and preview endpoint return knowledgeos.workbench-lifecycle.v1
+      - Ask Sandbox renders recommended OS command chain for mutation-like intents
+      - app diagnose script verifies bridge, state, lifecycle, and sandbox endpoints without GUI
+      - no real Gemini or Codex execution path is added
+      - doctor, unit tests, guardrail scenarios, smoke, diagnose, and tool-registry checks pass
+
+  - id: KOS-T023
     title: "Add task intake and lifecycle gates"
     type: "route_bound_execution_guard"
     status: completed
@@ -302,7 +448,7 @@ tasks:
       - "phase-task and verify-lifecycle enforce required phases"
       - "complete-task runs required postflight or records explicit pending reason"
       - "doctor, unit tests, scenarios, and smoke pass"
-  - id: KOS-T016
+  - id: KOS-T024
     title: "Audit checkpoint write-bypass paths"
     type: "route_bound_execution_guard"
     status: completed
@@ -324,7 +470,7 @@ tasks:
       - "weakened lifecycle or postflight policies are rejected"
       - "critical control-plane writes require human gate"
       - "doctor, unit tests, guardrail scenarios, smoke, diff check, and public scan pass"
-  - id: KOS-T017
+  - id: KOS-T025
     title: "Add spec context pack planning gate"
     type: "route_bound_execution_guard"
     status: completed
@@ -364,3 +510,23 @@ tasks:
       - "plan-task and verify-context are required before completion"
       - "spec drift and direct spec/context/plan writes are blocked"
       - "doctor, unit tests, scenarios, smoke, diff check, and public scan pass"
+  - id: KOS-T026
+    title: "Merge lifecycle and spec branches into local main"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "integration_regression"
+    outputs:
+      - ".agent-os/tasks.yaml"
+      - ".agent-os/workflows/router.yaml"
+      - ".agent-os/write-policy.yaml"
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/"
+      - "examples/workbench/"
+      - "docs/workbench-runtime-adapters.md"
+    acceptance:
+      - "local main contains task-lifecycle-gates and spec-context-pack commits"
+      - "Workbench local changes are preserved after merge"
+      - "doctor, unit tests, guardrail scenarios, smoke, and Workbench diagnose pass"

@@ -1,0 +1,201 @@
+{
+  "schema_version": "knowledgeos.workbench-state.v1",
+  "generated_at": "2026-05-11T12:00:00+00:00",
+  "project_root": "<PROJECT_ROOT>",
+  "project_name": "KnowledgeOS",
+  "privacy": {
+    "paths_redacted": true
+  },
+  "managed": true,
+  "status": "managed_ok",
+  "boot": {
+    "claim": "BOOT_OK",
+    "doctor": "ok"
+  },
+  "workspace": {
+    "workspace_id": "knowledgeos-local-build",
+    "name": "KnowledgeOS Local Build",
+    "root": "<PROJECT_ROOT>",
+    "active_project": "KOS001",
+    "governance_root": "<PROJECT_ROOT>/templates/governance-core",
+    "capability_root": "<PROJECT_ROOT>/templates/capability-layer",
+    "phase": "workbench-preview",
+    "last_sync_status": "BOOT_OK"
+  },
+  "project": {
+    "id": "KOS001",
+    "name": "KnowledgeOS",
+    "status": "active",
+    "current_phase": "workbench-shell"
+  },
+  "tasks": {
+    "total": 22,
+    "counts": {
+      "in_progress": 1,
+      "ready": 2,
+      "completed": 19
+    },
+    "current": {
+      "id": "KOS-T022",
+      "title": "Calibrate Workbench UI and add observable lifecycle",
+      "type": "route_bound_execution_guard",
+      "status": "in_progress",
+      "complexity": "medium",
+      "risk": "workbench_observability_boundary"
+    },
+    "active": [
+      {
+        "id": "KOS-T022",
+        "title": "Calibrate Workbench UI and add observable lifecycle",
+        "type": "route_bound_execution_guard",
+        "status": "in_progress",
+        "complexity": "medium",
+        "risk": "workbench_observability_boundary"
+      },
+      {
+        "id": "KOS-T002",
+        "title": "Inventory existing Agent Shared Fabric workflow",
+        "type": "migration_inventory",
+        "status": "ready",
+        "complexity": "",
+        "risk": ""
+      }
+    ]
+  },
+  "routes": {
+    "count": 10,
+    "task_types": [
+      "archive_management",
+      "capability_orchestration",
+      "executable_control_plane",
+      "route_bound_execution_guard",
+      "workflow_routing"
+    ]
+  },
+  "capabilities": {
+    "ok": true,
+    "counts": {
+      "mcp": 6,
+      "orchestrator": 1,
+      "memory": 1,
+      "skill": 4,
+      "workflow": 1,
+      "subagent": 1
+    },
+    "entries": [
+      {
+        "id": "branch-builder",
+        "kind": "subagent",
+        "status": "configured",
+        "scope": "virtual-task-branch-planning",
+        "invocation": "once_per_medium_or_complex_root_task",
+        "human_gate": "false",
+        "execution_mode": "ask"
+      },
+      {
+        "id": "maestro",
+        "kind": "orchestrator",
+        "status": "enabled",
+        "scope": "subagent-orchestration",
+        "invocation": "medium_complex_tasks",
+        "human_gate": "true",
+        "execution_mode": "ask"
+      },
+      {
+        "id": "markitdown",
+        "kind": "mcp",
+        "status": "enabled",
+        "scope": "document-conversion",
+        "invocation": "capability_match",
+        "human_gate": "false",
+        "execution_mode": ""
+      }
+    ]
+  },
+  "runtime_adapters": {
+    "schema_version": "knowledgeos.runtime-adapters.v1",
+    "project_root": "<PROJECT_ROOT>",
+    "privacy": {
+      "paths_redacted": true
+    },
+    "status": "ready",
+    "available_count": 1,
+    "total": 3,
+    "adapters": [
+      {
+        "id": "mock",
+        "label": "Mock Sandbox",
+        "kind": "builtin",
+        "command": "",
+        "optional": false,
+        "purpose": "Safe default for Intent Console behavior checks.",
+        "status": "available",
+        "executable": "builtin",
+        "execution": "not_started",
+        "execution_mode": "disabled_by_default",
+        "default_cwd": "<SANDBOX>",
+        "project_mutation": false,
+        "requires_os_route_for_mutation": true
+      },
+      {
+        "id": "gemini-cli",
+        "label": "Gemini CLI",
+        "kind": "cli",
+        "command": "gemini",
+        "optional": true,
+        "purpose": "Local plan-based LLM runtime adapter candidate.",
+        "status": "missing",
+        "executable": "not_found",
+        "execution": "not_started",
+        "execution_mode": "disabled_by_default",
+        "default_cwd": "<SANDBOX>",
+        "project_mutation": false,
+        "requires_os_route_for_mutation": true
+      },
+      {
+        "id": "codex-cli",
+        "label": "Codex CLI",
+        "kind": "cli",
+        "command": "codex",
+        "optional": true,
+        "purpose": "Local development-agent runtime adapter candidate.",
+        "status": "missing",
+        "executable": "not_found",
+        "execution": "not_started",
+        "execution_mode": "disabled_by_default",
+        "default_cwd": "<SANDBOX>",
+        "project_mutation": false,
+        "requires_os_route_for_mutation": true
+      }
+    ],
+    "policy": {
+      "default_runtime": "mock",
+      "real_cli_execution": "disabled_until_adapter_phase",
+      "project_cwd_allowed": false,
+      "project_mutation_allowed": false,
+      "os_route_required_for_mutation": true
+    }
+  },
+  "system_black_box": {
+    "doctor": {
+      "status": "ok",
+      "checks": 510,
+      "passed": 510,
+      "failed": 0,
+      "failed_by_label": {},
+      "failed_checks": [],
+      "truncated_failed_checks": 0
+    },
+    "latest_run": {
+      "run_id": "RUN-20260512-000000-KOS-T022",
+      "task_id": "KOS-T022",
+      "status": "started",
+      "eval_profile": "route_bound_guard_task",
+      "eval_passed": false,
+      "path": "<PROJECT_ROOT>/.agent-os/runs/RUN-20260512-000000-KOS-T022"
+    },
+    "latest_receipt": "<PROJECT_ROOT>/.agent-os/receipts/latest.md",
+    "current_handoff": "<PROJECT_ROOT>/.agent-os/handoffs/current.md"
+  },
+  "recommended_actions": []
+}

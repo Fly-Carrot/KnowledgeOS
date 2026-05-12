@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src http://127.0.0.1:*;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KnowledgeOS Workbench</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f4f3ef;
+        --surface: rgba(255, 255, 252, 0.82);
+        --ink: #191b1d;
+        --muted: #747270;
+        --line: rgba(95, 127, 140, 0.18);
+        --accent: #5f7f8c;
+        --accent-2: #8daab2;
+        font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #141514;
+          --surface: rgba(27, 28, 27, 0.86);
+          --ink: #f0eee8;
+          --muted: #a29f99;
+          --line: rgba(141, 170, 178, 0.16);
+          --accent: #8daab2;
+          --accent-2: #5f7f8c;
+        }
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 50% 28%, rgba(95, 127, 140, 0.14), transparent 30rem),
+          linear-gradient(135deg, var(--bg), color-mix(in srgb, var(--bg), var(--accent) 4%));
+      }
+
+      main {
+        width: min(460px, calc(100vw - 48px));
+        padding: 34px;
+        border: 1px solid var(--line);
+        border-radius: 30px;
+        background: var(--surface);
+        box-shadow: 0 30px 110px rgba(20, 35, 42, 0.13);
+        backdrop-filter: blur(30px);
+      }
+
+      .mark {
+        width: 42px;
+        height: 42px;
+        border-radius: 15px;
+        margin-bottom: 22px;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        box-shadow: 0 0 28px rgba(95, 127, 140, 0.18);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: clamp(30px, 6vw, 48px);
+        letter-spacing: -0.06em;
+        line-height: 0.95;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+
+      .pulse {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 26px;
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      .pulse::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 18px var(--accent);
+        animation: breathe 1.4s ease-in-out infinite;
+      }
+
+      @keyframes breathe {
+        0%, 100% { transform: scale(0.8); opacity: 0.55; }
+        50% { transform: scale(1.25); opacity: 1; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark" aria-hidden="true"></div>
+      <h1>Starting Workbench.</h1>
+      <p>KnowledgeOS is opening a local read-only bridge on 127.0.0.1. Real agent execution remains disabled by default.</p>
+      <div class="pulse">Waiting for bridge</div>
+    </main>
+  </body>
+</html>
