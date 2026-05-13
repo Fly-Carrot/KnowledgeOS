@@ -28,7 +28,16 @@ class KnowledgeOSCliTests(unittest.TestCase):
         return result
 
     def log_required_phases(self, project: Path, task_id: str, run_id: str) -> None:
+        dispatch = self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id, "--json")
+        dispatch_payload = json.loads(dispatch.stdout)
+        required_stages = dispatch_payload.get("dispatch_event", {}).get("required_stages", [])
         for phase in ["route", "plan", "review", "dispatch", "execute", "report"]:
+            note = f"Recorded {phase} decision trace."
+            evidence = f"test evidence for {phase}"
+            if phase == "dispatch" and required_stages:
+                skipped = ", ".join(required_stages)
+                note = f"Skipped required {skipped}: deterministic test uses KnowledgeOS CLI only."
+                evidence = f"skip {skipped}: no external capability needed for this regression test"
             self.run_cli(
                 "phase-task",
                 "--project-root",
@@ -42,9 +51,9 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 "--status",
                 "completed",
                 "--note",
-                f"Recorded {phase} decision trace.",
+                note,
                 "--evidence",
-                f"test evidence for {phase}",
+                evidence,
             )
 
     def write_plan_context(self, project: Path, task_id: str, run_id: str, summary: str = "Test execution plan.") -> None:
@@ -106,6 +115,136 @@ class KnowledgeOSCliTests(unittest.TestCase):
             )
         self.assertIn("status: ok", result.stdout)
         self.assertIn("failed: 0", result.stdout)
+
+    def test_doctor_rejects_missing_boot_kernel_skeleton(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            project = tmp_root / "Project"
+            project.mkdir()
+            governance = tmp_root / "KnowledgeOS" / "global-agent-fabric"
+            capability = tmp_root / "KnowledgeOS" / "capability-layer"
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Project",
+                "--global-root",
+                str(governance),
+                "--capability-root",
+                str(capability),
+            )
+            hooks = governance / "hooks"
+            hooks.mkdir(parents=True)
+            for hook_name in ["before-task.sh", "after-task.sh"]:
+                source = ROOT / "templates" / "governance-core" / "hooks" / hook_name
+                target = hooks / hook_name
+                target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+                target.chmod(0o755)
+            capability.mkdir(parents=True)
+
+            result = self.run_cli("doctor", "--project-root", str(project), "--project-only", "--json", check=False)
+            self.assertNotEqual(result.returncode, 0)
+            payload = json.loads(result.stdout)
+            failures = [item for item in payload if not item["ok"]]
+            self.assertTrue(any(item["label"] == "kernel_skeleton" and "registries/" in item["detail"] for item in failures))
+            self.assertTrue(any(item["label"] == "boot_kernel" and "schemas/phase-contract.md" in item["detail"] for item in failures))
+
+    def test_harness_audit_repairs_legacy_mount_and_missing_control_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            project = tmp_root / "LegacyProject"
+            project.mkdir()
+            old_governance = tmp_root / "Antigravity_Skills" / "global-agent-fabric"
+            desired_governance = tmp_root / "KnowledgeOS" / "global-agent-fabric"
+            desired_capability = tmp_root / "KnowledgeOS" / "capability-layer"
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "LegacyProject",
+                "--global-root",
+                str(old_governance),
+                "--capability-root",
+                str(tmp_root / "KnowledgeOS"),
+            )
+            for rel in [".agent-os/specs.yaml", ".agent-os/phase-policy.yaml", ".agent-os/read-policy.yaml"]:
+                (project / rel).unlink()
+            router = project / ".agent-os" / "workflows" / "router.yaml"
+            router_lines = [
+                line
+                for line in router.read_text(encoding="utf-8").splitlines()
+                if not any(marker in line for marker in ["context-pack", "plan-task", "phase-task", "verify-context", "verify-lifecycle"])
+            ]
+            router.write_text("\n".join(router_lines) + "\n", encoding="utf-8")
+            write_policy = project / ".agent-os" / "write-policy.yaml"
+            write_policy.write_text(
+                "\n".join(line for line in write_policy.read_text(encoding="utf-8").splitlines() if "archive/**" not in line) + "\n",
+                encoding="utf-8",
+            )
+
+            dry_run = self.run_cli(
+                "harness-audit",
+                "--root",
+                str(ROOT),
+                "--target-project",
+                str(project),
+                "--governance-root",
+                str(desired_governance),
+                "--capability-root",
+                str(desired_capability),
+                "--json",
+                check=False,
+            )
+            self.assertEqual(dry_run.returncode, 1)
+            dry_payload = json.loads(dry_run.stdout)
+            issues = dry_payload["projects"][0]["issues"]
+            desired_governance = desired_governance.resolve()
+            desired_capability = desired_capability.resolve()
+            self.assertIn("legacy_antigravity_governance_root", issues)
+            self.assertIn("postflight_hook_missing_or_not_executable", issues)
+            self.assertIn("missing_control_file:.agent-os/specs.yaml", issues)
+            self.assertIn("workflow_router_lifecycle_drift", issues)
+            self.assertIn("missing_archive_write_guard", issues)
+            self.assertFalse((desired_governance / "hooks" / "after-task.sh").exists())
+            self.assertFalse((project / ".agent-os" / "specs.yaml").exists())
+
+            applied = self.run_cli(
+                "harness-audit",
+                "--root",
+                str(ROOT),
+                "--target-project",
+                str(project),
+                "--governance-root",
+                str(desired_governance),
+                "--capability-root",
+                str(desired_capability),
+                "--apply",
+                "--json",
+            )
+            payload = json.loads(applied.stdout)
+            self.assertEqual(payload["status"], "ok")
+            self.assertTrue(os.access(desired_governance / "hooks" / "after-task.sh", os.X_OK))
+            self.assertTrue((desired_governance / "registries" / "mcp.example.yaml").exists())
+            self.assertTrue((desired_governance / "schemas" / "phase-contract.md").exists())
+            self.assertTrue((project / ".agent-os" / "specs.yaml").exists())
+            fabric = (project / ".agent-os" / "fabric-link.yaml").read_text(encoding="utf-8")
+            workspace = (project / ".agent-os" / "workspace.yaml").read_text(encoding="utf-8")
+            self.assertIn(f"governance_root: {desired_governance}", fabric)
+            self.assertIn(f"capability_root: {desired_capability}", fabric)
+            self.assertIn(f"governance_root: {desired_governance}", workspace)
+            self.assertIn(f"capability_root: {desired_capability}", workspace)
+            upgraded_router = router.read_text(encoding="utf-8")
+            self.assertIn("context-pack --project-root .", upgraded_router)
+            self.assertIn("verify-lifecycle --project-root .", upgraded_router)
+            self.assertIn("archive/**", write_policy.read_text(encoding="utf-8"))
+            doctor = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
+            self.assertIn("status: ok", doctor.stdout)
 
     def test_doctor_keeps_pre_gate_completed_runs_legacy_compatible(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -171,10 +310,10 @@ class KnowledgeOSCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
             project.mkdir()
-            global_root = Path(tmp) / "global-agent-fabric"
-            capability_root = Path(tmp) / "capability-layer"
-            global_root.mkdir()
-            capability_root.mkdir()
+            runtime = Path(tmp) / "KnowledgeOSRuntime"
+            self.run_cli("init-os", "--root", str(ROOT), "--os-root", str(runtime), "--json")
+            global_root = runtime / "global-agent-fabric"
+            capability_root = runtime / "capability-layer"
             self.run_cli(
                 "init-project",
                 "--root",
@@ -530,6 +669,20 @@ class KnowledgeOSCliTests(unittest.TestCase):
             )
             self.assertEqual(direct_evidence_write.returncode, 2)
             self.assertEqual(json.loads(direct_evidence_write.stdout)["decision"], "human_gate_required")
+
+            direct_capability_write = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                ".agent-os/runs/RUN-FAKE/capability-events.ndjson",
+                "--json",
+                check=False,
+            )
+            self.assertEqual(direct_capability_write.returncode, 2)
+            self.assertEqual(json.loads(direct_capability_write.stdout)["decision"], "human_gate_required")
 
             for guarded_control_path in [
                 ".agent-os/tasks.yaml",
@@ -1041,6 +1194,167 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertEqual(verify.returncode, 2)
             self.assertIn("missing_phases", verify.stdout)
 
+    def test_phase_task_outputs_visible_checkpoint_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+
+            plain = self.run_cli(
+                "phase-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--phase",
+                "route",
+                "--status",
+                "completed",
+                "--note",
+                "Route decision recorded.",
+                "--evidence",
+                "unit test",
+            )
+            self.assertIn("CHECKPOINT_OK phase=route status=completed evidence=unit test", plain.stdout)
+
+            as_json = self.run_cli(
+                "phase-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--phase",
+                "plan",
+                "--status",
+                "completed",
+                "--note",
+                "Plan decision recorded.",
+                "--evidence",
+                "unit test json",
+                "--json",
+            )
+            payload = json.loads(as_json.stdout)
+            self.assertEqual(payload["checkpoint_marker"], "CHECKPOINT_OK")
+            self.assertIn("CHECKPOINT_OK phase=plan", payload["marker"])
+
+    def test_capability_event_records_visible_capability_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+
+            result = self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "orchestrator",
+                "--id",
+                "maestro",
+                "--purpose",
+                "Record orchestrator decision trace for test.",
+                "--evidence",
+                "unit test",
+            )
+            self.assertIn("CAPABILITY_OK kind=orchestrator id=maestro purpose=Record orchestrator decision trace for test.", result.stdout)
+            run_dir = project / ".agent-os" / "runs" / run_id
+            self.assertIn('"event_type": "capability-event"', (run_dir / "command-events.ndjson").read_text(encoding="utf-8"))
+            self.assertIn('"kind": "orchestrator"', (run_dir / "capability-events.ndjson").read_text(encoding="utf-8"))
+
+    def test_lifecycle_requires_dispatch_and_required_capability_trace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            for phase in ["route", "plan", "review", "dispatch", "execute", "report"]:
+                self.run_cli(
+                    "phase-task",
+                    "--project-root",
+                    str(project),
+                    "--task-id",
+                    "T001",
+                    "--run-id",
+                    run_id,
+                    "--phase",
+                    phase,
+                    "--status",
+                    "completed",
+                    "--note",
+                    f"Recorded {phase}.",
+                    "--evidence",
+                    f"test {phase}",
+                )
+
+            missing_dispatch = self.run_cli(
+                "verify-lifecycle",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(missing_dispatch.returncode, 2)
+            self.assertIn("missing_dispatch_command_event", missing_dispatch.stdout)
+
+            self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            missing_capability = self.run_cli(
+                "verify-lifecycle",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(missing_capability.returncode, 2)
+            self.assertIn("missing_required_capability_event", missing_capability.stdout)
+
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "orchestrator",
+                "--id",
+                "maestro",
+                "--purpose",
+                "Required orchestration decision trace for initialization.",
+            )
+            verified = self.run_cli(
+                "verify-lifecycle",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+            )
+            self.assertEqual(json.loads(verified.stdout)["status"], "passed")
+
     def test_complete_task_requires_postflight_or_records_pending_reason(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
@@ -1425,10 +1739,10 @@ class KnowledgeOSCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
             project.mkdir()
-            global_root = Path(tmp) / "global-agent-fabric"
-            capability_root = Path(tmp) / "capability-layer"
-            global_root.mkdir()
-            capability_root.mkdir()
+            runtime = Path(tmp) / "KnowledgeOSRuntime"
+            self.run_cli("init-os", "--root", str(ROOT), "--os-root", str(runtime), "--json")
+            global_root = runtime / "global-agent-fabric"
+            capability_root = runtime / "capability-layer"
             self.run_cli(
                 "init-project",
                 "--root",
@@ -1743,6 +2057,9 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("plan-task", result.stdout)
             self.assertIn("verify-context", result.stdout)
             self.assertIn("phase-task", result.stdout)
+            self.assertIn("CHECKPOINT_OK", result.stdout)
+            self.assertIn("capability-event", result.stdout)
+            self.assertIn("CAPABILITY_OK", result.stdout)
             self.assertIn("verify-lifecycle", result.stdout)
             self.assertIn("complete-task", result.stdout)
             self.assertIn("archive-legacy-project", result.stdout)
@@ -1794,6 +2111,10 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertIn("route-output-denied", result.stdout)
         self.assertIn("unrouted-task-human-triage", result.stdout)
         self.assertIn("create-spec-contract", result.stdout)
+        self.assertIn("dispatch-evidence-recorded", result.stdout)
+        self.assertIn("capability-event-recorded", result.stdout)
+        self.assertIn("CHECKPOINT_OK", result.stdout)
+        self.assertIn("CAPABILITY_OK", result.stdout)
         self.assertIn("verify-context-without-plan-blocked", result.stdout)
         self.assertIn("plan-task-writes-checkpoint-plan", result.stdout)
         self.assertIn("verify-context-passed", result.stdout)

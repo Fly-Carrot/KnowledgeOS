@@ -6,6 +6,7 @@ write_policy:
 
   controlled:
     - README.md
+    - CHANGELOG.md
     - AGENTS.md
     - Makefile
     - bin/**
@@ -47,6 +48,7 @@ write_policy:
     - .agent-os/runs/**/eval.md
     - .agent-os/runs/**/phases.ndjson
     - .agent-os/runs/**/command-events.ndjson
+    - .agent-os/runs/**/capability-events.ndjson
     - .agent-os/runs/**/postflight.md
     - templates/governance-core/**
     - templates/capability-layer/**
@@ -57,6 +59,7 @@ write_policy:
     - global-agent-fabric/**
     - capability-layer/**
     - docs/**
+    - CHANGELOG.md
     - archive/**
     - apps/**
     - examples/**

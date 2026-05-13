@@ -9,12 +9,14 @@ Before substantial work:
 3. Use `./bin/knowledgeos doctor --project-root . --summary` before claiming the local control plane is clean.
 4. If no ready task fits the user's new request, use `./bin/knowledgeos create-task --project-root . --title "<title>" --type <type> --output <path> --acceptance "<check>"` instead of reopening unrelated old work.
 5. Use `./bin/knowledgeos route-task --project-root . --task-id <task-id>` and `./bin/knowledgeos dispatch-task --project-root . --task-id <task-id>` before capability-heavy work.
-6. Use `./bin/knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<evidence>"` to record public lifecycle evidence.
-7. Use `./bin/knowledgeos eval-task --project-root . --task-id <task-id> --run-id <run-id>` before `complete-task`; do not manually append eval status.
-8. Use `./bin/knowledgeos verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>` before completion.
-9. Use `./bin/knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`; it enforces lifecycle and required postflight.
-10. For reset requests, run `reset-project --dry-run` first. For legacy reorganization, run `migrate-legacy-project --write-plan` first. For cold storage of old or superseded project content, run `archive-legacy-project --write-plan` first.
-11. Run `python3 -m unittest discover -s tests -v` after CLI or template changes.
+6. After `run-task` creates a run id, use `./bin/knowledgeos dispatch-task --project-root . --task-id <task-id> --run-id <run-id>` to record dispatch evidence for that run.
+7. Use `./bin/knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<evidence>"` to record public lifecycle evidence, and relay the returned `CHECKPOINT_OK` marker.
+8. Before or after MCP, skill, subagent, orchestrator, or important script use, record it with `./bin/knowledgeos capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"`, and relay the returned `CAPABILITY_OK` marker.
+9. Use `./bin/knowledgeos eval-task --project-root . --task-id <task-id> --run-id <run-id>` before `complete-task`; do not manually append eval status.
+10. Use `./bin/knowledgeos verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>` before completion.
+11. Use `./bin/knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`; it enforces lifecycle, capability visibility, and required postflight.
+12. For reset requests, run `reset-project --dry-run` first. For legacy reorganization, run `migrate-legacy-project --write-plan` first. For cold storage of old or superseded project content, run `archive-legacy-project --write-plan` first.
+13. Run `python3 -m unittest discover -s tests -v` after CLI or template changes.
 
 Consultation discipline:
 

@@ -441,3 +441,133 @@ Changes:
 Design note:
 
 - Spec and plan records are public execution contracts. They preserve attention and intent without storing hidden chain-of-thought.
+
+## 2026-05-13 - Hardening Note: Harness Mount Drift Audit
+
+Status: implemented and applied locally across managed KnowledgeOS projects.
+
+Bug reproduced:
+
+- Project4 task `T005` had passed eval, lifecycle, and context checks, but could not claim `[SYNC_OK]` because `.agent-os/fabric-link.yaml` still pointed at the legacy pre-OS shared-fabric root.
+- Several other managed projects had newer KnowledgeOS paths but no executable `global-agent-fabric/hooks/after-task.sh`, so required postflight would have failed later.
+- Older project routers still lacked the newer `context-pack`, `plan-task`, `phase-task`, `verify-context`, and `verify-lifecycle` route steps.
+
+Changes:
+
+- Added `harness-audit` to scan managed projects for mount drift, missing kernel hooks, missing control-plane files, old lifecycle routers, and missing archive write guards.
+- `harness-audit` defaults to dry-run and requires `--apply` before mutation.
+- Added safe repair behavior that backs up existing project files under `.agent-os/backups/harness-audit-<timestamp>/` before rewriting mount/router/write-policy files.
+- Exposed executable hooks under `global-agent-fabric/hooks/` so projects mounted to the canonical governance root can complete required postflight.
+- Added doctor validation for required executable postflight hooks.
+
+Applied local repair:
+
+- Repaired Project4 and David Gallery legacy pre-OS governance roots.
+- Repaired Fundings, Nanling Consulting, Project5.5, David Gallery, Project4, and KnowledgeOS mount/hook audit state.
+- Upgraded old workflow routers for David Gallery, Fundings, Nanling Consulting, and Project5.5.
+- Re-ran Project4 `T005` completion after repair; it now returns `sync_status: SYNC_OK`.
+
+Validation:
+
+- `harness-audit --json` reports `status: ok` and `issue_count: 0` for managed projects.
+- Doctor passes for David Gallery, Fundings, Nanling Consulting, Project4, Project5.5, and KnowledgeOS.
+- Targeted regression test `test_harness_audit_repairs_legacy_mount_and_missing_control_files` passes.
+
+## 2026-05-13 - Cleanup Note: Retire Legacy Pre-OS Skills Root
+
+Status: implemented locally after dependency scan.
+
+Bug reproduced:
+
+- The old local skills/root folder still existed even though KnowledgeOS now owns kernel, capability, workflow, and postflight behavior.
+- Several legacy `.agents/sync/codex-context.md` files could still inject the old boot contract into future agents.
+- Codex prompt history and Gemini project registry still had entries that could resurrect the old startup path.
+
+Changes:
+
+- Deleted the old local skills/root folder after confirming managed KnowledgeOS projects no longer mount it.
+- Deleted stale generated `.agents/sync/codex-context.md` files that referenced the retired root.
+- Removed the retired root from Gemini's project registry.
+- Removed stale startup snippets from Codex prompt history.
+- Updated the GitHub AI Radar runtime snapshot to point at the KnowledgeOS kernel.
+- Removed `.knowledgeos-local/`, which was a migration-era local inventory cache, not an active OS component.
+
+Validation:
+
+- The retired root no longer exists on disk.
+- `harness-audit --json` reports `status: ok` and `issue_count: 0`.
+- Doctor passes for all managed KnowledgeOS projects.
+
+## 2026-05-13 - Boot Repair: Restore Kernel Skeleton Directories
+
+Status: implemented locally after reproducing the boot hook failure.
+
+Bug reproduced:
+
+- `knowledgeos doctor --project-root KnowledgeOS --summary` passed.
+- `global-agent-fabric/hooks/before-task.sh` failed before `[BOOT_OK]` because the live kernel root lacked `global-agent-fabric/registries`.
+- The same hook would also require `global-agent-fabric/schemas`, including `schemas/phase-contract.md`.
+
+Root cause:
+
+- The canonical governance-core template already defined `registries/` and `schemas/`, but the live migrated `global-agent-fabric/` root did not include those minimal kernel skeleton directories.
+- This was a migration consistency bug, not a project `.agent-os` doctor failure.
+
+Fix:
+
+- Restored minimal kernel registry examples under `global-agent-fabric/registries/`.
+- Restored minimal public kernel schema docs under `global-agent-fabric/schemas/`.
+- Added doctor validation for required boot kernel skeleton directories and `schemas/phase-contract.md`.
+- Extended harness audit repair so missing shared-fabric hooks also restore the minimal kernel skeleton.
+- Kept the boot hook strict; no boot check was weakened.
+
+Validation:
+
+- `global-agent-fabric/hooks/before-task.sh` now returns `[BOOT_OK]`.
+- KnowledgeOS doctor remains clean.
+
+## 2026-05-13 - Release Note: Public Changelog And Codex Hooks Flag
+
+Status: implemented locally.
+
+Bug reproduced:
+
+- Root `CHANGELOG.md` was not yet a governed KnowledgeOS artifact, so `check-route-write` classified it as an unclassified write.
+- Local Codex configuration did not enable the current `hooks` feature flag, while Codex warned that the old `codex_hooks` flag is deprecated.
+
+Fix:
+
+- Added a public root `CHANGELOG.md` summarizing KnowledgeOS capability milestones and hardening repairs.
+- Added `CHANGELOG.md` to the local route-bound write policy and route-bound execution profile.
+- Updated the local Codex config to use `[features].hooks = true` while preserving the existing memories feature.
+- Backed up the previous local Codex config before editing.
+
+Validation:
+
+- `check-route-write` now allows `CHANGELOG.md` as a governed artifact.
+- Local Codex config parses as TOML and includes `features.hooks = true`.
+- No active `codex_hooks` key remains in the targeted Codex configuration scan.
+
+## 2026-05-13 - Hardening Note: Explicit Checkpoints And Capability Events
+
+Status: implemented locally after reproducing low-visibility lifecycle reporting.
+
+Bug reproduced:
+
+- `phase-task` wrote `phases.ndjson` but plain output did not force a user-visible `CHECKPOINT_OK` marker.
+- A run with all six phases and eval evidence could complete without any run-bound dispatch evidence or capability-call trace.
+- MCP, skill, subagent, orchestrator, and important script use were visible in the dispatch plan but not recorded as first-class run events.
+
+Fix:
+
+- `phase-task` now returns `CHECKPOINT_OK phase=<phase> status=<status> evidence=<short evidence>` in plain output and `checkpoint_marker: CHECKPOINT_OK` in JSON.
+- Added `capability-event` for observable MCP, skill, subagent, orchestrator, script, shell, and file-read calls.
+- `capability-event` writes `.agent-os/runs/<RUN_ID>/capability-events.ndjson` plus matching `command-events.ndjson` evidence and returns `CAPABILITY_OK`.
+- `dispatch-task --run-id` now records dispatch command evidence for the active run.
+- `verify-lifecycle` now rejects runs missing dispatch command evidence or missing required capability-stage evidence unless the dispatch phase explicitly explains the skipped required stage.
+- Write policy now human-gates direct edits to `capability-events.ndjson` so capability traces must be command-generated.
+
+Validation:
+
+- Added targeted tests for checkpoint markers, capability-event ledgers, and missing required capability traces.
+- Updated the distracted-agent guardrail scenario to require dispatch evidence and capability visibility.

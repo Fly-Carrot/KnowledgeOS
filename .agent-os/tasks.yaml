@@ -530,3 +530,105 @@ tasks:
       - "local main contains task-lifecycle-gates and spec-context-pack commits"
       - "Workbench local changes are preserved after merge"
       - "doctor, unit tests, guardrail scenarios, smoke, and Workbench diagnose pass"
+  - id: KOS-T027
+    title: "Audit and repair harness mount drift"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "integration_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/LIVE-REPORT.md"
+      - "global-agent-fabric/hooks/"
+      - "templates/project-control-plane/.agent-os/fabric-link.yaml"
+      - "templates/project-control-plane/.agent-os/workspace.yaml"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "harness scan detects legacy Antigravity governance roots"
+      - "postflight-required projects resolve an executable after-task hook"
+      - "managed project mount repair can run as dry-run before apply"
+      - "doctor and tests pass"
+  - id: KOS-T028
+    title: "Retire legacy Antigravity Skills root"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "destructive_cleanup"
+    outputs:
+      - "docs/LIVE-REPORT.md"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "all active project configs stop pointing to the legacy pre-OS skills root"
+      - "legacy pre-OS skills directory is removed after dependency scan"
+      - "KnowledgeOS doctor and smoke tests pass"
+  - id: KOS-T029
+    title: "Restore governance kernel boot skeleton"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "boot_regression"
+    outputs:
+      - ".agent-os/tasks.yaml"
+      - "global-agent-fabric/registries/mcp.example.yaml"
+      - "global-agent-fabric/registries/skills.example.yaml"
+      - "global-agent-fabric/registries/workflows.example.yaml"
+      - "global-agent-fabric/schemas/phase-contract.md"
+      - "global-agent-fabric/schemas/memory-lanes.md"
+      - "global-agent-fabric/schemas/postflight-contract.md"
+      - "docs/LIVE-REPORT.md"
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+    acceptance:
+      - "shared fabric before-task hook reports BOOT_OK"
+      - "KnowledgeOS doctor and targeted tests pass"
+  - id: KOS-T030
+    title: "Publish changelog and repair Codex hooks flag"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "config_regression"
+    outputs:
+      - "CHANGELOG.md"
+      - "docs/LIVE-REPORT.md"
+      - ".agent-os/tasks.yaml"
+      - ".agent-os/write-policy.yaml"
+      - ".agent-os/workflows/router.yaml"
+      - "knowledgeos/cli.py"
+    acceptance:
+      - "CHANGELOG summarizes KnowledgeOS system capabilities and fixes"
+      - "Codex config uses [features].hooks instead of deprecated codex_hooks"
+      - "doctor and tests pass"
+  - id: KOS-T031
+    title: "Make checkpoints and capability calls visible"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "guardrail_regression"
+    outputs:
+      - ".agent-os/startup-prompt.md"
+      - ".agent-os/workflows/router.yaml"
+      - ".agent-os/write-policy.yaml"
+      - ".agent-os/tasks.yaml"
+      - "CHANGELOG.md"
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "examples/scenarios/run_guardrail_scenarios.sh"
+      - "AGENTS.md"
+      - "templates/project-control-plane/AGENTS.md"
+      - "templates/project-control-plane/.agent-os/startup-prompt.md"
+      - "templates/project-control-plane/.agent-os/workflows/router.yaml"
+      - "templates/project-control-plane/.agent-os/write-policy.yaml"
+      - "docs/agent-guide.md"
+      - "docs/executable-control-plane.md"
+      - "docs/capability-orchestration.md"
+      - "docs/route-bound-execution-guard.md"
+      - "docs/public-release-checklist.md"
+      - "docs/quickstart.md"
+      - "docs/workflow-router.md"
+      - "docs/LIVE-REPORT.md"
+    acceptance:
+      - "phase-task prints CHECKPOINT_OK and JSON marker"
+      - "capability-event records MCP skill subagent orchestrator script visibility"
+      - "verify-lifecycle blocks missing dispatch or required capability trace"
+      - "doctor unit tests scenarios and diff check pass"

@@ -17,13 +17,15 @@ Before substantial work:
 7. Before planned mutation, run `CHANGE_ME_KNOWLEDGEOS_BIN check-route-write --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --path <planned-path>`.
 8. Create run evidence with `CHANGE_ME_KNOWLEDGEOS_BIN run-task --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id>`.
 9. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.
-10. Record lifecycle evidence with `CHANGE_ME_KNOWLEDGEOS_BIN phase-task --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<command/file/user confirmation>"`.
-11. Run `CHANGE_ME_KNOWLEDGEOS_BIN eval-task --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --run-id <run-id>`; do not manually append eval status.
-12. Run `CHANGE_ME_KNOWLEDGEOS_BIN verify-lifecycle --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --run-id <run-id>`.
-13. Use `CHANGE_ME_KNOWLEDGEOS_BIN complete-task --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --run-id <run-id> --summary "<summary>"`; it enforces lifecycle and required postflight.
-14. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.
-15. For reset requests, run `CHANGE_ME_KNOWLEDGEOS_BIN reset-project --project-root CHANGE_ME_PROJECT_ROOT --mode <soft|hard> --dry-run` before any destructive action.
-16. For old-project reorganization requests, run `CHANGE_ME_KNOWLEDGEOS_BIN migrate-legacy-project --project-root CHANGE_ME_PROJECT_ROOT --write-plan` before moving files.
-17. For historical or superseded files that should be stored but not read by default, run `CHANGE_ME_KNOWLEDGEOS_BIN archive-legacy-project --project-root CHANGE_ME_PROJECT_ROOT --write-plan` before moving files into `archive/`.
+10. Record run-bound dispatch evidence with `CHANGE_ME_KNOWLEDGEOS_BIN dispatch-task --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --run-id <run-id>`.
+11. Record lifecycle evidence with `CHANGE_ME_KNOWLEDGEOS_BIN phase-task --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<command/file/user confirmation>"`, and relay the returned `CHECKPOINT_OK` marker.
+12. Record MCP, skill, subagent, orchestrator, or important script use with `CHANGE_ME_KNOWLEDGEOS_BIN capability-event --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"`, and relay the returned `CAPABILITY_OK` marker.
+13. Run `CHANGE_ME_KNOWLEDGEOS_BIN eval-task --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --run-id <run-id>`; do not manually append eval status.
+14. Run `CHANGE_ME_KNOWLEDGEOS_BIN verify-lifecycle --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --run-id <run-id>`.
+15. Use `CHANGE_ME_KNOWLEDGEOS_BIN complete-task --project-root CHANGE_ME_PROJECT_ROOT --task-id <task-id> --run-id <run-id> --summary "<summary>"`; it enforces lifecycle, capability visibility, and required postflight.
+16. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.
+17. For reset requests, run `CHANGE_ME_KNOWLEDGEOS_BIN reset-project --project-root CHANGE_ME_PROJECT_ROOT --mode <soft|hard> --dry-run` before any destructive action.
+18. For old-project reorganization requests, run `CHANGE_ME_KNOWLEDGEOS_BIN migrate-legacy-project --project-root CHANGE_ME_PROJECT_ROOT --write-plan` before moving files.
+19. For historical or superseded files that should be stored but not read by default, run `CHANGE_ME_KNOWLEDGEOS_BIN archive-legacy-project --project-root CHANGE_ME_PROJECT_ROOT --write-plan` before moving files into `archive/`.
 
 Never claim boot, route, dispatch, write safety, phase, lifecycle, eval, completion, or sync success without command evidence.

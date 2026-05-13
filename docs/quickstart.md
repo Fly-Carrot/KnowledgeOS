@@ -137,8 +137,11 @@ Core commands:
 ./bin/knowledgeos check-write --project-root /path/to/project --path src/main.py
 ./bin/knowledgeos check-route-write --project-root /path/to/project --task-id T001 --path .agent-os/workspace.yaml
 ./bin/knowledgeos run-task --project-root /path/to/project --task-id T001
+./bin/knowledgeos dispatch-task --project-root /path/to/project --task-id T001 --run-id RUN-...
 ./bin/knowledgeos context-pack --project-root /path/to/project --task-id T001 --run-id RUN-...
 ./bin/knowledgeos plan-task --project-root /path/to/project --task-id T001 --run-id RUN-... --summary "Task plan."
+./bin/knowledgeos phase-task --project-root /path/to/project --task-id T001 --run-id RUN-... --phase review --status completed --note "Public checkpoint." --evidence "command output"
+./bin/knowledgeos capability-event --project-root /path/to/project --task-id T001 --run-id RUN-... --kind script --id tests --purpose "Run deterministic checks."
 ./bin/knowledgeos eval-task --project-root /path/to/project --task-id T001 --run-id RUN-...
 ./bin/knowledgeos verify-context --project-root /path/to/project --task-id T001 --run-id RUN-...
 ./bin/knowledgeos verify-lifecycle --project-root /path/to/project --task-id T001 --run-id RUN-...
@@ -155,7 +158,7 @@ Command meanings:
 doctor       validate the distribution and project control plane
 init-project copy the project-control-plane template safely
 route-task   map a task id/type to an observable workflow route
-dispatch-task build an observable capability plan from dispatch-policy.yaml and tool-registry.yaml
+dispatch-task build an observable capability plan and, with --run-id, bind it to run evidence
 tool-registry inspect MCP, skills, workflows, orchestration, and subagents
 create-spec  create durable spec state under .agent-os/specs/
 align-spec   align active/selected spec with a task before execution
@@ -164,6 +167,8 @@ check-route-write classify a planned write against both write-policy.yaml and th
 run-task     create a run envelope for a routed ready/in-progress task
 context-pack write/refresh spec-snapshot.md and context-pack.md for a run
 plan-task    write plan.md after the context pack exists
+phase-task   write public checkpoint evidence and emit CHECKPOINT_OK
+capability-event record visible MCP/skill/subagent/orchestrator/script use and emit CAPABILITY_OK
 eval-task    write deterministic run eval evidence and output-existence checks
 verify-context verify spec/context/plan evidence and spec drift
 verify-lifecycle verify required public phase checkpoint evidence

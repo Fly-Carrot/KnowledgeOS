@@ -16,5 +16,8 @@ Before publishing KnowledgeOS, verify:
 - `complete-task` refuses missing plan/context evidence and spec drift;
 - `create-task` works and new work does not require abusing `reopen-task`;
 - `phase-task` and `verify-lifecycle` work;
+- `phase-task` returns a visible `CHECKPOINT_OK` marker;
+- `capability-event` records capability visibility and returns `CAPABILITY_OK`;
+- `verify-lifecycle` refuses missing dispatch or required capability evidence;
 - `complete-task` refuses missing phases;
 - `complete-task` runs required postflight or records an explicit pending reason.

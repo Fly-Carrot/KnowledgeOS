@@ -27,6 +27,7 @@ from urllib.parse import parse_qs, urlparse
 
 REQUIRED_PUBLIC_FILES = [
     "README.md",
+    "CHANGELOG.md",
     "docs/LIVE-REPORT.md",
     "docs/architecture.md",
     "docs/write-guard.md",
@@ -104,6 +105,20 @@ REQUIRED_PROJECT_FILES = [
     ".agent-os/tool-registry.yaml",
 ]
 
+REQUIRED_KERNEL_DIRS = ["rules", "hooks", "registries", "memory", "sync", "schemas"]
+REQUIRED_KERNEL_FILES = [
+    "hooks/before-task.sh",
+    "schemas/phase-contract.md",
+]
+KERNEL_SKELETON_TEMPLATE_FILES = [
+    "registries/mcp.example.yaml",
+    "registries/skills.example.yaml",
+    "registries/workflows.example.yaml",
+    "schemas/phase-contract.md",
+    "schemas/memory-lanes.md",
+    "schemas/postflight-contract.md",
+]
+
 PUBLIC_FORBIDDEN_NEEDLES = [
     str(Path.home()) + "/",
     "API" + "_KEY=",
@@ -127,6 +142,27 @@ READ_POLICY_SECTIONS = {
 
 EXPECTED_PHASE_KEYS = ["route", "plan", "review", "dispatch", "execute", "report"]
 PHASE_STATUSES = {"completed", "skipped"}
+CAPABILITY_EVENT_KINDS = {"mcp", "skill", "subagent", "orchestrator", "script", "shell", "file_read"}
+LIFECYCLE_ROUTE_COMMANDS = [
+    "dispatch-task --project-root . --task-id <task-id> --run-id <run-id>",
+    "context-pack --project-root . --task-id <task-id> --run-id <run-id>",
+    "plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>",
+    "phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>",
+    "eval-task --project-root . --task-id <task-id> --run-id <run-id>",
+    "verify-context --project-root . --task-id <task-id> --run-id <run-id>",
+    "verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>",
+    "complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>",
+]
+LIFECYCLE_COMMAND_MARKERS = [
+    "context-pack",
+    "plan-task",
+    "dispatch-task",
+    "phase-task",
+    "eval-task",
+    "verify-context",
+    "verify-lifecycle",
+    "complete-task",
+]
 TASK_STATUSES = {"backlog", "ready", "in_progress", "blocked", "completed", "cancelled"}
 RUNNABLE_TASK_STATUSES = {"ready", "in_progress"}
 TOOL_KINDS = {"mcp", "skill", "workflow", "orchestrator", "subagent", "memory"}
@@ -257,7 +293,7 @@ def iter_files(root: Path, relative_paths: Iterable[str]) -> Iterable[Path]:
 
 def scan_public_content(root: Path) -> list[CheckResult]:
     results: list[CheckResult] = []
-    scan_roots = [root / "README.md", root / "docs", root / "templates"]
+    scan_roots = [root / "README.md", root / "CHANGELOG.md", root / "docs", root / "templates"]
     for base in scan_roots:
         if not base.exists():
             continue
@@ -1410,7 +1446,9 @@ def write_task_plan(project_root: Path, task_id: str, run_id: str, *, summary: s
         "",
         "## Checkpoint Requirement",
         "",
+        "- Record run-bound dispatch evidence with dispatch-task --run-id.",
         "- Record public lifecycle checkpoints with phase-task.",
+        "- Record MCP, skill, subagent, orchestrator, or important script use with capability-event.",
         "- Complete only after eval-task, verify-lifecycle, and postflight pass.",
         "",
     ]
@@ -1558,6 +1596,10 @@ def command_events_path(run_dir: Path) -> Path:
     return run_dir / "command-events.ndjson"
 
 
+def capability_events_path(run_dir: Path) -> Path:
+    return run_dir / "capability-events.ndjson"
+
+
 def append_command_event(run_dir: Path, event_type: str, task_id: str, run_id: str, **extra: Any) -> None:
     record = {
         "event_type": event_type,
@@ -1598,6 +1640,29 @@ def has_command_event(run_dir: Path, event_type: str, task_id: str, run_id: str,
         if all(str(event.get(key, "")) == value for key, value in matches.items()):
             return True
     return False
+
+
+def load_capability_events(run_dir: Path) -> list[dict[str, Any]]:
+    path = capability_events_path(run_dir)
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(read_text(path).splitlines(), start=1):
+        if not raw.strip():
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            item = {"_invalid_json": raw, "_line": line_number}
+        events.append(item)
+    return events
+
+
+def short_marker_value(value: str, limit: int = 96) -> str:
+    cleaned = " ".join(value.strip().split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: max(0, limit - 3)].rstrip() + "..."
 
 
 def task_declared_outputs(project_root: Path, task_id: str) -> list[str]:
@@ -2257,6 +2322,18 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
         results.append(CheckResult(skip_external or exists, "fabric_link", f"{key} -> {value}" if exists else f"{key} target missing: {value}"))
     for key in ["boot_required", "phase_logging_required", "postflight_required"]:
         results.append(CheckResult(fabric.get(key) == "true", "runtime_contract", f"{key}=true"))
+    if fabric.get("boot_required") == "true":
+        results.extend(validate_governance_kernel(project_root, fabric.get("governance_root", ""), skip_external=skip_external))
+    if fabric.get("postflight_required") == "true":
+        hook = resolve_postflight_hook(project_root, {"governance_root": fabric.get("governance_root", "")})
+        hook_ok = bool(hook and hook.exists() and os.access(hook, os.X_OK))
+        results.append(
+            CheckResult(
+                skip_external or hook_ok,
+                "postflight_hook",
+                f"after-task hook executable: {hook}" if hook_ok else f"after-task hook missing or not executable: {hook}",
+            )
+        )
     phases = parse_simple_list_sections(agent_os / "fabric-link.yaml", {"phase_keys"}).get("phase_keys", [])
     results.append(CheckResult(phases == EXPECTED_PHASE_KEYS, "phase_keys", f"{phases}"))
     results.extend(validate_phase_policy(project_root))
@@ -2366,6 +2443,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
             )
             if isinstance(route_order, list):
                 has_run = any("run-task" in item for item in route_order)
+                has_dispatch_event = any("dispatch-task" in item and "--run-id" in item for item in route_order)
                 has_context = any("context-pack" in item for item in route_order)
                 has_plan = any("plan-task" in item for item in route_order)
                 has_phase = any("phase-task" in item for item in route_order)
@@ -2374,6 +2452,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                 has_verify = any("verify-lifecycle" in item for item in route_order)
                 has_complete = any("complete-task" in item for item in route_order)
                 run_index = next((idx for idx, item in enumerate(route_order) if "run-task" in item), -1)
+                dispatch_event_index = next((idx for idx, item in enumerate(route_order) if "dispatch-task" in item and "--run-id" in item), -1)
                 context_index = next((idx for idx, item in enumerate(route_order) if "context-pack" in item), -1)
                 plan_index = next((idx for idx, item in enumerate(route_order) if "plan-task" in item), -1)
                 eval_index = next((idx for idx, item in enumerate(route_order) if "eval-task" in item), -1)
@@ -2381,6 +2460,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                 verify_index = next((idx for idx, item in enumerate(route_order) if "verify-lifecycle" in item), -1)
                 complete_index = next((idx for idx, item in enumerate(route_order) if "complete-task" in item), -1)
                 results.append(CheckResult(has_run, "workflow_router_lifecycle", f"{name} includes run-task"))
+                results.append(CheckResult(has_dispatch_event, "workflow_router_lifecycle", f"{name} includes dispatch-task --run-id"))
                 results.append(CheckResult(has_context, "workflow_router_lifecycle", f"{name} includes context-pack"))
                 results.append(CheckResult(has_plan, "workflow_router_lifecycle", f"{name} includes plan-task"))
                 results.append(CheckResult(has_phase, "workflow_router_lifecycle", f"{name} includes phase-task"))
@@ -2393,6 +2473,13 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                         run_index >= 0 and context_index >= 0 and plan_index >= 0 and run_index < context_index < plan_index,
                         "workflow_router_lifecycle",
                         f"{name} run-task before context-pack before plan-task",
+                    )
+                )
+                results.append(
+                    CheckResult(
+                        run_index >= 0 and dispatch_event_index >= 0 and context_index >= 0 and run_index < dispatch_event_index < context_index,
+                        "workflow_router_lifecycle",
+                        f"{name} run-task before dispatch-task --run-id before context-pack",
                     )
                 )
                 results.append(
@@ -2469,7 +2556,9 @@ def build_agent_guide(project_root: Path) -> str:
             "   - pause at consultation checkpoints, state your recommendation, and ask before proceeding.",
             "",
             "6. Keep receipts and checkpoint evidence command-generated.",
-            f"   - {bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>;",
+            f"   - {bin_path} dispatch-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
+            f"   - {bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>; echo or relay CHECKPOINT_OK;",
+            f"   - {bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose <purpose> before/after MCP, skill, subagent, orchestrator, or important script use; echo or relay CAPABILITY_OK;",
             f"   - {bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
             f"   - {bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
             f"   - {bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
@@ -2513,14 +2602,16 @@ def build_startup_prompt(project_root: Path) -> str:
             f"9. Create run evidence with `{bin_path} run-task --project-root {project_root} --task-id <task-id>`; this writes `spec-snapshot.md` and `context-pack.md`.",
             f"10. Write/update the execution context with `{bin_path} context-pack --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} plan-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
             "11. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.",
-            f"12. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`.",
-            f"13. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
-            f"14. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
-            f"15. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, and required postflight.",
-            "16. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
-            f"17. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
-            f"18. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
-            f"19. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
+            f"12. Record dispatch evidence with `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id> --run-id <run-id>` after the run exists.",
+            f"13. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `CHECKPOINT_OK` marker.",
+            f"14. Record MCP, skill, subagent, orchestrator, or important script use with `{bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose \"<purpose>\"`; relay the returned `CAPABILITY_OK` marker.",
+            f"15. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
+            f"16. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
+            f"17. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, capability visibility, and required postflight.",
+            "18. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
+            f"19. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
+            f"20. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
+            f"21. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
             "",
             "Never claim boot, route, dispatch, write safety, spec alignment, context pack, plan, checkpoint, eval, completion, or sync success without command evidence.",
             "",
@@ -3201,7 +3292,7 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
         write_text(run_dir / "diff_summary.md", "# Diff Summary\n\nNo mutations recorded yet.\n")
         write_text(run_dir / "eval.md", "# Eval\n\nNo eval has run yet.\n")
         write_text(run_dir / "handoff.md", f"# Handoff\n\nCurrent run: {run_id}\n\nNext agent should inspect `run.yaml` and `receipt.md`.\n")
-        append_command_event(run_dir, "run-task", task_id, run_id, status="started")
+        append_command_event(run_dir, "run-task", task_id, run_id, status="started", lifecycle_contract="capability-visible-v1")
         write_context_pack(project_root, task_id, run_id, summary=summary)
         write_text(project_root / ".agent-os" / "receipts" / "latest.md", receipt)
         write_text(project_root / ".agent-os" / "handoffs" / "current.md", f"# Current Handoff\n\nCurrent run: {run_id}\n\nTask: {task_id}\n")
@@ -3258,7 +3349,66 @@ def record_task_phase(
     with ledger_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
     append_command_event(run_dir, "phase-task", task_id, run_id, phase=phase, status=status)
-    return {"status": "recorded", "ledger": str(ledger_path), "record": record}
+    marker = f"CHECKPOINT_OK phase={phase} status={status} evidence={short_marker_value(evidence or note)}"
+    return {"status": "recorded", "checkpoint_marker": "CHECKPOINT_OK", "marker": marker, "ledger": str(ledger_path), "record": record}
+
+
+def record_dispatch_event(project_root: Path, task_id: str, run_id: str, dispatch: dict[str, Any]) -> dict[str, Any]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    required_stages = [step.get("stage", "") for step in dispatch.get("steps", []) if step.get("required")]
+    append_command_event(
+        run_dir,
+        "dispatch-task",
+        task_id,
+        run_id,
+        status=str(dispatch.get("status", "")),
+        required_stages=required_stages,
+    )
+    return {"run_id": run_id, "required_stages": required_stages, "command_events": str(command_events_path(run_dir))}
+
+
+def record_capability_event(
+    project_root: Path,
+    task_id: str,
+    run_id: str,
+    *,
+    kind: str,
+    capability_id: str,
+    purpose: str,
+    status: str = "completed",
+    evidence: str = "",
+) -> dict[str, Any]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    if kind not in CAPABILITY_EVENT_KINDS:
+        raise ValueError(f"invalid capability kind {kind!r}; expected one of {sorted(CAPABILITY_EVENT_KINDS)}")
+    if not capability_id.strip():
+        raise ValueError("--id is required")
+    if not purpose.strip():
+        raise ValueError("--purpose is required")
+    record = {
+        "task_id": task_id,
+        "run_id": run_id,
+        "kind": kind,
+        "id": capability_id.strip(),
+        "purpose": purpose.strip(),
+        "status": status.strip() or "completed",
+        "evidence": evidence.strip(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    event_path = capability_events_path(run_dir)
+    with event_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    append_command_event(
+        run_dir,
+        "capability-event",
+        task_id,
+        run_id,
+        kind=kind,
+        id=capability_id.strip(),
+        status=record["status"],
+    )
+    marker = f"CAPABILITY_OK kind={kind} id={capability_id.strip()} purpose={short_marker_value(purpose)}"
+    return {"status": "recorded", "capability_marker": "CAPABILITY_OK", "marker": marker, "ledger": str(event_path), "record": record}
 
 
 def load_phase_records(run_dir: Path) -> list[dict[str, Any]]:
@@ -3275,6 +3425,59 @@ def load_phase_records(run_dir: Path) -> list[dict[str, Any]]:
             item = {"_invalid_json": raw, "_line": line_number}
         records.append(item)
     return records
+
+
+def dispatch_record_skips_stage(record: dict[str, Any] | None, stage: str) -> bool:
+    if not record:
+        return False
+    text = " ".join(
+        str(record.get(key, ""))
+        for key in ["note", "evidence", "skip_reason"]
+    ).lower()
+    stage_text = stage.lower().replace("_", "-")
+    variants = {stage.lower(), stage_text, stage.lower().replace("_", " ")}
+    return any(variant in text for variant in variants) and any(token in text for token in ["skip", "skipped", "not needed", "no ", "without"])
+
+
+def capability_event_matches_stage(event: dict[str, Any], step: dict[str, Any]) -> bool:
+    if "_invalid_json" in event:
+        return False
+    stage = str(step.get("stage", ""))
+    kind = str(event.get("kind", ""))
+    capability_id = str(event.get("id", ""))
+    tool_ids = {str(tool.get("id", "")) for tool in step.get("tools", []) if isinstance(tool, dict)}
+    if stage == "branch_builder":
+        return capability_id == "branch-builder"
+    if stage == "script":
+        return kind in {"script", "shell"}
+    return kind == stage or bool(capability_id and capability_id in tool_ids)
+
+
+def verify_dispatch_capability_contract(project_root: Path, task_id: str, run_id: str, dispatch_record: dict[str, Any] | None) -> list[dict[str, Any]]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    errors: list[dict[str, Any]] = []
+    if not has_command_event(run_dir, "run-task", task_id, run_id, lifecycle_contract="capability-visible-v1"):
+        return errors
+    dispatch_event_ok = has_command_event(run_dir, "dispatch-task", task_id, run_id, status="dispatch_ready")
+    if not dispatch_event_ok:
+        errors.append({"label": "missing_dispatch_command_event", "detail": "dispatch-task --run-id command evidence is missing"})
+    dispatch = build_dispatch_plan(project_root, task_id)
+    if dispatch.get("status") != "dispatch_ready":
+        errors.append({"label": "dispatch_not_ready", "detail": dispatch.get("reason", "dispatch plan is not ready")})
+        return errors
+    required_steps = [step for step in dispatch.get("steps", []) if step.get("required")]
+    capability_events = load_capability_events(run_dir)
+    invalid_events = [event for event in capability_events if "_invalid_json" in event]
+    for event in invalid_events:
+        errors.append({"label": "invalid_capability_event", "detail": f"line {event.get('_line')} is not JSON"})
+    for step in required_steps:
+        stage = str(step.get("stage", ""))
+        if any(capability_event_matches_stage(event, step) for event in capability_events):
+            continue
+        if dispatch_record_skips_stage(dispatch_record, stage):
+            continue
+        errors.append({"label": "missing_required_capability_event", "detail": stage})
+    return errors
 
 
 def verify_lifecycle(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
@@ -3328,6 +3531,7 @@ def verify_lifecycle(project_root: Path, task_id: str, run_id: str) -> dict[str,
     ]
     if missing_command_events:
         errors.append({"label": "missing_phase_command_events", "detail": missing_command_events})
+    errors.extend(verify_dispatch_capability_contract(project_root, task_id, run_id, latest_by_phase.get("dispatch")))
 
     return {
         "status": "passed" if not errors else "failed",
@@ -3360,6 +3564,417 @@ def resolve_postflight_hook(project_root: Path, fabric: dict[str, str]) -> Path 
     if not root.is_absolute():
         root = project_root / root
     return root.resolve() / "hooks" / "after-task.sh"
+
+
+def validate_governance_kernel(project_root: Path, governance_root: str, *, skip_external: bool = False) -> list[CheckResult]:
+    if not governance_root or "CHANGE_ME" in governance_root:
+        return [CheckResult(skip_external, "boot_kernel", "governance_root unresolved" if not skip_external else "governance_root unresolved allowed")]
+    root = resolve_project_config_path(project_root, governance_root)
+    results: list[CheckResult] = []
+    for rel in REQUIRED_KERNEL_DIRS:
+        path = root / rel
+        results.append(CheckResult(skip_external or path.is_dir(), "kernel_skeleton", f"{rel}/ present" if path.is_dir() else f"{rel}/ missing: {path}"))
+    for rel in REQUIRED_KERNEL_FILES:
+        path = root / rel
+        if rel.endswith(".sh"):
+            ok = path.exists() and os.access(path, os.X_OK)
+            detail = f"{rel} executable: {path}" if ok else f"{rel} missing or not executable: {path}"
+        else:
+            ok = path.exists()
+            detail = f"{rel} present" if ok else f"{rel} missing: {path}"
+        results.append(CheckResult(skip_external or ok, "boot_kernel", detail))
+    return results
+
+
+def hook_path_for_governance_root(project_root: Path, governance_root: str, hook_name: str) -> Path:
+    root = Path(governance_root).expanduser()
+    if not root.is_absolute():
+        root = project_root / root
+    return root.resolve() / "hooks" / hook_name
+
+
+def default_governance_root(root: Path) -> Path:
+    return root / "global-agent-fabric"
+
+
+def default_capability_root(root: Path) -> Path:
+    return root / "capability-layer"
+
+
+def parse_registry_project_paths(registry: Path) -> list[Path]:
+    if not registry.exists():
+        return []
+    paths: list[Path] = []
+    for raw in read_text(registry).splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("path:"):
+            value = stripped.split(":", 1)[1].strip().strip('"').strip("'")
+            if value:
+                paths.append(Path(value).expanduser())
+    return paths
+
+
+def discover_agent_os_projects(search_roots: list[Path], *, include_templates: bool = False) -> list[Path]:
+    projects: set[Path] = set()
+    skip_names = {
+        ".git",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+        "Library",
+        "Applications",
+        "System",
+        "global-agent-fabric_venv",
+    }
+    for search_root in search_roots:
+        search_root = search_root.expanduser()
+        if not search_root.exists():
+            continue
+        if (search_root / ".agent-os").is_dir():
+            projects.add(search_root.resolve())
+        for dirpath, dirnames, _filenames in os.walk(search_root):
+            current = Path(dirpath)
+            dirnames[:] = [
+                name
+                for name in dirnames
+                if name not in skip_names and not (name.startswith(".") and name not in {".agent-os"})
+            ]
+            if ".agent-os" in dirnames:
+                if include_templates or "templates/project-control-plane" not in str(current):
+                    projects.add(current.resolve())
+                dirnames.remove(".agent-os")
+    return sorted(projects, key=lambda item: str(item))
+
+
+def replace_scalar_line(text: str, key: str, value: str) -> str:
+    pattern = re.compile(rf"^(\s*){re.escape(key)}\s*:\s*.*$", re.MULTILINE)
+    return pattern.sub(rf"\1{key}: {value}", text)
+
+
+def backup_project_file(project_root: Path, path: Path, backup_name: str) -> Path:
+    rel = path.relative_to(project_root)
+    target = project_root / ".agent-os" / "backups" / backup_name / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, target)
+    return target
+
+
+def ensure_kernel_hooks(root: Path, governance_root: Path, *, apply: bool) -> list[dict[str, str]]:
+    template_hooks = root / "templates" / "governance-core" / "hooks"
+    hooks_root = governance_root / "hooks"
+    actions: list[dict[str, str]] = []
+    for hook_name in ["before-task.sh", "log-phase.sh", "after-task.sh"]:
+        source = template_hooks / hook_name
+        target = hooks_root / hook_name
+        if not source.exists():
+            actions.append({"action": "missing_source", "path": str(source)})
+            continue
+        if target.exists():
+            if os.access(target, os.X_OK):
+                actions.append({"action": "ok", "path": str(target)})
+            else:
+                actions.append({"action": "chmod", "path": str(target)})
+                if apply:
+                    target.chmod(target.stat().st_mode | 0o111)
+            continue
+        actions.append({"action": "copy", "source": str(source), "path": str(target)})
+        if apply:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            target.chmod(target.stat().st_mode | 0o111)
+    return actions
+
+
+def ensure_kernel_skeleton(root: Path, governance_root: Path, *, apply: bool) -> list[dict[str, str]]:
+    template = root / "templates" / "governance-core"
+    actions: list[dict[str, str]] = []
+    for rel in REQUIRED_KERNEL_DIRS:
+        target = governance_root / rel
+        if target.is_dir():
+            actions.append({"action": "ok", "path": str(target)})
+            continue
+        actions.append({"action": "mkdir", "path": str(target)})
+        if apply:
+            target.mkdir(parents=True, exist_ok=True)
+    for rel in KERNEL_SKELETON_TEMPLATE_FILES:
+        source = template / rel
+        target = governance_root / rel
+        if target.exists():
+            actions.append({"action": "ok", "path": str(target)})
+            continue
+        if not source.exists():
+            actions.append({"action": "missing_source", "path": str(source)})
+            continue
+        actions.append({"action": "copy", "source": str(source), "path": str(target)})
+        if apply:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+    return actions
+
+
+def ensure_capability_layer(root: Path, capability_root: Path, *, apply: bool) -> list[dict[str, str]]:
+    template = root / "templates" / "capability-layer"
+    actions: list[dict[str, str]] = []
+    for rel in ["README.md", "STRUCTURE-CHECK.md"]:
+        source = template / rel
+        target = capability_root / rel
+        if target.exists():
+            actions.append({"action": "ok", "path": str(target)})
+            continue
+        if not source.exists():
+            actions.append({"action": "missing_source", "path": str(source)})
+            continue
+        actions.append({"action": "copy", "source": str(source), "path": str(target)})
+        if apply:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+    return actions
+
+
+def template_replacements_for_project(
+    project_root: Path,
+    root: Path,
+    governance_root: Path,
+    capability_root: Path,
+) -> dict[str, str]:
+    return {
+        "CHANGE_ME_GLOBAL_AGENT_FABRIC_ROOT": str(governance_root),
+        "CHANGE_ME_KNOWLEDGEOS_CAPABILITY_ROOT": str(capability_root),
+        "CHANGE_ME_AGENT_FABRIC_IMPLEMENTATION_ROOT": str(capability_root),
+        "CHANGE_ME_KNOWLEDGEOS_BIN": str(root / "bin" / "knowledgeos"),
+        "CHANGE_ME_PROJECT_NAME": project_root.name,
+        "CHANGE_ME_PROJECT_ROOT": str(project_root),
+        "CHANGE_ME_WORKSPACE_ID": safe_slug(project_root.name).lower(),
+        "CHANGE_ME_DATE": datetime.now().strftime("%Y-%m-%d"),
+    }
+
+
+def fill_missing_control_plane_files(
+    project_root: Path,
+    root: Path,
+    governance_root: Path,
+    capability_root: Path,
+    *,
+    apply: bool,
+) -> list[dict[str, str]]:
+    template = root / "templates" / "project-control-plane"
+    replacements = template_replacements_for_project(project_root, root, governance_root, capability_root)
+    actions: list[dict[str, str]] = []
+    for rel in REQUIRED_PROJECT_FILES:
+        target = project_root / rel
+        if target.exists():
+            actions.append({"action": "ok", "path": str(target)})
+            continue
+        source = template / rel
+        if not source.exists():
+            actions.append({"action": "missing_source", "path": str(source)})
+            continue
+        text = read_text(source)
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        actions.append({"action": "write_missing", "source": str(source), "path": str(target)})
+        if apply:
+            write_text(target, text)
+    return actions
+
+
+def route_order_needs_lifecycle_upgrade(route_order: list[str]) -> bool:
+    return any(not any(marker in item for item in route_order) for marker in LIFECYCLE_COMMAND_MARKERS)
+
+
+def normalize_route_order(route_order: list[str]) -> list[str]:
+    cleaned = [
+        item
+        for item in route_order
+        if not any(marker in item for marker in LIFECYCLE_COMMAND_MARKERS)
+    ]
+    run_index = next((idx for idx, item in enumerate(cleaned) if "run-task" in item), -1)
+    if run_index < 0:
+        cleaned.append("run-task --project-root . --task-id <task-id>")
+        run_index = len(cleaned) - 1
+    prefix = cleaned[: run_index + 1]
+    suffix = cleaned[run_index + 1 :]
+    return prefix + LIFECYCLE_ROUTE_COMMANDS[:4] + suffix + LIFECYCLE_ROUTE_COMMANDS[4:]
+
+
+def render_workflow_profiles(profiles: dict[str, dict[str, Any]]) -> str:
+    lines = [
+        "# KnowledgeOS workflow router.",
+        "# Task classification is open, but lifecycle routing must be explicit.",
+        "workflows:",
+    ]
+    for name, profile in profiles.items():
+        lines.append(f"  {name}:")
+        route_order = profile.get("route_order", [])
+        lines.append("    route_order:")
+        for item in route_order if isinstance(route_order, list) else [str(route_order)]:
+            lines.append(f"      - {item}")
+        for key, value in profile.items():
+            if key == "route_order":
+                continue
+            if isinstance(value, list):
+                lines.append(f"    {key}:")
+                for item in value:
+                    lines.append(f"      - {item}")
+            else:
+                lines.append(f"    {key}: {value}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def upgrade_workflow_router_file(project_root: Path, *, apply: bool, backup_name: str) -> dict[str, Any] | None:
+    path = project_root / ".agent-os" / "workflows" / "router.yaml"
+    if not path.exists():
+        return None
+    profiles = parse_workflow_profiles(path)
+    changed = False
+    upgraded_profiles: list[str] = []
+    for name, profile in profiles.items():
+        route_order = profile.get("route_order", [])
+        if not isinstance(route_order, list):
+            route_order = [str(route_order)]
+        if route_order_needs_lifecycle_upgrade(route_order):
+            profile["route_order"] = normalize_route_order(route_order)
+            changed = True
+            upgraded_profiles.append(name)
+    if not changed:
+        return None
+    action: dict[str, Any] = {"action": "upgrade_workflow_router", "path": str(path), "profiles": upgraded_profiles, "backup": ""}
+    if apply:
+        backup = backup_project_file(project_root, path, backup_name)
+        action["backup"] = str(backup)
+        write_text(path, render_workflow_profiles(profiles))
+    return action
+
+
+def ensure_archive_write_guard(project_root: Path, *, apply: bool, backup_name: str) -> dict[str, str] | None:
+    path = project_root / ".agent-os" / "write-policy.yaml"
+    if not path.exists():
+        return None
+    policy = load_write_policy(project_root)
+    if "archive/**" in policy.get("controlled", []):
+        return None
+    lines = read_text(path).splitlines()
+    insert_at: int | None = None
+    in_controlled = False
+    for idx, raw in enumerate(lines):
+        stripped = raw.strip()
+        if stripped == "controlled:":
+            in_controlled = True
+            insert_at = idx + 1
+            continue
+        if in_controlled:
+            if raw.startswith("  ") and not raw.startswith("    ") and stripped.endswith(":"):
+                break
+            if stripped.startswith("-"):
+                insert_at = idx + 1
+    if insert_at is None:
+        return None
+    action = {"action": "add_archive_write_guard", "path": str(path), "backup": ""}
+    if apply:
+        backup = backup_project_file(project_root, path, backup_name)
+        action["backup"] = str(backup)
+        lines.insert(insert_at, "    - archive/**")
+        write_text(path, "\n".join(lines).rstrip() + "\n")
+    return action
+
+
+def audit_project_mount(
+    project_root: Path,
+    root: Path,
+    governance_root: Path,
+    capability_root: Path,
+    *,
+    apply: bool,
+    backup_name: str,
+) -> dict[str, Any]:
+    agent_os = project_root / ".agent-os"
+    fabric_path = agent_os / "fabric-link.yaml"
+    workspace_path = agent_os / "workspace.yaml"
+    issues: list[str] = []
+    actions: list[dict[str, str]] = []
+    if not agent_os.is_dir():
+        return {"project_root": str(project_root), "status": "unmanaged", "issues": ["missing .agent-os"], "actions": []}
+    if not fabric_path.exists():
+        return {"project_root": str(project_root), "status": "broken", "issues": ["missing .agent-os/fabric-link.yaml"], "actions": []}
+
+    fabric = parse_scalar_values(
+        fabric_path,
+        {"governance_root", "capability_root", "implementation_root", "postflight_required"},
+    )
+    current_governance = fabric.get("governance_root", "")
+    current_capability = fabric.get("capability_root") or fabric.get("implementation_root", "")
+    if "Antigravity_Skills" in current_governance:
+        issues.append("legacy_antigravity_governance_root")
+    if current_governance and Path(current_governance).expanduser() != governance_root and project_root != root:
+        issues.append("noncanonical_governance_root")
+    if current_capability and Path(current_capability).expanduser() != capability_root and project_root != root:
+        issues.append("noncanonical_capability_root")
+    if fabric.get("postflight_required", "").lower() == "true":
+        hook = resolve_postflight_hook(project_root, fabric)
+        if not hook or not hook.exists() or not os.access(hook, os.X_OK):
+            issues.append("postflight_hook_missing_or_not_executable")
+
+    for required in REQUIRED_PROJECT_FILES:
+        if not (project_root / required).exists():
+            issues.append(f"missing_control_file:{required}")
+    router_action = upgrade_workflow_router_file(project_root, apply=False, backup_name=backup_name)
+    if router_action:
+        issues.append("workflow_router_lifecycle_drift")
+    archive_action = ensure_archive_write_guard(project_root, apply=False, backup_name=backup_name)
+    if archive_action:
+        issues.append("missing_archive_write_guard")
+
+    should_rewrite_mount = project_root != root and (
+        "legacy_antigravity_governance_root" in issues
+        or "noncanonical_governance_root" in issues
+        or "noncanonical_capability_root" in issues
+        or "postflight_hook_missing_or_not_executable" in issues
+    )
+    if should_rewrite_mount:
+        for path in [fabric_path, workspace_path]:
+            if not path.exists():
+                continue
+            original = read_text(path)
+            updated = replace_scalar_line(original, "governance_root", str(governance_root))
+            updated = replace_scalar_line(updated, "capability_root", str(capability_root))
+            updated = replace_scalar_line(updated, "implementation_root", str(capability_root))
+            if updated != original:
+                action = {"action": "rewrite_mount", "path": str(path), "backup": ""}
+                if apply:
+                    backup = backup_project_file(project_root, path, backup_name)
+                    action["backup"] = str(backup)
+                    write_text(path, updated)
+                actions.append(action)
+
+    missing_actions = fill_missing_control_plane_files(
+        project_root,
+        root,
+        governance_root,
+        capability_root,
+        apply=apply,
+    )
+    actions.extend(action for action in missing_actions if action["action"] != "ok")
+    router_action = upgrade_workflow_router_file(project_root, apply=apply, backup_name=backup_name)
+    if router_action:
+        actions.append(router_action)
+    archive_action = ensure_archive_write_guard(project_root, apply=apply, backup_name=backup_name)
+    if archive_action:
+        actions.append(archive_action)
+
+    # Re-read after optional repair so the reported final status reflects the
+    # actual mount state rather than the pre-repair state.
+    if apply:
+        return audit_project_mount(
+            project_root,
+            root,
+            governance_root,
+            capability_root,
+            apply=False,
+            backup_name=backup_name,
+        ) | {"repair_actions": actions}
+
+    status = "ok" if not issues else "attention"
+    return {"project_root": str(project_root), "status": status, "issues": sorted(set(issues)), "actions": actions}
 
 
 def write_postflight_evidence(run_dir: Path, lines: list[str]) -> None:
@@ -3674,6 +4289,54 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if all(r.ok for r in results) else 1
 
 
+def cmd_harness_audit(args: argparse.Namespace) -> int:
+    root = resolve_root(getattr(args, "root", None))
+    governance_root = Path(args.governance_root).expanduser().resolve() if args.governance_root else default_governance_root(root)
+    capability_root = Path(args.capability_root).expanduser().resolve() if args.capability_root else default_capability_root(root)
+    search_roots = [Path(item).expanduser() for item in getattr(args, "search_root", [])]
+    target_projects = [Path(item).expanduser().resolve() for item in getattr(args, "target_project", [])]
+    if not target_projects and not search_roots:
+        search_roots = [Path.home() / "Desktop", root]
+    if getattr(args, "include_registry", False):
+        registry = governance_root / "projects" / "registry.yaml"
+        target_projects.extend(path.expanduser().resolve() for path in parse_registry_project_paths(registry) if path.exists())
+    discovered = discover_agent_os_projects(search_roots, include_templates=getattr(args, "include_templates", False))
+    projects = sorted(set(target_projects + discovered), key=lambda item: str(item))
+
+    backup_name = f"harness-audit-{now_stamp()}"
+    kernel_actions = ensure_kernel_hooks(root, governance_root, apply=args.apply)
+    kernel_skeleton_actions = ensure_kernel_skeleton(root, governance_root, apply=args.apply)
+    capability_actions = ensure_capability_layer(root, capability_root, apply=args.apply)
+    reports = [
+        audit_project_mount(
+            project,
+            root,
+            governance_root,
+            capability_root,
+            apply=args.apply,
+            backup_name=backup_name,
+        )
+        for project in projects
+        if project.exists()
+    ]
+    issues = [report for report in reports if report.get("status") not in {"ok", "unmanaged"}]
+    payload = {
+        "status": "ok" if not issues else "attention",
+        "mode": "apply" if args.apply else "dry_run",
+        "knowledgeos_root": str(root),
+        "governance_root": str(governance_root),
+        "capability_root": str(capability_root),
+        "kernel_hooks": kernel_actions,
+        "kernel_skeleton": kernel_skeleton_actions,
+        "capability_layer": capability_actions,
+        "project_count": len(reports),
+        "issue_count": len(issues),
+        "projects": reports,
+    }
+    emit(payload, args.json)
+    return 0 if payload["status"] == "ok" else 1
+
+
 def load_workflow_profiles(project_root: Path) -> dict[str, dict[str, Any]]:
     router_path = project_root / ".agent-os" / "workflows" / "router.yaml"
     if not router_path.exists():
@@ -3951,7 +4614,35 @@ def cmd_phase_task(args: argparse.Namespace) -> int:
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    emit(result, args.json)
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
+    return 0
+
+
+def cmd_capability_event(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = record_capability_event(
+            project_root,
+            args.task_id,
+            args.run_id,
+            kind=args.kind,
+            capability_id=args.id,
+            purpose=args.purpose,
+            status=args.status,
+            evidence=args.evidence,
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
     return 0
 
 
@@ -4058,6 +4749,8 @@ def cmd_dispatch_task(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
         result = build_dispatch_plan(project_root, args.task_id)
+        if args.run_id and result.get("status") == "dispatch_ready":
+            result["dispatch_event"] = record_dispatch_event(project_root, args.task_id, args.run_id, result)
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -4238,6 +4931,18 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--json", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
 
+    harness = sub.add_parser("harness-audit", help="audit and optionally repair KnowledgeOS mount drift across managed projects")
+    harness.add_argument("--root", help="KnowledgeOS distribution root")
+    harness.add_argument("--search-root", action="append", default=[], help="directory to scan for .agent-os projects")
+    harness.add_argument("--target-project", action="append", default=[], help="specific project root to audit")
+    harness.add_argument("--governance-root", help="canonical governance root; defaults to <root>/global-agent-fabric")
+    harness.add_argument("--capability-root", help="canonical capability root; defaults to <root>/capability-layer")
+    harness.add_argument("--include-registry", action="store_true", help="also scan projects listed in the governance registry")
+    harness.add_argument("--include-templates", action="store_true", help="include template project-control-plane directories")
+    harness.add_argument("--apply", action="store_true", help="apply safe repairs; default is dry-run audit")
+    harness.add_argument("--json", action="store_true")
+    harness.set_defaults(func=cmd_harness_audit)
+
     init_os = sub.add_parser("init-os", help="create a minimal KnowledgeOS kernel and capability layer")
     init_os.add_argument("--root", help="KnowledgeOS distribution root")
     init_os.add_argument("--os-root", required=True, help="target root that will contain global-agent-fabric and capability-layer")
@@ -4373,6 +5078,18 @@ def build_parser() -> argparse.ArgumentParser:
     phase_task_parser.add_argument("--json", action="store_true")
     phase_task_parser.set_defaults(func=cmd_phase_task)
 
+    capability_event_parser = sub.add_parser("capability-event", help="record an observable MCP, skill, subagent, or script capability call")
+    capability_event_parser.add_argument("--project-root", required=True)
+    capability_event_parser.add_argument("--task-id", required=True)
+    capability_event_parser.add_argument("--run-id", required=True)
+    capability_event_parser.add_argument("--kind", required=True, choices=sorted(CAPABILITY_EVENT_KINDS))
+    capability_event_parser.add_argument("--id", required=True, help="capability id, tool id, script id, or short file-read label")
+    capability_event_parser.add_argument("--purpose", required=True, help="public purpose for the capability call")
+    capability_event_parser.add_argument("--status", default="completed")
+    capability_event_parser.add_argument("--evidence", default="")
+    capability_event_parser.add_argument("--json", action="store_true")
+    capability_event_parser.set_defaults(func=cmd_capability_event)
+
     context_pack_parser = sub.add_parser("context-pack", help="write run context-pack.md and spec-snapshot.md")
     context_pack_parser.add_argument("--project-root", required=True)
     context_pack_parser.add_argument("--task-id", required=True)
@@ -4434,6 +5151,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch = sub.add_parser("dispatch-task", help="build an observable capability dispatch plan for a routed task")
     dispatch.add_argument("--project-root", required=True)
     dispatch.add_argument("--task-id", required=True)
+    dispatch.add_argument("--run-id", help="optional run id; when provided, records dispatch command evidence for lifecycle verification")
     dispatch.add_argument("--allow-unrouted", action="store_true", help="return success even when human triage is required")
     dispatch.add_argument("--json", action="store_true")
     dispatch.set_defaults(func=cmd_dispatch_task)

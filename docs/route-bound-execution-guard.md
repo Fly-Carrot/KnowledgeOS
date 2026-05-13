@@ -45,6 +45,7 @@ Agents should not hand-edit lifecycle evidence files. The default write policy n
 - `.agent-os/runs/**/eval.md`
 - `.agent-os/runs/**/phases.ndjson`
 - `.agent-os/runs/**/command-events.ndjson`
+- `.agent-os/runs/**/capability-events.ndjson`
 - `.agent-os/runs/**/postflight.md`
 - `.agent-os/tasks.yaml`
 - `.agent-os/specs.yaml`
@@ -69,6 +70,8 @@ By default, the run must first pass `knowledgeos eval-task`. The generated `eval
 The run must also pass `verify-lifecycle`, which checks `.agent-os/runs/<RUN_ID>/phases.ndjson` against `.agent-os/phase-policy.yaml`.
 
 `verify-lifecycle` also checks command evidence from `.agent-os/runs/<RUN_ID>/command-events.ndjson`, so a hand-written `phases.ndjson` is not enough.
+
+`verify-lifecycle` also checks capability visibility. A run must contain `dispatch-task --run-id` evidence, and required dispatch stages must either have a matching `capability-event` record or an explicit public skip reason in the dispatch phase evidence.
 
 The run must also pass `verify-context`, which checks `context-pack.md`, `spec-snapshot.md`, `plan.md`, and the matching command evidence. If the active spec changes after the run snapshot, completion fails with `spec_drift`.
 
@@ -109,7 +112,9 @@ doctor
 -> run-task
 -> context-pack writes/refreshes spec-snapshot.md and context-pack.md
 -> plan-task writes the public execution plan
+-> dispatch-task --run-id records dispatch evidence for this run
 -> phase-task records route/plan/review/dispatch/execute/report public evidence
+-> capability-event records MCP / skill / subagent / orchestrator / important script use
 -> execute
 -> eval-task writes deterministic eval evidence after checks pass
 -> verify-context

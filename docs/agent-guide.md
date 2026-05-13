@@ -29,6 +29,7 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
    - `knowledgeos route-task --project-root . --task-id <task-id>`
    - `knowledgeos dispatch-task --project-root . --task-id <task-id>`
    - `knowledgeos run-task --project-root . --task-id <task-id>`
+   - `knowledgeos dispatch-task --project-root . --task-id <task-id> --run-id <run-id>`
    - `knowledgeos context-pack --project-root . --task-id <task-id> --run-id <run-id>`
    - `knowledgeos plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`
    - `knowledgeos archive-legacy-project --project-root . --write-plan` before cold-archiving old or superseded content.
@@ -41,6 +42,9 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
 
 6. Keep receipts local and command-generated.
    - Use `knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note "<public note>" --evidence "<command or file evidence>"`.
+   - Relay the returned `CHECKPOINT_OK` marker to the user.
+   - Use `knowledgeos capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"` for MCP, skill, subagent, orchestrator, or important script calls.
+   - Relay the returned `CAPABILITY_OK` marker to the user.
    - Use `knowledgeos eval-task --project-root . --task-id <task-id> --run-id <run-id>`; do not hand-write `Status: passed`.
    - Use `knowledgeos verify-context --project-root . --task-id <task-id> --run-id <run-id>`.
    - Use `knowledgeos verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>`.

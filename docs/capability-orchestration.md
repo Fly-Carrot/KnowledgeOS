@@ -65,6 +65,26 @@ The output includes:
 - consultation checkpoints;
 - an explicit agent-opinion prompt.
 
+After `run-task` creates a run id, bind the dispatch decision to the run ledger:
+
+```bash
+./bin/knowledgeos dispatch-task --project-root /path/to/project --task-id T001 --run-id RUN-... --json
+```
+
+If an agent uses MCP, a skill, a subagent, an orchestrator, or an important script, it records the visible call:
+
+```bash
+./bin/knowledgeos capability-event \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --kind mcp \
+  --id markitdown \
+  --purpose "Convert reference document into reviewable text."
+```
+
+The command returns `CAPABILITY_OK` and writes public evidence into the run ledger. It does not execute the tool itself.
+
 ## Why Branch Builder Comes First
 
 Branch Builder is the planning layer for medium or complex root tasks. It should be considered before invoking registered capabilities because it helps split the work into bounded branches and prevents premature tool calls.
@@ -115,4 +135,5 @@ Capability orchestration tests verify that:
 - Branch Builder is prioritized before orchestration;
 - orchestration appears before lower-level capability use;
 - consultation checkpoints include execution and completion;
+- required dispatch stages are either recorded through `capability-event` or explicitly skipped with a public reason;
 - unknown task types require human triage.

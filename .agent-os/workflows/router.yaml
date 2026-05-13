@@ -6,6 +6,7 @@ workflows:
       - doctor --root .
       - check-write --project-root . --path templates/
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
@@ -28,6 +29,7 @@ workflows:
       - doctor --project-root .
       - check-write --project-root . --path .knowledgeos-local/inventory/
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
@@ -47,6 +49,7 @@ workflows:
       - doctor --root . --project-root templates/project-control-plane --template
       - check-write --project-root . --path templates/project-control-plane/
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
@@ -67,6 +70,7 @@ workflows:
       - doctor --root . --project-root .
       - check-write --project-root . --path knowledgeos/cli.py
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
@@ -89,6 +93,7 @@ workflows:
       - doctor --project-root .
       - agent-guide --project-root .
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
@@ -112,6 +117,7 @@ workflows:
       - route-task --project-root . --task-id <task-id>
       - check-write --project-root . --path .agent-os/workflows/router.yaml
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
@@ -136,6 +142,7 @@ workflows:
       - tool-registry --project-root . --check-paths
       - check-write --project-root . --path .agent-os/tool-registry.yaml
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
@@ -161,6 +168,7 @@ workflows:
       - route-task --project-root . --task-id <task-id>
       - check-route-write --project-root . --task-id <task-id> --path <planned-path>
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
@@ -190,6 +198,7 @@ workflows:
       - templates/
       - examples/
       - README.md
+      - CHANGELOG.md
       - AGENTS.md
       - Makefile
       - package.json
@@ -204,6 +213,7 @@ workflows:
       - dispatch-task --project-root . --task-id <task-id>
       - check-route-write --project-root . --task-id <task-id> --path <planned-path>
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
@@ -236,6 +246,7 @@ workflows:
       - archive-legacy-project --project-root . --write-plan
       - check-route-write --project-root . --task-id <task-id> --path archive/
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>

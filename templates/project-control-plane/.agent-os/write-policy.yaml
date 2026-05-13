@@ -40,6 +40,7 @@ write_policy:
     - .agent-os/runs/**/eval.md
     - .agent-os/runs/**/phases.ndjson
     - .agent-os/runs/**/command-events.ndjson
+    - .agent-os/runs/**/capability-events.ndjson
     - .agent-os/runs/**/postflight.md
 
   require_receipt_for:

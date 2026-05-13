@@ -19,13 +19,15 @@ Before substantial work:
 9. Create run evidence with `./bin/knowledgeos run-task --project-root . --task-id <task-id>`.
 10. Write/update the execution context with `./bin/knowledgeos context-pack --project-root . --task-id <task-id> --run-id <run-id>` and `./bin/knowledgeos plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`.
 11. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.
-12. Record public phase evidence with `./bin/knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<command/file/user confirmation>"`.
-13. Run `./bin/knowledgeos eval-task --project-root . --task-id <task-id> --run-id <run-id>`; do not manually append eval status.
-14. Run `./bin/knowledgeos verify-context --project-root . --task-id <task-id> --run-id <run-id>` and `./bin/knowledgeos verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>`.
-15. Use `./bin/knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`; it enforces spec/context/plan, lifecycle, and required postflight.
-16. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.
-17. For reset requests, run `./bin/knowledgeos reset-project --project-root . --mode <soft|hard> --dry-run` before destructive action.
-18. For old-project reorganization requests, run `./bin/knowledgeos migrate-legacy-project --project-root . --write-plan` before moving files.
-19. For historical or superseded files that should be stored but not read by default, run `./bin/knowledgeos archive-legacy-project --project-root . --write-plan` before moving files into `archive/`.
+12. Record run-bound dispatch evidence with `./bin/knowledgeos dispatch-task --project-root . --task-id <task-id> --run-id <run-id>`.
+13. Record public phase evidence with `./bin/knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<command/file/user confirmation>"`, and relay the returned `CHECKPOINT_OK` marker.
+14. Record MCP, skill, subagent, orchestrator, or important script use with `./bin/knowledgeos capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"`, and relay the returned `CAPABILITY_OK` marker.
+15. Run `./bin/knowledgeos eval-task --project-root . --task-id <task-id> --run-id <run-id>`; do not manually append eval status.
+16. Run `./bin/knowledgeos verify-context --project-root . --task-id <task-id> --run-id <run-id>` and `./bin/knowledgeos verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>`.
+17. Use `./bin/knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`; it enforces spec/context/plan, lifecycle, capability visibility, and required postflight.
+18. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.
+19. For reset requests, run `./bin/knowledgeos reset-project --project-root . --mode <soft|hard> --dry-run` before destructive action.
+20. For old-project reorganization requests, run `./bin/knowledgeos migrate-legacy-project --project-root . --write-plan` before moving files.
+21. For historical or superseded files that should be stored but not read by default, run `./bin/knowledgeos archive-legacy-project --project-root . --write-plan` before moving files into `archive/`.
 
 Never claim boot, route, dispatch, write safety, spec alignment, context pack, plan, checkpoint, eval, completion, or sync success without command evidence.

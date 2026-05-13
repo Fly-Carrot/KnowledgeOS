@@ -277,6 +277,47 @@ Append public lifecycle evidence to `.agent-os/runs/<RUN_ID>/phases.ndjson`.
 
 This is a public decision trace, not hidden chain-of-thought. If a phase is skipped, `--skip-reason` is required.
 
+Successful plain-text output begins with:
+
+```text
+CHECKPOINT_OK phase=<phase> status=<status> evidence=<short evidence>
+```
+
+JSON output includes `checkpoint_marker: CHECKPOINT_OK`.
+
+### `capability-event`
+
+Record an observable capability call without executing it.
+
+```bash
+./bin/knowledgeos capability-event \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --kind orchestrator \
+  --id maestro \
+  --purpose "Coordinate specialist review before execution."
+```
+
+Allowed kinds are `mcp`, `skill`, `subagent`, `orchestrator`, `script`, `shell`, and `file_read`.
+
+The command writes `.agent-os/runs/<RUN_ID>/capability-events.ndjson` and matching command evidence. Successful plain-text output begins with:
+
+```text
+CAPABILITY_OK kind=<kind> id=<capability-id> purpose=<short purpose>
+```
+
+### Dispatch Evidence
+
+`dispatch-task` can be run before a run exists to inspect the capability plan. After `run-task`, run it again with `--run-id` to bind that dispatch decision to the run ledger:
+
+```bash
+./bin/knowledgeos dispatch-task \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-...
+```
+
 ### `verify-lifecycle`
 
 Verify that a run has all phases required by `.agent-os/phase-policy.yaml`.
@@ -291,6 +332,8 @@ Verify that a run has all phases required by `.agent-os/phase-policy.yaml`.
 Missing phases, invalid phases, and skipped phases without reasons fail with exit code `2`.
 
 `verify-lifecycle` also requires matching `phase-task` command events for each phase. A hand-written `phases.ndjson` is not sufficient.
+
+It also requires run-bound `dispatch-task --run-id` evidence. If the dispatch plan marks a capability stage as required, the run must either record a matching `capability-event` or explain the skipped stage in the dispatch phase public note/evidence.
 
 ### `complete-task`
 

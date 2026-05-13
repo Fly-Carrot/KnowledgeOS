@@ -104,6 +104,8 @@ else
 fi
 
 if [[ -n "$RUN_ID" ]]; then
+  run_checkpoint "dispatch-evidence-recorded" 0 "$BIN" dispatch-task --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --json
+  run_checkpoint "capability-event-recorded" 0 "$BIN" capability-event --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --kind orchestrator --id maestro --purpose "Scenario records required orchestration visibility without invoking external work." --evidence "guardrail scenario"
   run_checkpoint "verify-context-without-plan-blocked" 2 "$BIN" verify-context --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --json
   run_checkpoint "plan-task-writes-checkpoint-plan" 0 "$BIN" plan-task --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --summary "Scenario plan loads spec snapshot and context before work." --json
   run_checkpoint "verify-context-passed" 0 "$BIN" verify-context --project-root "$PROJECT" --task-id T001 --run-id "$RUN_ID" --json

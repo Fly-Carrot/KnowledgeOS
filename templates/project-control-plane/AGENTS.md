@@ -28,7 +28,9 @@ During substantial work:
 - At consultation checkpoints, pause, state your recommendation, explain the tradeoff, and ask the human whether to proceed.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN run-task --project-root . --task-id <task-id>` to create run evidence.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN context-pack --project-root . --task-id <task-id> --run-id <run-id>` and `CHANGE_ME_KNOWLEDGEOS_BIN plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"` before execution.
-- Use `CHANGE_ME_KNOWLEDGEOS_BIN phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<command/file/user confirmation>"` to record observable phase evidence.
+- After `run-task` creates a run id, use `CHANGE_ME_KNOWLEDGEOS_BIN dispatch-task --project-root . --task-id <task-id> --run-id <run-id>` to record dispatch evidence for that run.
+- Use `CHANGE_ME_KNOWLEDGEOS_BIN phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<command/file/user confirmation>"` to record observable phase evidence, and relay the returned `CHECKPOINT_OK` marker.
+- Use `CHANGE_ME_KNOWLEDGEOS_BIN capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"` before or after MCP, skill, subagent, orchestrator, or important script use, and relay the returned `CAPABILITY_OK` marker.
 - Record run evidence under `.agent-os/runs/`.
 
 After substantial work:

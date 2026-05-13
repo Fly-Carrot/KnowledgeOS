@@ -41,6 +41,7 @@ workflows:
       - route-task --project-root . --task-id <task-id>
       - check-route-write --project-root . --task-id <task-id> --path <planned-path>
       - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
       - context-pack --project-root . --task-id <task-id> --run-id <run-id>
       - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
