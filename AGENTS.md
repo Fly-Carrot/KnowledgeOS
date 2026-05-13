@@ -10,13 +10,14 @@ Before substantial work:
 4. If no ready task fits the user's new request, use `./bin/knowledgeos create-task --project-root . --title "<title>" --type <type> --output <path> --acceptance "<check>"` instead of reopening unrelated old work.
 5. Use `./bin/knowledgeos route-task --project-root . --task-id <task-id>` and `./bin/knowledgeos dispatch-task --project-root . --task-id <task-id>` before capability-heavy work.
 6. After `run-task` creates a run id, use `./bin/knowledgeos dispatch-task --project-root . --task-id <task-id> --run-id <run-id>` to record dispatch evidence for that run.
-7. Use `./bin/knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<evidence>"` to record public lifecycle evidence, and relay the returned `CHECKPOINT_OK` marker.
-8. Before or after MCP, skill, subagent, orchestrator, or important script use, record it with `./bin/knowledgeos capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"`, and relay the returned `CAPABILITY_OK` marker.
-9. Use `./bin/knowledgeos eval-task --project-root . --task-id <task-id> --run-id <run-id>` before `complete-task`; do not manually append eval status.
-10. Use `./bin/knowledgeos verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>` before completion.
-11. Use `./bin/knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`; it enforces lifecycle, capability visibility, and required postflight.
-12. For reset requests, run `reset-project --dry-run` first. For legacy reorganization, run `migrate-legacy-project --write-plan` first. For cold storage of old or superseded project content, run `archive-legacy-project --write-plan` first.
-13. Run `python3 -m unittest discover -s tests -v` after CLI or template changes.
+7. Use `./bin/knowledgeos trace-step --project-root . --task-id <task-id> --run-id <run-id> --step <step> --note "<public trace>" --evidence "<evidence>"` to record visible operational progress, and relay the returned `TRACE_OK` marker.
+8. Use `./bin/knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<evidence>"` to record public lifecycle evidence, and relay the returned `CHECKPOINT_OK` marker.
+9. Before or after MCP, skill, subagent, orchestrator, or important script use, record it with `./bin/knowledgeos capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"`, and relay the returned `CAPABILITY_OK` marker.
+10. Use `./bin/knowledgeos eval-task --project-root . --task-id <task-id> --run-id <run-id>` before `complete-task`; do not manually append eval status.
+11. Use `./bin/knowledgeos verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>` before completion.
+12. Use `./bin/knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`; it enforces lifecycle, capability visibility, and required postflight.
+13. For reset requests, run `reset-project --dry-run` first. For legacy reorganization, run `migrate-legacy-project --write-plan` first. For cold storage of old or superseded project content, run `archive-legacy-project --write-plan` first.
+14. Run `python3 -m unittest discover -s tests -v` after CLI or template changes.
 
 Consultation discipline:
 
@@ -32,3 +33,4 @@ Write discipline:
 - Treat `archive/**` as cold storage: do not read it as default context unless the user explicitly asks for archive review or recovery.
 - Treat Agent Shared Fabric as an external kernel module, not as content copied into every project.
 - Use `reopen-task` only for same-task reruns after rejected results. New work gets a new `create-task` record.
+- Do not manually write operational trace ledgers; use `trace-step`.

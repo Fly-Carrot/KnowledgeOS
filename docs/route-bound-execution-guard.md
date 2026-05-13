@@ -4,6 +4,17 @@ The route-bound execution guard turns KnowledgeOS from an advisory checklist int
 
 The goal is simple: an agent should not mutate a project merely because a path is writable. The write must also belong to the selected task route.
 
+Route is intentionally a policy guard, not a heavyweight workflow engine. Many real tasks are mixed: documentation plus code, research plus refactor, migration plus report. KnowledgeOS therefore uses route profiles to set boundaries, evaluation profiles, and human gates, while leaving fine-grained capability choice to `dispatch-task`.
+
+In short:
+
+```text
+route-task = what task policy applies, where writes may go, and what completion gate is required
+dispatch-task = which orchestrator, subagent, MCP, skill, or script should be considered
+```
+
+Making route more complex is not automatically better. The safer default is a small number of policy profiles plus visible dispatch evidence.
+
 ## What Was Added
 
 ### `check-route-write`
@@ -45,6 +56,7 @@ Agents should not hand-edit lifecycle evidence files. The default write policy n
 - `.agent-os/runs/**/eval.md`
 - `.agent-os/runs/**/phases.ndjson`
 - `.agent-os/runs/**/command-events.ndjson`
+- `.agent-os/runs/**/step-events.ndjson`
 - `.agent-os/runs/**/capability-events.ndjson`
 - `.agent-os/runs/**/postflight.md`
 - `.agent-os/tasks.yaml`
@@ -110,9 +122,10 @@ doctor
 -> route-task
 -> check-route-write for each planned path
 -> run-task
+-> dispatch-task --run-id records dispatch evidence for this run
 -> context-pack writes/refreshes spec-snapshot.md and context-pack.md
 -> plan-task writes the public execution plan
--> dispatch-task --run-id records dispatch evidence for this run
+-> trace-step records public operational progress when useful
 -> phase-task records route/plan/review/dispatch/execute/report public evidence
 -> capability-event records MCP / skill / subagent / orchestrator / important script use
 -> execute

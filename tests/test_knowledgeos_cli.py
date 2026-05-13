@@ -879,7 +879,9 @@ class KnowledgeOSCliTests(unittest.TestCase):
             spec_payload = json.loads(created.stdout)
             spec_id = spec_payload["spec_id"]
             self.assertTrue((project / ".agent-os" / "specs" / spec_id / "spec.md").exists())
-            self.assertIn(f"active_spec: {spec_id}", (project / ".agent-os" / "specs.yaml").read_text(encoding="utf-8"))
+            specs_yaml = (project / ".agent-os" / "specs.yaml").read_text(encoding="utf-8")
+            self.assertIn(f"active_spec: {spec_id}", specs_yaml)
+            self.assertNotIn("specs: []\n  - id:", specs_yaml)
 
             aligned = self.run_cli("align-spec", "--project-root", str(project), "--task-id", "T001", "--json")
             self.assertEqual(json.loads(aligned.stdout)["status"], "aligned")
@@ -1272,6 +1274,52 @@ class KnowledgeOSCliTests(unittest.TestCase):
             run_dir = project / ".agent-os" / "runs" / run_id
             self.assertIn('"event_type": "capability-event"', (run_dir / "command-events.ndjson").read_text(encoding="utf-8"))
             self.assertIn('"kind": "orchestrator"', (run_dir / "capability-events.ndjson").read_text(encoding="utf-8"))
+
+    def test_trace_step_records_public_operational_trace_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+
+            result = self.run_cli(
+                "trace-step",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--step",
+                "doctor_gate",
+                "--note",
+                "Doctor completed before mutation.",
+                "--evidence",
+                "doctor --summary",
+            )
+            self.assertIn("TRACE_OK step=doctor_gate status=completed evidence=doctor --summary", result.stdout)
+            run_dir = project / ".agent-os" / "runs" / run_id
+            self.assertIn('"event_type": "trace-step"', (run_dir / "command-events.ndjson").read_text(encoding="utf-8"))
+            self.assertIn('"step": "doctor_gate"', (run_dir / "step-events.ndjson").read_text(encoding="utf-8"))
+
+            as_json = self.run_cli(
+                "trace-step",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--step",
+                "route_guard",
+                "--note",
+                "Route policy guard checked.",
+                "--json",
+            )
+            payload = json.loads(as_json.stdout)
+            self.assertEqual(payload["trace_marker"], "TRACE_OK")
+            self.assertIn("TRACE_OK step=route_guard", payload["marker"])
 
     def test_lifecycle_requires_dispatch_and_required_capability_trace(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2016,6 +2064,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertGreaterEqual(payload["counts"].get("mcp", 0), 1)
         self.assertGreaterEqual(payload["counts"].get("skill", 0), 1)
         self.assertGreaterEqual(payload["counts"].get("orchestrator", 0), 1)
+        self.assertIn("agent-orchestrator", result.stdout)
 
     def test_tool_registry_rejects_inline_secret_markers(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2056,6 +2105,8 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("context-pack", result.stdout)
             self.assertIn("plan-task", result.stdout)
             self.assertIn("verify-context", result.stdout)
+            self.assertIn("trace-step", result.stdout)
+            self.assertIn("TRACE_OK", result.stdout)
             self.assertIn("phase-task", result.stdout)
             self.assertIn("CHECKPOINT_OK", result.stdout)
             self.assertIn("capability-event", result.stdout)
@@ -2063,6 +2114,19 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("verify-lifecycle", result.stdout)
             self.assertIn("complete-task", result.stdout)
             self.assertIn("archive-legacy-project", result.stdout)
+
+    def test_startup_prompt_outputs_trace_step_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            result = self.run_cli("startup-prompt", "--project-root", str(project))
+            self.assertIn("trace-step", result.stdout)
+            self.assertIn("TRACE_OK", result.stdout)
+            self.assertIn("phase-task", result.stdout)
+            self.assertIn("CHECKPOINT_OK", result.stdout)
+            self.assertIn("capability-event", result.stdout)
+            self.assertIn("CAPABILITY_OK", result.stdout)
 
     def test_dispatch_task_prioritizes_branch_builder_and_consultation(self):
         result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")

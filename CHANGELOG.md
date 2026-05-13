@@ -13,11 +13,15 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 - `phase-task` now emits a visible `CHECKPOINT_OK` marker in plain output and JSON.
 - `capability-event` records observable MCP, skill, subagent, orchestrator, script, shell, and file-read use into the run ledger.
 - `dispatch-task --run-id` binds capability dispatch decisions to a specific run.
+- `trace-step` records public operational trace events such as `user_intent`, `doctor_gate`, `dispatch_plan`, `execution`, `eval`, `verify`, `complete`, and `sync`, returning a visible `TRACE_OK` marker.
+- ComposioHQ Agent Orchestrator is registered as an external `orchestrator` adapter for future parallel subagent/worktree orchestration, without copying external runtime code into the kernel.
+- The active product spec now captures the KnowledgeOS philosophy: small kernel, pluggable modules, optional apps, project-chosen strictness, and command-evidenced public checkpoints.
 
 ### Fixed
 
 - Local Codex operator configuration can use the current `hooks` feature flag instead of the deprecated `codex_hooks` feature path.
 - `verify-lifecycle` now blocks completion when dispatch evidence or required capability-stage evidence is missing.
+- Root and template startup prompts now mention `TRACE_OK`, `CHECKPOINT_OK`, and `CAPABILITY_OK` as separate public evidence channels.
 
 ## 0.5.0 - System Hardening And Kernel Repair
 

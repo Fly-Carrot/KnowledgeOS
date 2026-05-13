@@ -32,6 +32,18 @@ tools:
     execution_mode: ask
     source_path: external:maestro
 
+  - id: agent-orchestrator
+    kind: orchestrator
+    status: recommended
+    scope: parallel-agent-worktree-orchestration
+    invocation: complex_parallel_repo_tasks
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,security_audit,architecture_design,release_task
+    capability_fit: subagent_orchestration,parallel_execution,worktree_isolation,pr_workflow,ci_repair
+    human_gate: true
+    execution_mode: ask
+    source_path: external:https://github.com/ComposioHQ/agent-orchestrator
+    notes: Agent Orchestrator is an orchestration adapter, not a single role subagent.
+
   - id: markitdown
     kind: mcp
     status: enabled

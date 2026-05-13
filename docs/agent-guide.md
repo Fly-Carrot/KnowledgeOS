@@ -41,6 +41,8 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
    - `archive/**` is cold storage and is not default context.
 
 6. Keep receipts local and command-generated.
+   - Use `knowledgeos trace-step --project-root . --task-id <task-id> --run-id <run-id> --step <step> --note "<public note>" --evidence "<command or file evidence>"` for user-visible operational progress.
+   - Relay the returned `TRACE_OK` marker to the user.
    - Use `knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note "<public note>" --evidence "<command or file evidence>"`.
    - Relay the returned `CHECKPOINT_OK` marker to the user.
    - Use `knowledgeos capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"` for MCP, skill, subagent, orchestrator, or important script calls.
@@ -49,7 +51,7 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
    - Use `knowledgeos verify-context --project-root . --task-id <task-id> --run-id <run-id>`.
    - Use `knowledgeos verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>`.
    - Use `knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`.
-   - Do not directly edit `.agent-os/specs.yaml`, `.agent-os/specs/**`, `.agent-os/runs/RUN-*/context-pack.md`, `.agent-os/runs/RUN-*/spec-snapshot.md`, `.agent-os/runs/RUN-*/plan.md`, `.agent-os/runs/RUN-*/eval.md`, `.agent-os/runs/RUN-*/phases.ndjson`, `.agent-os/runs/RUN-*/command-events.ndjson`, or `.agent-os/runs/RUN-*/receipt.md`.
+   - Do not directly edit `.agent-os/specs.yaml`, `.agent-os/specs/**`, `.agent-os/runs/RUN-*/context-pack.md`, `.agent-os/runs/RUN-*/spec-snapshot.md`, `.agent-os/runs/RUN-*/plan.md`, `.agent-os/runs/RUN-*/eval.md`, `.agent-os/runs/RUN-*/phases.ndjson`, `.agent-os/runs/RUN-*/step-events.ndjson`, `.agent-os/runs/RUN-*/command-events.ndjson`, or `.agent-os/runs/RUN-*/receipt.md`.
 
 7. Finish with the configured sync contract when a shared-fabric kernel module is active.
    - Report `SYNC_OK` only after the postflight command succeeds.

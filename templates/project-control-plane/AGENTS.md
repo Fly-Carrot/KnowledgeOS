@@ -29,6 +29,7 @@ During substantial work:
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN run-task --project-root . --task-id <task-id>` to create run evidence.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN context-pack --project-root . --task-id <task-id> --run-id <run-id>` and `CHANGE_ME_KNOWLEDGEOS_BIN plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"` before execution.
 - After `run-task` creates a run id, use `CHANGE_ME_KNOWLEDGEOS_BIN dispatch-task --project-root . --task-id <task-id> --run-id <run-id>` to record dispatch evidence for that run.
+- Use `CHANGE_ME_KNOWLEDGEOS_BIN trace-step --project-root . --task-id <task-id> --run-id <run-id> --step <step> --note "<public trace>" --evidence "<command/file/user confirmation>"` to record visible operational progress, and relay the returned `TRACE_OK` marker.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<command/file/user confirmation>"` to record observable phase evidence, and relay the returned `CHECKPOINT_OK` marker.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"` before or after MCP, skill, subagent, orchestrator, or important script use, and relay the returned `CAPABILITY_OK` marker.
 - Record run evidence under `.agent-os/runs/`.
@@ -56,3 +57,4 @@ Never:
 - invoke generic unscoped subagents;
 - claim boot, phase, lifecycle, eval, completion, or sync success without command evidence.
 - manually write spec snapshots, context packs, plans, phase ledgers, or eval status instead of using KnowledgeOS commands.
+- manually write operational trace ledgers instead of using `trace-step`.

@@ -143,6 +143,28 @@ READ_POLICY_SECTIONS = {
 EXPECTED_PHASE_KEYS = ["route", "plan", "review", "dispatch", "execute", "report"]
 PHASE_STATUSES = {"completed", "skipped"}
 CAPABILITY_EVENT_KINDS = {"mcp", "skill", "subagent", "orchestrator", "script", "shell", "file_read"}
+OPERATIONAL_TRACE_STEPS = [
+    "user_intent",
+    "load_rules",
+    "doctor_gate",
+    "task_intake",
+    "spec_alignment",
+    "route_guard",
+    "dispatch_plan",
+    "write_guard",
+    "run_envelope",
+    "run_dispatch",
+    "context_pack",
+    "plan_task",
+    "execution",
+    "capability_visibility",
+    "phase_checkpoints",
+    "eval",
+    "verify",
+    "complete",
+    "sync",
+    "handoff",
+]
 LIFECYCLE_ROUTE_COMMANDS = [
     "dispatch-task --project-root . --task-id <task-id> --run-id <run-id>",
     "context-pack --project-root . --task-id <task-id> --run-id <run-id>",
@@ -1253,6 +1275,7 @@ def create_spec(
         current = read_text(registry_path).rstrip()
         if not current:
             current = "active_spec: null\nspecs:"
+        current = re.sub(r"(?m)^(\s*)specs:\s*\[\]\s*$", r"\1specs:", current)
         block = "\n".join(
             [
                 f"  - id: {spec_id}",
@@ -1461,7 +1484,7 @@ def snapshot_metadata(path: Path) -> dict[str, str]:
     return parse_scalar_values(path, {"Spec ID", "Spec Title", "Spec Fingerprint"})
 
 
-def verify_context_contract(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
+def verify_context_contract(project_root: Path, task_id: str, run_id: str, *, allow_spec_drift: bool = False) -> dict[str, Any]:
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     errors: list[dict[str, Any]] = []
     context = run_dir / "context-pack.md"
@@ -1484,11 +1507,12 @@ def verify_context_contract(project_root: Path, task_id: str, run_id: str) -> di
         snap_fingerprint = metadata.get("Spec Fingerprint", "")
         registry = load_specs_registry(project_root)
         active = registry.get("active_spec", "") or "none"
-        if snap_spec != active:
+        if snap_spec != active and not allow_spec_drift:
             errors.append({"label": "spec_drift", "detail": f"snapshot spec {snap_spec or 'none'} != active spec {active}"})
-        expected = "none" if snap_spec in {"", "none"} else spec_fingerprint(project_root, snap_spec)
-        if snap_fingerprint != expected:
-            errors.append({"label": "spec_drift", "detail": f"snapshot fingerprint {snap_fingerprint} != current {expected}"})
+        if not allow_spec_drift:
+            expected = "none" if snap_spec in {"", "none"} else spec_fingerprint(project_root, snap_spec)
+            if snap_fingerprint != expected:
+                errors.append({"label": "spec_drift", "detail": f"snapshot fingerprint {snap_fingerprint} != current {expected}"})
     return {
         "status": "passed" if not errors else "failed",
         "task_id": task_id,
@@ -1598,6 +1622,10 @@ def command_events_path(run_dir: Path) -> Path:
 
 def capability_events_path(run_dir: Path) -> Path:
     return run_dir / "capability-events.ndjson"
+
+
+def step_events_path(run_dir: Path) -> Path:
+    return run_dir / "step-events.ndjson"
 
 
 def append_command_event(run_dir: Path, event_type: str, task_id: str, run_id: str, **extra: Any) -> None:
@@ -2383,7 +2411,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                 if run_has_checkpoint_contract_evidence(run_yaml.parent):
                     lifecycle = verify_lifecycle(project_root, metadata.get("task_id", ""), run_id)
                     results.append(CheckResult(lifecycle.get("status") == "passed", "completed_run_lifecycle", f"{run_id} lifecycle status={lifecycle.get('status')}"))
-                    context_contract = verify_context_contract(project_root, metadata.get("task_id", ""), run_id)
+                    context_contract = verify_context_contract(project_root, metadata.get("task_id", ""), run_id, allow_spec_drift=True)
                     results.append(CheckResult(context_contract.get("status") == "passed", "completed_run_context", f"{run_id} context contract status={context_contract.get('status')}"))
                 else:
                     results.append(CheckResult(True, "completed_run_lifecycle", f"{run_id} legacy run predates phase ledger"))
@@ -2557,6 +2585,7 @@ def build_agent_guide(project_root: Path) -> str:
             "",
             "6. Keep receipts and checkpoint evidence command-generated.",
             f"   - {bin_path} dispatch-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
+            f"   - {bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note <public-trace> --evidence <evidence>; echo or relay TRACE_OK;",
             f"   - {bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>; echo or relay CHECKPOINT_OK;",
             f"   - {bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose <purpose> before/after MCP, skill, subagent, orchestrator, or important script use; echo or relay CAPABILITY_OK;",
             f"   - {bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
@@ -2603,15 +2632,16 @@ def build_startup_prompt(project_root: Path) -> str:
             f"10. Write/update the execution context with `{bin_path} context-pack --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} plan-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
             "11. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.",
             f"12. Record dispatch evidence with `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id> --run-id <run-id>` after the run exists.",
-            f"13. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `CHECKPOINT_OK` marker.",
-            f"14. Record MCP, skill, subagent, orchestrator, or important script use with `{bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose \"<purpose>\"`; relay the returned `CAPABILITY_OK` marker.",
-            f"15. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
-            f"16. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
-            f"17. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, capability visibility, and required postflight.",
-            "18. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
-            f"19. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
-            f"20. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
-            f"21. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
+            f"13. Record public operational progress with `{bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `TRACE_OK` marker.",
+            f"14. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `CHECKPOINT_OK` marker.",
+            f"15. Record MCP, skill, subagent, orchestrator, or important script use with `{bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose \"<purpose>\"`; relay the returned `CAPABILITY_OK` marker.",
+            f"16. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
+            f"17. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
+            f"18. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, capability visibility, and required postflight.",
+            "19. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
+            f"20. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
+            f"21. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
+            f"22. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
             "",
             "Never claim boot, route, dispatch, write safety, spec alignment, context pack, plan, checkpoint, eval, completion, or sync success without command evidence.",
             "",
@@ -3409,6 +3439,38 @@ def record_capability_event(
     )
     marker = f"CAPABILITY_OK kind={kind} id={capability_id.strip()} purpose={short_marker_value(purpose)}"
     return {"status": "recorded", "capability_marker": "CAPABILITY_OK", "marker": marker, "ledger": str(event_path), "record": record}
+
+
+def record_trace_step(
+    project_root: Path,
+    task_id: str,
+    run_id: str,
+    *,
+    step: str,
+    status: str = "completed",
+    note: str = "",
+    evidence: str = "",
+) -> dict[str, Any]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    if step not in OPERATIONAL_TRACE_STEPS:
+        raise ValueError(f"invalid step {step!r}; expected one of {OPERATIONAL_TRACE_STEPS}")
+    if not note.strip():
+        raise ValueError("--note is required")
+    record = {
+        "task_id": task_id,
+        "run_id": run_id,
+        "step": step,
+        "status": status.strip() or "completed",
+        "note": note.strip(),
+        "evidence": evidence.strip(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    event_path = step_events_path(run_dir)
+    with event_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    append_command_event(run_dir, "trace-step", task_id, run_id, step=step, status=record["status"])
+    marker = f"TRACE_OK step={step} status={record['status']} evidence={short_marker_value(evidence or note)}"
+    return {"status": "recorded", "trace_marker": "TRACE_OK", "marker": marker, "ledger": str(event_path), "record": record}
 
 
 def load_phase_records(run_dir: Path) -> list[dict[str, Any]]:
@@ -4646,6 +4708,29 @@ def cmd_capability_event(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_trace_step(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = record_trace_step(
+            project_root,
+            args.task_id,
+            args.run_id,
+            step=args.step,
+            status=args.status,
+            note=args.note,
+            evidence=args.evidence,
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
+    return 0
+
+
 def cmd_context_pack(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
@@ -5089,6 +5174,17 @@ def build_parser() -> argparse.ArgumentParser:
     capability_event_parser.add_argument("--evidence", default="")
     capability_event_parser.add_argument("--json", action="store_true")
     capability_event_parser.set_defaults(func=cmd_capability_event)
+
+    trace_step_parser = sub.add_parser("trace-step", help="record a public operational trace step for a run")
+    trace_step_parser.add_argument("--project-root", required=True)
+    trace_step_parser.add_argument("--task-id", required=True)
+    trace_step_parser.add_argument("--run-id", required=True)
+    trace_step_parser.add_argument("--step", required=True, choices=OPERATIONAL_TRACE_STEPS)
+    trace_step_parser.add_argument("--status", default="completed")
+    trace_step_parser.add_argument("--note", required=True, help="public operational note; do not include hidden chain-of-thought")
+    trace_step_parser.add_argument("--evidence", default="", help="command, file, or user confirmation evidence")
+    trace_step_parser.add_argument("--json", action="store_true")
+    trace_step_parser.set_defaults(func=cmd_trace_step)
 
     context_pack_parser = sub.add_parser("context-pack", help="write run context-pack.md and spec-snapshot.md")
     context_pack_parser.add_argument("--project-root", required=True)

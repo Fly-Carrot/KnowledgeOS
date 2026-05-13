@@ -101,6 +101,34 @@ What roles or expert perspectives should inspect this task before action?
 
 That is why Maestro or native role-specific subagents come before MCP and skills in the default dispatch order.
 
+An orchestrator and a subagent are related but not identical:
+
+- `orchestrator`: coordinates many agents, branches, worktrees, and review loops;
+- `subagent`: performs one bounded role-specific task;
+- `skill`: provides reusable method instructions;
+- `MCP`: exposes an external tool or data interface;
+- `script`: runs deterministic local work.
+
+KnowledgeOS can register an external orchestrator adapter without copying its runtime into the project. The current registry includes `agent-orchestrator`, pointing to ComposioHQ Agent Orchestrator, as an external adapter for parallel agent worktree orchestration. Agent Orchestrator describes itself as an orchestration layer for parallel AI coding agents where each agent can work in its own git worktree, branch, and PR. In KnowledgeOS terms, that belongs to the `orchestrator` layer, not the `subagent` layer.
+
+If a runtime exposes many role-specific agents, those should be registered as `subagent` entries or surfaced by the orchestrator adapter. Until they are registered, `dispatch-task` can show the orchestrator but cannot honestly claim the individual subagents are available.
+
+## Public Operational Trace
+
+Capability dispatch should not be the only visible trace. Agents should also record the main OS steps as public operational trace, without saving hidden chain-of-thought:
+
+```bash
+./bin/knowledgeos trace-step \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --step doctor_gate \
+  --note "Doctor passed before mutation." \
+  --evidence "doctor --summary"
+```
+
+The command returns `TRACE_OK` and writes `.agent-os/runs/<RUN_ID>/step-events.ndjson`. This is for user-visible progress such as `user_intent`, `load_rules`, `doctor_gate`, `task_intake`, `route_guard`, `dispatch_plan`, `write_guard`, `execution`, `eval`, `verify`, `complete`, and `sync`.
+
 ## Consultation Policy
 
 Agents must pause before:

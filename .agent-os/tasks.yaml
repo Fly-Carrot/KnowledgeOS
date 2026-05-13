@@ -632,3 +632,43 @@ tasks:
       - "capability-event records MCP skill subagent orchestrator script visibility"
       - "verify-lifecycle blocks missing dispatch or required capability trace"
       - "doctor unit tests scenarios and diff check pass"
+  - id: KOS-T034
+    title: "Add operational trace and orchestrator adapter spec"
+    type: "capability_orchestration"
+    status: completed
+    complexity: "medium"
+    risk: "guardrail_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/capability-orchestration.md"
+      - "docs/route-bound-execution-guard.md"
+      - "docs/spec-context-plan.md"
+      - "docs/executable-control-plane.md"
+      - "docs/agent-guide.md"
+      - "templates/project-control-plane/.agent-os/startup-prompt.md"
+      - "templates/project-control-plane/AGENTS.md"
+      - ".agent-os/tool-registry.yaml"
+      - ".agent-os/write-policy.yaml"
+      - ".agent-os/specs.yaml"
+      - ".agent-os/specs/SPEC-20260513-001/"
+    acceptance:
+      - "trace-step records public operational trace markers"
+      - "Composio Agent Orchestrator is registered as an external orchestrator adapter"
+      - "KnowledgeOS product philosophy is captured in the project spec"
+      - "doctor and targeted tests pass"
+  - id: KOS-T035
+    title: "Sync root startup trace contract"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "small"
+    risk: "low"
+    outputs:
+      - "AGENTS.md"
+      - ".agent-os/startup-prompt.md"
+      - "CHANGELOG.md"
+    acceptance:
+      - "root AGENTS mentions trace-step and TRACE_OK"
+      - "root startup prompt mentions trace-step and TRACE_OK"
+      - "changelog records public operational trace and orchestrator adapter update"
+      - "doctor and targeted tests pass"

@@ -285,6 +285,28 @@ CHECKPOINT_OK phase=<phase> status=<status> evidence=<short evidence>
 
 JSON output includes `checkpoint_marker: CHECKPOINT_OK`.
 
+### `trace-step`
+
+Record a public operational trace step without storing hidden chain-of-thought.
+
+```bash
+./bin/knowledgeos trace-step \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --step doctor_gate \
+  --note "Doctor passed before mutation." \
+  --evidence "doctor --summary"
+```
+
+The command writes `.agent-os/runs/<RUN_ID>/step-events.ndjson` and matching command evidence. Successful plain-text output begins with:
+
+```text
+TRACE_OK step=<step> status=<status> evidence=<short evidence>
+```
+
+Use this for user-visible mainline steps such as `user_intent`, `load_rules`, `doctor_gate`, `task_intake`, `route_guard`, `dispatch_plan`, `write_guard`, `execution`, `eval`, `verify`, `complete`, and `sync`.
+
 ### `capability-event`
 
 Record an observable capability call without executing it.
