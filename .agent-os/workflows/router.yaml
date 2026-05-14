@@ -17,6 +17,7 @@ workflows:
     eval_profile: scaffold_task
     human_gate: review_public_surface
     allowed_outputs:
+      - SPEC.md
       - README.md
       - docs/
       - templates/
@@ -197,6 +198,7 @@ workflows:
       - .agent-os/workflows/
       - templates/
       - examples/
+      - SPEC.md
       - README.md
       - CHANGELOG.md
       - AGENTS.md

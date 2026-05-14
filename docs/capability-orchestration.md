@@ -109,9 +109,26 @@ An orchestrator and a subagent are related but not identical:
 - `MCP`: exposes an external tool or data interface;
 - `script`: runs deterministic local work.
 
-KnowledgeOS can register an external orchestrator adapter without copying its runtime into the project. The current registry includes `agent-orchestrator`, pointing to ComposioHQ Agent Orchestrator, as an external adapter for parallel agent worktree orchestration. Agent Orchestrator describes itself as an orchestration layer for parallel AI coding agents where each agent can work in its own git worktree, branch, and PR. In KnowledgeOS terms, that belongs to the `orchestrator` layer, not the `subagent` layer.
+KnowledgeOS can register an external orchestrator adapter without copying its runtime into the project. Optional external adapters can remain visible in the registry, but they should not be treated as active subagent catalogs unless their individual agents are discoverable and registered.
 
-If a runtime exposes many role-specific agents, those should be registered as `subagent` entries or surfaced by the orchestrator adapter. Until they are registered, `dispatch-task` can show the orchestrator but cannot honestly claim the individual subagents are available.
+The active local specialist-agent catalog is currently **Maestro Orchestrate** (`josstei/maestro-orchestrate`). It exposes 39 specialist agents and a Codex MCP server. Locally, Codex already has `mcp_servers.maestro` configured; KnowledgeOS registers that interface as `maestro-mcp` and registers each specialist as a `maestro-*` `subagent` entry.
+
+Maestro's Codex runtime resolves agent methodology through MCP:
+
+```text
+maestro-mcp
+-> get_runtime_context
+-> get_agent(["architect", "coder", "security-engineer", ...])
+-> spawn_agent(...) when delegation is useful
+```
+
+That means the MCP server retrieves the agent methodology and runtime context; the actual subagent execution still goes through Codex delegation (`spawn_agent`) or the host runtime's equivalent. KnowledgeOS records both surfaces:
+
+- `maestro`: active orchestrator layer;
+- `maestro-mcp`: MCP interface for runtime context, skill content, plan validation, and agent methodology;
+- `maestro-*`: 39 visible specialist subagent entries, including `maestro-architect`, `maestro-coder`, `maestro-security-engineer`, `maestro-code-reviewer`, and `maestro-tester`.
+
+ComposioHQ Agent Orchestrator remains an optional external worktree/PR orchestration adapter. It is not the active source of the 39 specialist agents.
 
 ## Public Operational Trace
 

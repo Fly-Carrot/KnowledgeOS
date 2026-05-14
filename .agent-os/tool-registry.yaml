@@ -32,9 +32,489 @@ tools:
     execution_mode: ask
     source_path: external:maestro
 
+
+  - id: maestro-mcp
+    kind: mcp
+    status: enabled
+    scope: maestro-runtime-context-and-agent-methodology
+    invocation: capability_match
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,security_audit,architecture_design,documentation_task,release_task
+    capability_fit: maestro_mcp,agent_methodology,agent_catalog,runtime_context,plan_validation
+    human_gate: false
+    source_path: codex-config:mcp_servers.maestro
+    notes: Local Codex config exposes this server as mcp_servers.maestro; tools include get_runtime_context, get_agent, get_skill_content, validate_plan, and session helpers.
+
+  - id: maestro-accessibility-specialist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,accessibility_specialist,read_shell
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/accessibility_specialist
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-analytics-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,analytics_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/analytics_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-api-designer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,api_designer,read_only
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/api_designer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-architect
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,architect,read_only
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/architect
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-cloud-architect
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,cloud_architect,read_only
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/cloud_architect
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-cobol-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,cobol_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/cobol_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-code-reviewer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task,code_review
+    capability_fit: maestro_specialist,code_reviewer,read_only
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/code_reviewer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-coder
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,coder,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/coder
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-compliance-reviewer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task,security_audit,code_review
+    capability_fit: maestro_specialist,compliance_reviewer,read_only
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/compliance_reviewer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-content-strategist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,content_strategist,read_only
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/content_strategist
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-copywriter
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,copywriter,read_write
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/copywriter
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-data-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,data_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/data_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-database-administrator
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,database_administrator,read_shell
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/database_administrator
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-db2-dba
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,db2_dba,read_shell
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/db2_dba
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-debugger
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,debugger,read_shell
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/debugger
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-design-system-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,design_system_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/design_system_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-devops-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,devops_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/devops_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-hlasm-assembler-specialist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,hlasm_assembler_specialist,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/hlasm_assembler_specialist
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-i18n-specialist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,i18n_specialist,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/i18n_specialist
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-ibm-i-specialist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,ibm_i_specialist,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/ibm_i_specialist
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-integration-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,integration_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/integration_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-ml-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,ml_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/ml_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-mlops-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,mlops_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/mlops_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-mobile-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,mobile_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/mobile_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-observability-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,observability_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/observability_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-performance-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,performance_engineer,read_shell
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/performance_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-platform-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,platform_engineer,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/platform_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-product-manager
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,product_manager,read_write
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/product_manager
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-prompt-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,prompt_engineer,read_write
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/prompt_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-refactor
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,refactor,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/refactor
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-release-manager
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,release_manager,read_write
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/release_manager
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-security-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task,security_audit
+    capability_fit: maestro_specialist,security_engineer,read_shell
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/security_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-seo-specialist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,seo_specialist,read_shell
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/seo_specialist
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-site-reliability-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,site_reliability_engineer,read_shell
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/site_reliability_engineer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-solutions-architect
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,solutions_architect,read_only
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/solutions_architect
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-technical-writer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,technical_writer,read_write
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/technical_writer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-tester
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task,testing_task
+    capability_fit: maestro_specialist,tester,full
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/tester
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-ux-designer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,ux_designer,read_write
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/ux_designer
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
+  - id: maestro-zos-sysprog
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_maestro_mcp_get_agent_then_spawn_agent
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,zos_sysprog,read_shell
+    human_gate: true
+    execution_mode: ask
+    source_path: maestro-mcp:get_agent/zos_sysprog
+    notes: Maestro specialist agent served through MCP get_agent; dispatch through Codex spawn_agent when delegation is useful.
+
   - id: agent-orchestrator
     kind: orchestrator
-    status: recommended
+    status: optional
     scope: parallel-agent-worktree-orchestration
     invocation: complex_parallel_repo_tasks
     task_fit: capability_orchestration,executable_control_plane,engineering_change,security_audit,architecture_design,release_task
@@ -42,7 +522,7 @@ tools:
     human_gate: true
     execution_mode: ask
     source_path: external:https://github.com/ComposioHQ/agent-orchestrator
-    notes: Agent Orchestrator is an orchestration adapter, not a single role subagent.
+    notes: Optional external AO adapter. KnowledgeOS uses Maestro as the active specialist-agent catalog because the local Maestro MCP exposes 39 specialist agents.
 
   - id: markitdown
     kind: mcp

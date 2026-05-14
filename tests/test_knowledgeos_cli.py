@@ -628,6 +628,20 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertEqual(payload["decision"], "allow")
             self.assertEqual(payload["route_status"], "allowed_by_route")
 
+            public_spec = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                "SPEC.md",
+                "--json",
+            )
+            public_spec_payload = json.loads(public_spec.stdout)
+            self.assertEqual(public_spec_payload["decision"], "allow")
+            self.assertEqual(public_spec_payload["route_status"], "allowed_by_route")
+
             out_of_route = self.run_cli(
                 "check-route-write",
                 "--project-root",
@@ -2064,7 +2078,27 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertGreaterEqual(payload["counts"].get("mcp", 0), 1)
         self.assertGreaterEqual(payload["counts"].get("skill", 0), 1)
         self.assertGreaterEqual(payload["counts"].get("orchestrator", 0), 1)
+        self.assertGreaterEqual(payload["counts"].get("subagent", 0), 40)
+        self.assertIn("maestro-mcp", result.stdout)
+        self.assertIn("maestro-architect", result.stdout)
+        self.assertIn("maestro-coder", result.stdout)
+        self.assertIn("maestro-security-engineer", result.stdout)
+        self.assertIn("maestro-code-reviewer", result.stdout)
         self.assertIn("agent-orchestrator", result.stdout)
+
+    def test_dispatch_surfaces_maestro_specialist_subagents(self):
+        result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "dispatch_ready")
+        stages = {step["stage"]: step for step in payload["steps"]}
+        self.assertIn("subagent", stages)
+        subagent_ids = {tool["id"] for tool in stages["subagent"]["tools"]}
+        self.assertIn("maestro-architect", subagent_ids)
+        self.assertIn("maestro-coder", subagent_ids)
+        self.assertIn("maestro-security-engineer", subagent_ids)
+        orchestrator_ids = {tool["id"] for tool in stages["orchestrator"]["tools"]}
+        self.assertIn("maestro", orchestrator_ids)
+        self.assertNotIn("agent-orchestrator", orchestrator_ids)
 
     def test_tool_registry_rejects_inline_secret_markers(self):
         with tempfile.TemporaryDirectory() as tmp:

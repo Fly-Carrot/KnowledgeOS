@@ -20,6 +20,7 @@ workflows:
     allowed_outputs:
       - .agent-os/
       - AGENTS.md
+      - SPEC.md
     notes:
       - Fill placeholders before treating the project as production-ready.
   report_task:

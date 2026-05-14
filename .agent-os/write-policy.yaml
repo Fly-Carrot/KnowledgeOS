@@ -5,6 +5,7 @@ write_policy:
     - .agent-os/schemas/kernel/**
 
   controlled:
+    - SPEC.md
     - README.md
     - CHANGELOG.md
     - AGENTS.md
@@ -55,6 +56,7 @@ write_policy:
     - templates/capability-layer/**
 
   require_receipt_for:
+    - SPEC.md
     - bin/**
     - knowledgeos/**
     - global-agent-fabric/**
