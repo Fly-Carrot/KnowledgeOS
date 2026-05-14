@@ -83,8 +83,8 @@ flowchart TB
         Other["Other agents"]:::agent
     end
 
-    subgraph Workbench["Future Workbench App"]
-        Desktop["visual state, graph, receipts, logs"]:::workbench
+    subgraph Workbench["KnowledgeOS Workbench"]
+        Desktop["visual state, evidence lanes, receipts, runs"]:::workbench
     end
 
     Human --> Intent --> AgentsMd --> AgentOS
@@ -132,7 +132,7 @@ KnowledgeOS adds that missing discipline:
 | Drivers | capability layer | MCP, skills, workflows, subagents |
 | Kernel logs | phase logs and receipts | Observable work history |
 | Mount table | workspace and fabric links | Project-to-kernel connectivity |
-| Desktop | future workbench app | Visual inspection and trust-building |
+| Desktop | KnowledgeOS Workbench | Visual inspection and trust-building |
 
 This is not a replacement for macOS, VS Code, the terminal, Obsidian, Codex, Gemini CLI, or MCP. It is the control layer that lets them behave like one auditable agent system.
 
@@ -270,4 +270,4 @@ The scenario suite verifies that distracted-agent mistakes are blocked by doctor
 
 KnowledgeOS is a working prototype and design manifesto for turning AI-agent workspaces into governed, inspectable systems. The current focus is the **knowledge + development AgentOS** form: a system for research writing, literature synthesis, grant drafting, codebase maintenance, reproducible analysis, project migration, and long-horizon agentic development.
 
-Future workbench apps are expected to become the visual desktop for this OS layer: not the source of truth, but the place where humans inspect routes, receipts, artifacts, memory, graph state, and agent decisions.
+KnowledgeOS Workbench is the current visual desktop for this OS layer: not the source of truth, but the place where humans inspect routes, receipts, artifacts, memory, graph state, and agent decisions. It ships as a local macOS desktop app that bundles the KnowledgeOS kernel and opens a read-only bridge on `127.0.0.1`.

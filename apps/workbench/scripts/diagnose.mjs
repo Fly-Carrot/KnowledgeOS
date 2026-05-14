@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,7 +48,70 @@ function summarizeStages(stages = []) {
   return stages.map((stage) => `${stage.key}:${stage.status}`).join(" -> ");
 }
 
+function assertNoConsoleSurface(source, label) {
+  const banned = [
+    "Command Dock",
+    "Ask Sandbox",
+    "Sandbox Console",
+    "Raw Shell",
+    "Prompt Preview",
+    "Adapter Run Gate",
+    "setupSandboxConsole",
+    "setCommandPanelOpen",
+    "renderPromptPreview",
+    "workbench:sandbox-create",
+    "workbench:sandbox-destroy",
+    "workbench:knowledge-scope-resolve",
+    "knowledgeos.guided-context-snapshot.v1",
+    "sandbox-exec",
+    "modelCliLaunchEnabled"
+  ];
+  for (const item of banned) {
+    assert(!source.includes(item), `${label} still contains console surface: ${item}`);
+  }
+}
+
+function assertElectronBoundary() {
+  const mainSource = fs.readFileSync(path.join(appRoot, "electron", "main.mjs"), "utf8");
+  const preloadSource = fs.readFileSync(path.join(appRoot, "electron", "preload.cjs"), "utf8");
+  const previewIndex = fs.readFileSync(path.join(repoRoot, "examples", "workbench", "index.html"), "utf8");
+  const previewJs = fs.readFileSync(path.join(repoRoot, "examples", "workbench", "app.js"), "utf8");
+  const styles = fs.readFileSync(path.join(repoRoot, "examples", "workbench", "styles.css"), "utf8");
+
+  assert(mainSource.includes("workspaces.json"), "workspace registry support is missing");
+  assert(mainSource.includes("process.resourcesPath") && mainSource.includes("bundledKernelRoot"), "bundled KnowledgeOS kernel resolution is missing");
+  assert(mainSource.includes('titleBarStyle: "hiddenInset"'), "hidden inset titlebar is missing");
+  assert(mainSource.includes("trafficLightPosition"), "native macOS traffic light placement is missing");
+  assert(mainSource.includes("contextIsolation: true"), "contextIsolation is not enabled");
+  assert(mainSource.includes("sandbox: true"), "renderer sandbox is not enabled");
+  assert(!mainSource.includes("nodeIntegration: true"), "nodeIntegration must stay disabled");
+  assert(preloadSource.includes("contextBridge.exposeInMainWorld"), "preload API is missing");
+  assert(preloadSource.includes("getWorkspaces") && preloadSource.includes("runDoctor"), "workspace preload API is incomplete");
+  assert(!preloadSource.includes('require("fs")') && !preloadSource.includes("require('fs')"), "preload must not expose fs");
+  assert(previewIndex.includes('id="workspace-panel"'), "workspace switcher panel is missing");
+  assert(previewIndex.includes('id="app-window" hidden'), "app window is missing");
+  assert(previewJs.includes("Monitoring and viewing only"), "monitoring-only product boundary is missing");
+  assert(previewJs.includes("missionAppContent"), "Mission Control renderer is missing");
+  assert(previewJs.includes("contextAppContent"), "Context renderer is missing");
+  assert(previewJs.includes("evidenceAppContent"), "Evidence renderer is missing");
+  assert(previewJs.includes("runsAppContent"), "Runs renderer is missing");
+  assert(previewJs.includes("knowledgeAppContent"), "Knowledge renderer is missing");
+  assert(previewJs.includes("settingsAppContent"), "Settings renderer is missing");
+  assert(previewJs.includes('kernel: "bundled"'), "bundled kernel disclosure is missing");
+  assert(previewJs.includes('bridge: "local 127.0.0.1"'), "local bridge disclosure is missing");
+  assert(styles.includes(".launchpad") && styles.includes(".now-shelf"), "Launchpad monitor shell styles are missing");
+  assert(styles.includes("height: 100dvh") && styles.includes("overflow: hidden"), "viewport-bound home layout is missing");
+  assert(styles.includes("-webkit-app-region: drag"), "borderless drag region is missing");
+
+  assertNoConsoleSurface(mainSource, "electron main");
+  assertNoConsoleSurface(preloadSource, "electron preload");
+  assertNoConsoleSurface(previewIndex, "preview HTML");
+  assertNoConsoleSurface(previewJs, "preview JS");
+  assertNoConsoleSurface(styles, "preview CSS");
+}
+
 async function main() {
+  assertElectronBoundary();
   const child = spawn(knowledgeosBin, ["workbench-preview", "--project-root", projectRoot, "--host", "127.0.0.1", "--port", "0"], {
     cwd: projectRoot,
     env: { ...process.env, PYTHONUNBUFFERED: "1" },
@@ -59,6 +123,9 @@ async function main() {
     const health = await fetch(`${url}/healthz`).then((response) => response.text());
     assert(health === "ok\n", "health endpoint did not return ok");
 
+    const html = await fetch(url).then((response) => response.text());
+    assertNoConsoleSurface(html, "served HTML");
+
     const state = await readJson(`${url}/workbench-state.json`, "state endpoint");
     assert(state.schema_version === "knowledgeos.workbench-state.v1", "state schema mismatch");
     const taskId = state.system_black_box?.latest_run?.task_id || state.tasks?.current?.id || "";
@@ -67,26 +134,13 @@ async function main() {
     assert(lifecycle.schema_version === "knowledgeos.workbench-lifecycle.v1", "lifecycle schema mismatch");
     assert(Array.isArray(lifecycle.stages) && lifecycle.stages.length === 7, "lifecycle must expose seven stages");
 
-    const sandbox = await fetch(`${url}/api/ask-sandbox`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: "Please create a short project report." })
-    }).then((response) => {
-      assert(response.ok, `sandbox endpoint failed: ${response.status}`);
-      return response.json();
-    });
-    assert(sandbox.schema_version === "knowledgeos.ask-sandbox.v1", "sandbox schema mismatch");
-    assert(sandbox.executed === false, "sandbox must not execute commands");
-    assert(sandbox.project_mutation === false, "sandbox must not mutate project files");
-    assert(sandbox.recommended_next_step === "route_through_os", "mutation-like prompt should be routed through OS");
-    assert(Array.isArray(sandbox.recommended_os_commands) && sandbox.recommended_os_commands.length >= 5, "sandbox command chain is missing");
-
     console.log("KnowledgeOS Workbench Diagnose");
     console.log(`bridge: ok ${url}`);
     console.log(`state: ${state.status} task=${taskId || "none"} doctor=${state.system_black_box?.doctor?.status || "unknown"}`);
     console.log(`lifecycle: ${lifecycle.selected_task?.id || "none"} ${summarizeStages(lifecycle.stages)}`);
-    console.log(`sandbox: ${sandbox.recommended_next_step} executed=${sandbox.executed} mutation=${sandbox.project_mutation}`);
-    console.log(`runtime: ${state.runtime_adapters?.status || "unknown"} ${state.runtime_adapters?.available_count || 0}/${state.runtime_adapters?.total || 0}`);
+    console.log(`runtime inventory: ${state.runtime_adapters?.status || "unknown"} ${state.runtime_adapters?.available_count || 0}/${state.runtime_adapters?.total || 0}`);
+    console.log("surface: monitoring-only; no Command Dock, Ask Sandbox, raw terminal, prompt builder, or model launch UI");
+    console.log("electron: workspace registry + read-only bridge boundary ok");
     console.log("diagnose: ok");
   } finally {
     child.kill("SIGTERM");

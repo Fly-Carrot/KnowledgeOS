@@ -993,9 +993,16 @@ def classify_route_write(project_root: Path, task_id: str, target: str) -> dict[
     }
 
 
+IGNORED_TEMPLATE_FILENAMES = {".DS_Store"}
+
+
+def should_skip_template_file(path: Path) -> bool:
+    return path.name in IGNORED_TEMPLATE_FILENAMES or path.name.startswith("._")
+
+
 def copy_template_tree(src: Path, dest: Path, replacements: dict[str, str], *, dry_run: bool, force: bool) -> list[dict[str, str]]:
     actions: list[dict[str, str]] = []
-    for source_path in sorted(p for p in src.rglob("*") if p.is_file()):
+    for source_path in sorted(p for p in src.rglob("*") if p.is_file() and not should_skip_template_file(p)):
         relative = source_path.relative_to(src)
         target_path = dest / relative
         if target_path.exists() and not force:
@@ -2719,11 +2726,11 @@ def task_board_state(project_root: Path) -> dict[str, Any]:
 RUNTIME_ADAPTER_DEFINITIONS = [
     {
         "id": "mock",
-        "label": "Mock Sandbox",
+        "label": "Mock Runtime",
         "kind": "builtin",
         "command": "",
         "optional": False,
-        "purpose": "Safe default for Intent Console behavior checks.",
+        "purpose": "Safe default for Workbench monitoring checks.",
     },
     {
         "id": "gemini-cli",
@@ -2763,7 +2770,7 @@ def build_runtime_adapters_state(project_root: Path, *, show_paths: bool = False
                 "executable": executable,
                 "execution": "not_started",
                 "execution_mode": "disabled_by_default",
-                "default_cwd": "<SANDBOX>",
+                "default_cwd": "<APP_RUNTIME>",
                 "project_mutation": False,
                 "requires_os_route_for_mutation": True,
             }
@@ -3246,30 +3253,7 @@ def build_workbench_preview_handler(
             super().do_GET()
 
         def do_POST(self) -> None:
-            parsed = urlparse(self.path)
-            if parsed.path not in {"/ask-sandbox", "/api/ask-sandbox"}:
-                self.send_error(404)
-                return
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                send_json(self, 400, {"status": "error", "reason": "invalid Content-Length"})
-                return
-            if length > 16384:
-                send_json(self, 413, {"status": "error", "reason": "prompt too large"})
-                return
-            try:
-                raw = self.rfile.read(length).decode("utf-8") if length else "{}"
-                payload = json.loads(raw)
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                send_json(self, 400, {"status": "error", "reason": "invalid JSON body"})
-                return
-            prompt = str(payload.get("prompt", "")).strip()
-            if not prompt:
-                send_json(self, 400, {"status": "error", "reason": "prompt is required"})
-                return
-            result = build_ask_sandbox_response(project_root, prompt, runtime="mock", show_paths=show_paths)
-            send_json(self, 200, result)
+            send_json(self, 404, {"status": "error", "reason": "Workbench preview is monitoring-only"})
 
     return WorkbenchPreviewHandler
 

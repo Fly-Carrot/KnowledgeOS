@@ -2,17 +2,102 @@
   "name": "knowledgeos-workbench",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal KnowledgeOS desktop Workbench shell.",
+  "description": "KnowledgeOS desktop Workbench for observable local agent workspaces.",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
+    "package": "electron-builder --dir",
+    "dist:mac": "electron-builder --mac dmg zip --arm64 --publish=never",
     "smoke": "node scripts/smoke.mjs",
     "diagnose": "node scripts/diagnose.mjs",
     "vite": "vite --host 127.0.0.1"
   },
+  "build": {
+    "appId": "dev.knowledgeos.workbench",
+    "productName": "KnowledgeOS Workbench",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "index.html",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "KnowledgeOS Workbench ${version}"
+    },
+    "extraResources": [
+      {
+        "from": "../../bin",
+        "to": "knowledgeos/bin"
+      },
+      {
+        "from": "../../knowledgeos",
+        "to": "knowledgeos/knowledgeos",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**"
+        ]
+      },
+      {
+        "from": "../../examples/workbench",
+        "to": "knowledgeos/examples/workbench",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**"
+        ]
+      },
+      {
+        "from": "../../global-agent-fabric",
+        "to": "knowledgeos/global-agent-fabric",
+        "filter": [
+          "**/*",
+          "!global-agent-fabric_venv/**",
+          "!**/__pycache__/**"
+        ]
+      },
+      {
+        "from": "../../capability-layer",
+        "to": "knowledgeos/capability-layer",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**"
+        ]
+      },
+      {
+        "from": "../../templates",
+        "to": "knowledgeos/templates",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**"
+        ]
+      }
+    ]
+  },
   "devDependencies": {
+    "electron-builder": "^26.0.0",
     "electron": "^39.0.0",
     "vite": "^7.0.0"
   },

@@ -632,6 +632,39 @@ tasks:
       - "capability-event records MCP skill subagent orchestrator script visibility"
       - "verify-lifecycle blocks missing dispatch or required capability trace"
       - "doctor unit tests scenarios and diff check pass"
+  - id: KOS-T032
+    title: "Productize Workbench Phase 1 shell"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "product_shell_boundary"
+    outputs:
+      - "examples/workbench/"
+      - "apps/workbench/"
+      - "tests/test_workbench_static.py"
+      - "docs/workbench-runtime-adapters.md"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "Workbench product UI no longer presents itself as preview"
+      - "About/product version and read-only safety are visible"
+      - "Electron shell and docs use product language while preserving read-only bridge"
+      - "doctor, unit tests, guardrail scenarios, smoke, diagnose, and browser checks pass"
+  - id: KOS-T033
+    title: "Build Workbench Phase 2 app windows"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_interaction_boundary"
+    outputs:
+      - "examples/workbench/"
+      - "apps/workbench/"
+      - "tests/test_workbench_static.py"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "Mission app exposes intent drafting, current task, recommended next step, and command chain without executing mutations"
+      - "Context app exposes project, workspace, routes, capabilities, runtime, and lifecycle summaries as focused read-only sections"
+      - "Launchpad app windows feel interactive through tabs or focused panels, while project mutation remains disabled"
+      - "doctor, unit tests, guardrail scenarios, smoke, diagnose, and browser checks pass"
   - id: KOS-T034
     title: "Add operational trace and orchestrator adapter spec"
     type: "capability_orchestration"
@@ -672,3 +705,447 @@ tasks:
       - "root startup prompt mentions trace-step and TRACE_OK"
       - "changelog records public operational trace and orchestrator adapter update"
       - "doctor and targeted tests pass"
+  - id: KOS-T036
+    title: "Register Maestro Orchestrate specialist agents"
+    type: "capability_orchestration"
+    status: completed
+    complexity: "small"
+    risk: "registry_accuracy"
+    outputs:
+      - ".agent-os/tool-registry.yaml"
+      - "docs/capability-orchestration.md"
+      - "tests/test_knowledgeos_cli.py"
+    acceptance:
+      - "Maestro MCP is registered as the local agent catalog interface"
+      - "39 Maestro specialist agents are registered as local subagent entries"
+      - "Agent Orchestrator is no longer the active specialist-agent source"
+      - "tool registry and targeted tests pass"
+  - id: KOS-T037
+    title: "Draw Workbench Mission Control demo UI"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "small"
+    risk: "workbench_visual_demo"
+    outputs:
+      - "examples/workbench/"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Launchpad six-button shell and Now Shelf remain visible"
+      - "Mission app opens an Agent Mission Control demo with linear OS timeline"
+      - "Four evidence lanes are visible as Trace, Checkpoints, Capability, and Sync"
+      - "Static tests and Workbench smoke pass"
+  - id: KOS-T038
+    title: "Make Mission Control entry visible"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "small"
+    risk: "low"
+    outputs:
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Launchpad shows a visible Mission Control entry instead of hiding the new view behind an ambiguous Mission label"
+      - "Static tests and workbench smoke validate the entry labels and Mission Control route"
+  - id: KOS-T039
+    title: "Phase 1 compress Mission Control information hierarchy"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "low"
+    outputs:
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Mission Control default view shows overall status, current gate, and next decision before detailed evidence"
+      - "Timeline is compressed into four readable segments by default"
+      - "Evidence lanes are reduced to compact status indicators and detailed records are hidden behind Flight Recorder"
+      - "Workbench static tests and smoke checks pass"
+  - id: KOS-T040
+    title: "Polish Mission Control top panels"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "small"
+    risk: "low"
+    outputs:
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Mission Control removes the large slogan/status hero panel from the default view"
+      - "Current Gate and Next Move are aligned as the top two panels"
+      - "Evidence summary and Flight Recorder remain available below"
+      - "Workbench static tests and smoke checks pass"
+  - id: KOS-T041
+    title: "Phase 2 simplify Mission Control detail"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "small"
+    risk: "low"
+    outputs:
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Mission Control detail view reduces to one operational status, one evidence chain, and one next action"
+      - "Flight Recorder remains available but collapsed and secondary"
+      - "Static tests, smoke checks, and guardrail checks pass"
+  - id: KOS-T042
+    title: "Remove Mission Control entry pill"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "small"
+    risk: "low"
+    outputs:
+      - "examples/workbench/index.html"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Launchpad Mission Control card no longer shows the Open timeline pill"
+      - "Unused entry-pill styling is removed"
+      - "Static tests and Workbench smoke pass"
+  - id: KOS-T043
+    title: "Phase 3 productize secondary app windows"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "small"
+    risk: "low"
+    outputs:
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Secondary Workbench app windows use a consistent App Brief plus focused status cards"
+      - "Mission Control remains unchanged as the primary mission app"
+      - "Static tests, smoke checks, and guardrail checks pass"
+  - id: KOS-T044
+    title: "Phase 4 deduplicate secondary Workbench apps"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_information_architecture"
+    outputs:
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Context Evidence Runs and Knowledge each answer one distinct product question"
+      - "Secondary app windows no longer reuse the same Now Shelf summary cards"
+      - "Details or Raw Evidence sections are collapsed by default"
+      - "Static tests smoke checks full regression and guardrails pass"
+  - id: KOS-T045
+    title: "Polish secondary app headers"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "small"
+    risk: "low"
+    outputs:
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Secondary app windows no longer show a separate App Brief title block"
+      - "Window title remains the single app identity label"
+      - "Context Evidence Runs Knowledge and Settings still open focused content views"
+      - "Static tests smoke checks and guardrails pass"
+  - id: KOS-T046
+    title: "Fix Runs checkpoint chain layout"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "small"
+    risk: "low"
+    outputs:
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Runs app checkpoint chain is not squeezed into a narrow column"
+      - "Checkpoint labels remain readable at the default desktop Workbench size"
+      - "Static tests smoke checks and guardrails pass"
+  - id: KOS-T047
+    title: "Phase 7 workspace switcher and disposable raw shell"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "large"
+    risk: "workbench_shell_sandbox_boundary"
+    outputs:
+      - "apps/workbench/"
+      - "examples/workbench/"
+      - "tests/test_workbench_static.py"
+      - "docs/workbench-runtime-adapters.md"
+    acceptance:
+      - "Workbench exposes a local workspace switcher without writing workspace registry into project .agent-os"
+      - "Command Dock includes a raw shell view with explicit adapter selection and sandbox status"
+      - "Disposable shell sessions use a sandbox cwd, context snapshot files, and cleanup on close"
+      - "Model adapters remain explicit and disabled unless the CLI is detected"
+      - "Static tests, Workbench smoke, diagnostics, regression tests, guardrails, and security boundary checks pass"
+  - id: KOS-T048
+    title: "Refine Workbench workspace badge and app detail copy"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_visual_polish_boundary"
+    outputs:
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+    acceptance:
+      - "workspace badge project name uses restrained visual weight"
+      - "each app detail section has specific explanatory content instead of generic Details labels"
+      - "static tests and Workbench smoke pass"
+  - id: KOS-T049
+    title: "Refine Knowledge and Settings app panels"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_visual_polish_boundary"
+    outputs:
+      - "examples/workbench/app.js"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+    acceptance:
+      - "Knowledge app removes explanatory intro and shows Knowledge Index plus restrained entry cards"
+      - "Settings app removes explanatory intro and shows Safety Boundary plus runtime status cards"
+      - "static tests, Workbench smoke, diagnose, and doctor pass"
+  - id: KOS-T050
+    title: "Add Raw Shell staged product spec"
+    type: "os_scaffold"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_shell_product_boundary"
+    outputs:
+      - ".agent-os/specs/SPEC-20260513-001/spec.md"
+      - "docs/workbench-runtime-adapters.md"
+    acceptance:
+      - "Active spec captures simple model ask, advanced raw terminal, context scope, and CLI detection plan"
+      - "Runtime adapter doc records phased Raw Shell productization without adding mutation endpoints"
+      - "No app code changes are required for this spec-only update"
+  - id: KOS-T051
+    title: "Phase 8A reframe Raw Shell as Sandbox Console"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_shell_product_boundary"
+    outputs:
+      - "examples/workbench/index.html"
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "apps/workbench/README.md"
+      - "examples/workbench/README.md"
+    acceptance:
+      - "Command Dock presents Sandbox Console with Guided and Terminal modes instead of Raw Shell as the default concept"
+      - "Guided mode frames Simple Model Ask as the default future interaction without starting real model sessions"
+      - "Terminal mode remains opt-in, Electron-only, sandbox-scoped, and clearly advanced"
+      - "Static tests, Workbench smoke, and doctor pass"
+  - id: KOS-T052
+    title: "Phase 8B expose CLI adapter detection in Sandbox Console"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_cli_detection_boundary"
+    outputs:
+      - "apps/workbench/electron/main.mjs"
+      - "examples/workbench/index.html"
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "apps/workbench/scripts/diagnose.mjs"
+      - "apps/workbench/README.md"
+      - "examples/workbench/README.md"
+    acceptance:
+      - "Guided mode shows detected local CLI adapters without starting model processes"
+      - "Terminal adapter selector shows the same availability inventory as Guided mode"
+      - "Unavailable adapters are disabled and explain why they cannot be selected"
+      - "No new project mutation endpoint or automatic model execution is introduced"
+  - id: KOS-T053
+    title: "Phase 8C add Guided knowledge scope snapshots"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_context_snapshot_boundary"
+    outputs:
+      - "apps/workbench/electron/main.mjs"
+      - "apps/workbench/electron/preload.cjs"
+      - "examples/workbench/index.html"
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "apps/workbench/scripts/diagnose.mjs"
+      - "apps/workbench/README.md"
+      - "examples/workbench/README.md"
+    acceptance:
+      - "Guided mode resolves a selected knowledge scope into a disposable read-only snapshot"
+      - "OS Knowledge Pack and Current Run Evidence snapshots do not expose the full project root"
+      - "Selected Files and Selected Folder require explicit user dialog selection"
+      - "No model process or project mutation endpoint is introduced"
+  - id: KOS-T054
+    title: "Export OS architecture operating spec"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "architecture_spec_publication"
+    outputs:
+      - "SPEC.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "docs/capability-orchestration.md"
+      - ".agent-os/specs/SPEC-20260513-001/spec.md"
+      - ".agent-os/tool-registry.yaml"
+      - "tests/test_knowledgeos_cli.py"
+    acceptance:
+      - "public SPEC.md explains small kernel pluggable modules optional apps project strictness and mandatory evidence lanes"
+      - "detailed operating spec explains full task lifecycle module injection and doctor versus repair tools"
+      - "architecture files are committed without Workbench UI changes"
+  - id: KOS-T055
+    title: "Phase 8D add Snapshot Viewer and Prompt Builder"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_prompt_builder_boundary"
+    outputs:
+      - ".agent-os/specs/SPEC-20260513-001/spec.md"
+      - "examples/workbench/index.html"
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "apps/workbench/scripts/diagnose.mjs"
+      - "apps/workbench/README.md"
+      - "examples/workbench/README.md"
+    acceptance:
+      - "Guided mode shows a readable snapshot viewer after Prepare Snapshot"
+      - "Guided mode can build a non-executing prompt preview from intent adapter and snapshot manifest"
+      - "Prompt copy is optional and no model process or project mutation endpoint is introduced"
+      - "Static tests smoke diagnose and browser preview pass"
+  - id: KOS-T056
+    title: "Phase 8E add Explicit Adapter Run Gate"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_adapter_run_gate_boundary"
+    outputs:
+      - "examples/workbench/index.html"
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "apps/workbench/scripts/diagnose.mjs"
+      - "apps/workbench/README.md"
+      - "examples/workbench/README.md"
+    acceptance:
+      - "Guided mode can open an explicit adapter run gate after prompt and snapshot are prepared"
+      - "Run gate shows adapter command sandbox context snapshot files and mutation boundary before any execution"
+      - "Confirm action stays locked and no model process or project mutation endpoint is introduced"
+      - "Static tests smoke diagnose and guardrail verification pass"
+  - id: KOS-T057
+    title: "Simplify Guided Command Dock first-use UI"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_guided_ui_clarity"
+    outputs:
+      - "examples/workbench/index.html"
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "apps/workbench/README.md"
+      - "examples/workbench/README.md"
+    acceptance:
+      - "Guided mode opens with one obvious ask surface and a three-step flow"
+      - "Model knowledge snapshot prompt and run gate details are available but not visually dominant by default"
+      - "No model execution or project mutation endpoint is introduced"
+  - id: KOS-T058
+    title: "Remove console surfaces from monitoring-only Workbench"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_monitoring_scope_boundary"
+    outputs:
+      - "examples/workbench/index.html"
+      - "examples/workbench/app.js"
+      - "examples/workbench/styles.css"
+      - "tests/test_workbench_static.py"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "apps/workbench/scripts/diagnose.mjs"
+      - "apps/workbench/electron/main.mjs"
+      - "apps/workbench/electron/preload.cjs"
+      - "apps/workbench/README.md"
+      - "examples/workbench/README.md"
+    acceptance:
+      - "Workbench has no visible Command Dock Ask Sandbox Raw Shell Terminal or model prompt surface"
+      - "Electron renderer no longer exposes sandbox session IPC for console use"
+      - "Workbench remains monitoring and viewing only with Launchpad app windows Workspace Switcher onboarding and theme controls"
+      - "Static tests smoke diagnose regression tests and guardrails pass"
+  - id: KOS-T059
+    title: "Phase 8 polish borderless Workbench and bundle KnowledgeOS"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_product_packaging_boundary"
+    outputs:
+      - "examples/workbench/styles.css"
+      - "examples/workbench/app.js"
+      - "examples/workbench/index.html"
+      - "apps/workbench/electron/main.mjs"
+      - "apps/workbench/package.json"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "apps/workbench/scripts/diagnose.mjs"
+      - "apps/workbench/README.md"
+      - "tests/test_workbench_static.py"
+    acceptance:
+      - "Workbench uses a system borderless Electron shell with native macOS traffic lights preserved"
+      - "Launchpad home fits supported desktop viewports without body vertical scrolling"
+      - "Launchpad controls and shelf cards provide restrained Apple-style hover press and focus feedback"
+      - "Packaged Workbench uses bundled KnowledgeOS resources by default and does not require external installation"
+      - "Monitoring-only boundary remains intact with no console model or project mutation endpoint"
+  - id: KOS-T060
+    title: "Phase 9 stabilize Workbench launchpad layout"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_layout_stability"
+    outputs:
+      - "examples/workbench/styles.css"
+      - "apps/workbench/electron/main.mjs"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "tests/test_workbench_static.py"
+    acceptance:
+      - "Launchpad app icon bounding boxes do not move on hover"
+      - "Now Shelf bounding box does not move on app hover or card hover"
+      - "Electron minimum window is at least 1180x760"
+      - "Workbench remains monitoring-only with no console or model execution surface"
+  - id: KOS-T061
+    title: "Phase 10 package Workbench as macOS app and update GitHub docs"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "workbench_distribution_boundary"
+    outputs:
+      - "README.md"
+      - "apps/workbench/package.json"
+      - "apps/workbench/.gitignore"
+      - "apps/workbench/README.md"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "docs/workbench-packaging.md"
+      - "tests/test_workbench_static.py"
+    acceptance:
+      - "Workbench can build a local macOS app directory and dmg or zip distribution with bundled KnowledgeOS resources"
+      - "Distribution outputs stay out of git-tracked source files"
+      - "Root and app documentation describe Workbench as a current monitoring app not a future app"
+      - "Monitoring-only boundary remains intact with no console model or project mutation endpoint"
+      - "Smoke diagnose package distribution tests and guardrails pass"

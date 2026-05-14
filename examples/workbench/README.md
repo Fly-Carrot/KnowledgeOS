@@ -1,23 +1,24 @@
-# KnowledgeOS Workbench Preview
+# KnowledgeOS Workbench
 
-This is the local preview shell for the future KnowledgeOS Workbench.
-It is intentionally read-only and has no terminal bridge, no paid API dependency, and no direct project mutation path.
+This folder contains the shared Workbench UI used by the Electron app and by the lightweight HTTP bridge.
+
+The browser preview is read-only. The current product surface is intentionally monitoring-only: Launchpad opens focused inspection windows, Now Shelf shows compact state, and Mission Control summarizes the current OS gate.
 
 ## Run Locally
 
-Live read-only preview:
+Live read-only bridge:
 
 ```bash
 ./bin/knowledgeos workbench-preview --project-root . --port 4173
 ```
 
-The live preview exposes:
+The bridge exposes:
 
 - `GET /workbench-state.json`: redacted project state.
-- `POST /api/ask-sandbox`: read-only mock Intent Console response.
-- `GET /healthz`: preview health check.
+- `GET /workbench-lifecycle.json`: the observable Doctor -> Route -> Dispatch -> Write Guard -> Run -> Eval -> Receipt chain.
+- `GET /healthz`: bridge health check.
 
-Static fixture-only preview:
+Static fixture mode:
 
 ```bash
 python3 -m http.server 4173 --directory examples/workbench
@@ -25,13 +26,16 @@ python3 -m http.server 4173 --directory examples/workbench
 
 Then open `http://127.0.0.1:4173`.
 
-## Design Contract
+## Product Contract
 
-- Human Layer is visible by default: intent, current task, knowledge cards, next decision, capability health.
-- System Black Box is collapsible: doctor summary, latest run, receipts, and raw state snapshot.
-- The preview consumes `knowledgeos.workbench-state.v1` shape from `workbench-state.fixture.json`.
-- The live preview serves the current project state from `/workbench-state.json`.
-- The Intent Console calls `knowledgeos.ask-sandbox.v1` through the live preview bridge.
-- Runtime adapter readiness is visible, but real CLI execution remains disabled by default.
+- Launchpad is the home screen: six app icons open focused windows on demand.
+- Now Shelf is the compact status strip: project, mission, receipt, and health.
+- Mission Control shows the current gate, next move, compact evidence chain, and collapsed audit trail.
+- Context shows project state surfaces without repeating run evidence.
+- Evidence shows marker files and proof lanes without repeating the run timeline.
+- Runs shows lifecycle checkpoints and run artifacts without repeating global capability summaries.
+- Knowledge shows human-readable docs, decisions, handoffs, and skills.
+- Settings shows product boundary and runtime inventory.
+- Workspace switching is an Electron-only local registry. The registry is not written into project `.agent-os`.
 - Paths remain redacted by default. Use `--show-paths` only for local debugging.
-- The intent console must not mutate project files from this preview. Mutation remains OS-routed work.
+- Project mutation remains OS-routed work outside this UI.

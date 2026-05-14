@@ -19,7 +19,7 @@
     "active_project": "KOS001",
     "governance_root": "<PROJECT_ROOT>/templates/governance-core",
     "capability_root": "<PROJECT_ROOT>/templates/capability-layer",
-    "phase": "workbench-preview",
+    "phase": "workbench-product-shell",
     "last_sync_status": "BOOT_OK"
   },
   "project": {
@@ -124,16 +124,16 @@
     "adapters": [
       {
         "id": "mock",
-        "label": "Mock Sandbox",
+        "label": "Mock Runtime",
         "kind": "builtin",
         "command": "",
         "optional": false,
-        "purpose": "Safe default for Intent Console behavior checks.",
+        "purpose": "Safe default for Workbench monitoring checks.",
         "status": "available",
         "executable": "builtin",
         "execution": "not_started",
         "execution_mode": "disabled_by_default",
-        "default_cwd": "<SANDBOX>",
+        "default_cwd": "<APP_RUNTIME>",
         "project_mutation": false,
         "requires_os_route_for_mutation": true
       },
@@ -148,7 +148,7 @@
         "executable": "not_found",
         "execution": "not_started",
         "execution_mode": "disabled_by_default",
-        "default_cwd": "<SANDBOX>",
+        "default_cwd": "<APP_RUNTIME>",
         "project_mutation": false,
         "requires_os_route_for_mutation": true
       },
@@ -163,7 +163,7 @@
         "executable": "not_found",
         "execution": "not_started",
         "execution_mode": "disabled_by_default",
-        "default_cwd": "<SANDBOX>",
+        "default_cwd": "<APP_RUNTIME>",
         "project_mutation": false,
         "requires_os_route_for_mutation": true
       }

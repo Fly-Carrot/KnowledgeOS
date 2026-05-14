@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KnowledgeOS Workbench Preview</title>
+  <title>KnowledgeOS Workbench</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -14,18 +14,22 @@
         <strong>KnowledgeOS</strong>
       </div>
       <div class="toolbar">
+        <button class="workspace-button" id="workspace-toggle" type="button" aria-expanded="false" aria-controls="workspace-panel">
+          <span>Workspace</span>
+          <strong id="workspace-current">KnowledgeOS</strong>
+        </button>
+        <button class="icon-button" id="about-open" type="button" aria-label="Open about">i</button>
         <button class="icon-button" id="onboarding-open" type="button" aria-label="Open getting started">?</button>
-        <button class="icon-button" id="command-toggle" type="button" aria-expanded="false" aria-controls="command-panel" aria-label="Open command panel">⌘</button>
         <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme">Dark</button>
       </div>
     </header>
 
     <main class="desktop" aria-label="KnowledgeOS Launchpad">
       <section class="launchpad" aria-label="KnowledgeOS apps">
-        <button class="app-icon is-active" type="button" data-app="mission" aria-pressed="true">
+        <button class="app-icon is-active mission-entry" type="button" data-app="mission" aria-pressed="true" aria-label="Open Agent Mission Control">
           <span class="app-glyph mission" aria-hidden="true">◎</span>
-          <strong>Mission</strong>
-          <small>Intent and next move</small>
+          <strong>Mission Control</strong>
+          <small>OS timeline</small>
         </button>
         <button class="app-icon" type="button" data-app="context" aria-pressed="false">
           <span class="app-glyph context" aria-hidden="true">▣</span>
@@ -61,7 +65,7 @@
           <small id="shelf-detail-1">&lt;PROJECT_ROOT&gt;</small>
         </article>
         <article class="shelf-card">
-          <span id="shelf-label-2">Mission</span>
+          <span id="shelf-label-2">Mission Control</span>
           <strong id="shelf-value-2">No task selected</strong>
           <small id="shelf-detail-2">Task pending</small>
         </article>
@@ -91,6 +95,29 @@
       </div>
     </aside>
 
+    <aside class="workspace-panel" id="workspace-panel" hidden aria-label="Workspace switcher">
+      <div class="workspace-card">
+        <div class="sheet-header">
+          <div>
+            <p class="eyebrow">Workspace Switcher</p>
+            <h2>Choose project root</h2>
+          </div>
+          <button class="icon-button subtle" id="workspace-close" type="button" aria-label="Close workspace switcher">×</button>
+        </div>
+        <div class="workspace-list" id="workspace-list" aria-live="polite">
+          <article class="workspace-row">
+            <strong>KnowledgeOS</strong>
+            <small>&lt;PROJECT_ROOT&gt;</small>
+            <span>BOOT_OK</span>
+          </article>
+        </div>
+        <div class="workspace-actions">
+          <button id="workspace-add" type="button">Add Folder</button>
+          <span>Registry is local to this App. It is not written into project .agent-os.</span>
+        </div>
+      </div>
+    </aside>
+
     <aside class="onboarding-screen" id="onboarding-screen" aria-label="Getting started" role="dialog" aria-modal="true">
       <div class="onboarding-card">
         <p class="eyebrow">Getting Started</p>
@@ -103,7 +130,7 @@
           </article>
           <article>
             <span>2</span>
-            <strong>Preview state</strong>
+            <strong>Glance at state</strong>
             <small>Hover or focus an icon to update the Now Shelf before opening it.</small>
           </article>
           <article>
@@ -113,38 +140,12 @@
           </article>
         </div>
         <div class="onboarding-actions">
-          <button id="onboarding-start" type="button">Start with Mission</button>
+          <button id="onboarding-start" type="button">Open Mission Control</button>
           <button class="secondary" id="onboarding-skip" type="button">Skip</button>
         </div>
       </div>
     </aside>
 
-    <aside class="command-panel" id="command-panel" hidden aria-label="Command panel">
-      <div class="command-card">
-        <div class="sheet-header">
-          <div>
-            <p class="eyebrow">Intent Console</p>
-            <h2>Ask safely</h2>
-          </div>
-          <button class="icon-button subtle" id="command-close" type="button" aria-label="Close command panel">×</button>
-        </div>
-        <div class="mode-switch" role="tablist" aria-label="Command mode">
-          <button class="is-active" id="mission-mode" type="button" data-mode="mission">Mission Draft</button>
-          <button id="terminal-mode" type="button" data-mode="terminal">Terminal Pro</button>
-        </div>
-        <p class="command-mode-note" id="command-mode-note">Natural language is routed through a read-only mock sandbox. Nothing is executed.</p>
-        <textarea id="intent-input" aria-label="Intent draft" placeholder="Tell KnowledgeOS what you want to understand or prepare next..."></textarea>
-        <div class="intent-actions">
-          <button id="ask-sandbox" type="button">Ask Sandbox</button>
-          <button class="secondary" id="preview-route" type="button" disabled>Preview Route</button>
-          <span>No project mutation from this Workbench phase.</span>
-        </div>
-        <div class="sandbox-result" id="sandbox-result" aria-live="polite">
-          <strong>Sandbox idle</strong>
-          <span>Mutation-like intents are summarized as OS commands, not executed.</span>
-        </div>
-      </div>
-    </aside>
   </div>
   <script src="app.js"></script>
 </body>
