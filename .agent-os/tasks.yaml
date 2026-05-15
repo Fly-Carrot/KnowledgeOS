@@ -1167,3 +1167,18 @@ tasks:
       - "Workbench README presents download first and keeps build commands as maintainer-only notes"
       - "Generated release artifacts remain outside git-tracked source"
       - "Monitoring-only boundary remains unchanged"
+  - id: KOS-T063
+    title: "Post-release code audit and bug fixes"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "normal"
+    outputs:
+      - "README.md"
+      - "apps/workbench/"
+      - "tests/"
+      - "knowledgeos/"
+    acceptance:
+      - "release audit reproduces any fixed bug before repair"
+      - "bug fixes are minimal and covered by regression tests"
+      - "published Workbench release docs and source remain consistent"
