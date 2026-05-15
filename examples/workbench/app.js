@@ -58,7 +58,7 @@ let workspaceRegistry = { selected: "fixture", workspaces: [] };
 const onboardingStorageKey = "knowledgeos-onboarding-complete";
 const productInfo = {
   name: "KnowledgeOS Workbench",
-  version: "0.1.0",
+  version: "0.1.1",
   boundary: "Monitoring and viewing only",
   kernel: "bundled",
   bridge: "local 127.0.0.1"

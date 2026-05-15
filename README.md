@@ -9,7 +9,7 @@
 [![CLI](https://img.shields.io/badge/interface-natural%20language%20%2B%20CLI-f97316?style=for-the-badge&labelColor=0b1020)](docs/executable-control-plane.md)
 [![Guardrails](https://img.shields.io/badge/guardrails-route%20%2B%20write%20%2B%20eval-22c55e?style=for-the-badge&labelColor=0b1020)](docs/route-bound-execution-guard.md)
 [![Capabilities](https://img.shields.io/badge/capabilities-MCP%20%2B%20skills%20%2B%20subagents-38bdf8?style=for-the-badge&labelColor=0b1020)](docs/capability-orchestration.md)
-[![Tests](https://img.shields.io/badge/tests-26%20unit%20%2B%2014%20scenarios-10b981?style=for-the-badge&labelColor=0b1020)](examples/scenarios)
+[![Tests](https://img.shields.io/badge/tests-66%20unit%20%2B%2030%20guardrail%20checkpoints-10b981?style=for-the-badge&labelColor=0b1020)](examples/scenarios)
 
 ![KnowledgeOS hero banner](docs/assets/knowledgeos-hero.svg)
 
@@ -30,9 +30,9 @@
 
 KnowledgeOS Workbench is the packaged macOS desktop app for inspecting KnowledgeOS projects.
 
-- **Apple Silicon DMG:** [KnowledgeOS-Workbench-0.1.0-arm64.dmg](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/KnowledgeOS-Workbench-0.1.0-arm64.dmg)
-- **Apple Silicon ZIP:** [KnowledgeOS-Workbench-0.1.0-arm64.zip](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/KnowledgeOS-Workbench-0.1.0-arm64.zip)
-- **Checksums:** [SHA256SUMS.txt](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/SHA256SUMS.txt)
+- **Apple Silicon DMG:** [KnowledgeOS-Workbench-0.1.1-arm64.dmg](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.1/KnowledgeOS-Workbench-0.1.1-arm64.dmg)
+- **Apple Silicon ZIP:** [KnowledgeOS-Workbench-0.1.1-arm64.zip](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.1/KnowledgeOS-Workbench-0.1.1-arm64.zip)
+- **Checksums:** [SHA256SUMS.txt](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.1/SHA256SUMS.txt)
 
 The app bundles the KnowledgeOS kernel and opens a local read-only bridge on `127.0.0.1`. It is an observation layer for routes, receipts, runs, evidence, and knowledge cards; it does not expose a raw shell, model execution, or project mutation endpoint.
 
@@ -254,12 +254,12 @@ make test
 make smoke
 ```
 
-Current checked baseline:
+Recent checked baseline:
 
-- `doctor --summary`: 389 checks passing in the local project.
-- Clean public export: 371 checks passing outside the original working tree.
-- Unit tests: 26 passing.
-- Guardrail scenarios: 14 checkpoints passing.
+- `doctor --summary`: managed repository reports `failed: 0`.
+- Unit tests: 66 passing.
+- Guardrail scenarios: 30 checkpoints passing.
+- Workbench smoke and diagnose checks: passing.
 
 The scenario suite verifies that distracted-agent mistakes are blocked by doctor, route, write, dispatch, and eval gates.
 

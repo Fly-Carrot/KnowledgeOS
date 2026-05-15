@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -231,7 +231,7 @@ async function main() {
   assert(!styles.includes("prefers-color-scheme: dark"), "System theme media query should not survive");
   assert(!styles.includes("grid-template-columns: 220px minmax(0, 1fr) 300px"), "Old three-column dashboard shell still controls layout");
 
-  assert(previewJs.includes("productInfo") && previewJs.includes('"0.1.0"'), "About/version product metadata is missing");
+  assert(previewJs.includes("productInfo") && previewJs.includes('"0.1.1"'), "About/version product metadata is missing");
   assert(previewJs.includes("Monitoring and viewing only"), "Monitoring-only boundary is missing");
   assert(previewJs.includes("workbenchApi"), "Electron API bridge detection is missing");
   assert(previewJs.includes("setupWorkspaceSwitcher"), "Workspace switcher setup is missing");
@@ -271,7 +271,9 @@ async function main() {
   assert(rootReadme.includes('subgraph Workbench["KnowledgeOS Workbench"]'), "Root README should describe Workbench as current, not future");
   assert(rootReadme.includes("KnowledgeOS Workbench is the current visual desktop"), "Root README project status should mention the current Workbench app");
   assert(rootReadme.includes("Download Workbench"), "Root README should make the packaged app download visible");
-  assert(rootReadme.includes("KnowledgeOS-Workbench-0.1.0-arm64.dmg"), "Root README should link the v0.1.0 DMG release asset");
+  assert(rootReadme.includes("KnowledgeOS-Workbench-0.1.1-arm64.dmg"), "Root README should link the v0.1.1 DMG release asset");
+  assert(rootReadme.includes("66 passing") && rootReadme.includes("30 checkpoints passing"), "Root README should reflect the current release validation scale");
+  assert(!rootReadme.includes("26 passing") && !rootReadme.includes("14 checkpoints passing"), "Root README still contains stale validation counts");
   assert(!rootReadme.includes("Future workbench apps are expected"), "Root README still contains old future Workbench wording");
   assert(appReadme.includes("Use the packaged macOS app from the GitHub Release"), "App README should prioritize release download over local builds");
   assert(appReadme.includes("Maintainer Commands"), "App README should keep build commands in a maintainer-only section");
@@ -286,6 +288,18 @@ async function main() {
   assert(packagingDoc.includes("SHA256SUMS.txt"), "Packaging doc should document checksum release assets");
 
   assert(fs.existsSync(knowledgeosBin), `KnowledgeOS binary missing: ${knowledgeosBin}`);
+  const remotePreview = spawnSync(
+    knowledgeosBin,
+    ["workbench-preview", "--project-root", projectRoot, "--host", "0.0.0.0", "--port", "0"],
+    {
+      cwd: projectRoot,
+      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      encoding: "utf8"
+    }
+  );
+  assert(remotePreview.status === 2, "workbench-preview must reject non-loopback hosts");
+  assert(remotePreview.stderr.includes("only supports loopback hosts"), "workbench-preview host rejection message is missing");
+
   const child = spawn(knowledgeosBin, ["workbench-preview", "--project-root", projectRoot, "--host", "127.0.0.1", "--port", "0"], {
     cwd: projectRoot,
     env: { ...process.env, PYTHONUNBUFFERED: "1" },

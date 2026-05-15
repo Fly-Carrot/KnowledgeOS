@@ -4,10 +4,10 @@ KnowledgeOS Workbench is distributed as a macOS Release asset, not as a binary c
 
 ## Public Release Assets
 
-The v0.1.0 Release publishes:
+The v0.1.1 Release publishes:
 
-- `KnowledgeOS-Workbench-0.1.0-arm64.dmg`
-- `KnowledgeOS-Workbench-0.1.0-arm64.zip`
+- `KnowledgeOS-Workbench-0.1.1-arm64.dmg`
+- `KnowledgeOS-Workbench-0.1.1-arm64.zip`
 - `SHA256SUMS.txt`
 
 Normal users should download the `.dmg` from the GitHub Release. Maintainers can use the `.zip` for quick app extraction or checksum verification.
@@ -56,7 +56,7 @@ Workbench is a monitoring app. It does not replace the KnowledgeOS kernel.
 - The UI does not expose Raw Shell, model execution, prompt launch, or project mutation endpoints.
 - Project writes still require the KnowledgeOS route, write guard, eval, verify, complete, and sync lifecycle outside the Workbench UI.
 
-## Ad-Hoc Signed v0.1.0
+## Ad-Hoc Signed v0.1.1
 
 The current public build is ad-hoc signed for local Apple Silicon use and not notarized with an Apple Developer ID. On macOS, open the app from Finder with **Right click -> Open** the first time.
 

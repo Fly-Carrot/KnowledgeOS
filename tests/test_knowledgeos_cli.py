@@ -401,6 +401,21 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertEqual(payload["system_black_box"]["doctor"]["status"], "not_run")
             self.assertNotIn(str(project), result.stdout)
 
+    def test_workbench_preview_rejects_non_loopback_host(self):
+        result = self.run_cli(
+            "workbench-preview",
+            "--project-root",
+            str(ROOT),
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "0",
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("only supports loopback hosts", result.stderr)
+        self.assertNotIn("KnowledgeOS Workbench preview:", result.stdout)
+
     def test_ask_sandbox_is_read_only_and_redacts_project_paths(self):
         result = self.run_cli(
             "ask-sandbox",

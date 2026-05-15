@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import ipaddress
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -4952,8 +4953,25 @@ def cmd_workbench_lifecycle(args: argparse.Namespace) -> int:
     return 0 if result.get("status") in {"ready", "no_task", "unmanaged"} else 1
 
 
+def is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 def cmd_workbench_preview(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
+    if not is_loopback_host(args.host):
+        print(
+            "workbench-preview only supports loopback hosts (127.0.0.1, ::1, or localhost); "
+            f"refusing --host {args.host!r}",
+            file=sys.stderr,
+        )
+        return 2
     static_root = workbench_static_root()
     if not static_root.is_dir():
         print(f"missing Workbench preview files: {static_root}", file=sys.stderr)

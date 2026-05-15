@@ -6,9 +6,9 @@ KnowledgeOS Workbench is a local monitoring surface for observable KnowledgeOS p
 
 Use the packaged macOS app from the GitHub Release:
 
-- [KnowledgeOS-Workbench-0.1.0-arm64.dmg](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/KnowledgeOS-Workbench-0.1.0-arm64.dmg)
-- [KnowledgeOS-Workbench-0.1.0-arm64.zip](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/KnowledgeOS-Workbench-0.1.0-arm64.zip)
-- [SHA256SUMS.txt](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/SHA256SUMS.txt)
+- [KnowledgeOS-Workbench-0.1.1-arm64.dmg](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.1/KnowledgeOS-Workbench-0.1.1-arm64.dmg)
+- [KnowledgeOS-Workbench-0.1.1-arm64.zip](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.1/KnowledgeOS-Workbench-0.1.1-arm64.zip)
+- [SHA256SUMS.txt](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.1/SHA256SUMS.txt)
 
 This first build is ad-hoc signed for Apple Silicon and not notarized. On macOS, open it from Finder with **Right click -> Open** the first time if Gatekeeper warns about an unidentified developer.
 
@@ -85,4 +85,4 @@ Common failure modes:
 - `KnowledgeOS binary missing`: set `KNOWLEDGEOS_BIN` to the local `bin/knowledgeos`.
 - `Bridge exited before URL`: run `./bin/knowledgeos doctor --project-root <root> --summary` and fix the reported OS state first.
 - `lifecycle schema mismatch`: the app and CLI are out of sync; rerun tests before launching the app.
-- macOS says the app is from an unidentified developer: this is expected for the ad-hoc v0.1.0 build; use **Right click -> Open**.
+- macOS says the app is from an unidentified developer: this is expected for the ad-hoc v0.1.1 build; use **Right click -> Open**.
