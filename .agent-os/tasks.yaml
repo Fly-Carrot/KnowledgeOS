@@ -1149,3 +1149,21 @@ tasks:
       - "Root and app documentation describe Workbench as a current monitoring app not a future app"
       - "Monitoring-only boundary remains intact with no console model or project mutation endpoint"
       - "Smoke diagnose package distribution tests and guardrails pass"
+  - id: KOS-T062
+    title: "Publish Workbench macOS app release and simplify public packaging docs"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "github_release_distribution_boundary"
+    outputs:
+      - "README.md"
+      - "apps/workbench/README.md"
+      - "docs/workbench-packaging.md"
+      - "apps/workbench/scripts/smoke.mjs"
+      - "tests/test_workbench_static.py"
+    acceptance:
+      - "GitHub Release v0.1.0 exists with downloadable Workbench dmg zip and checksum assets"
+      - "Root README points users to the release download instead of asking them to build locally"
+      - "Workbench README presents download first and keeps build commands as maintainer-only notes"
+      - "Generated release artifacts remain outside git-tracked source"
+      - "Monitoring-only boundary remains unchanged"
