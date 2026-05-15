@@ -1,8 +1,20 @@
-# Workbench macOS Packaging
+# Workbench Release Packaging
 
-KnowledgeOS Workbench can be packaged as a local macOS desktop app. The packaged app bundles the KnowledgeOS kernel and opens the same read-only Workbench bridge that development mode uses.
+KnowledgeOS Workbench is distributed as a macOS Release asset, not as a binary committed to the source tree.
 
-## Build Commands
+## Public Release Assets
+
+The v0.1.0 Release publishes:
+
+- `KnowledgeOS-Workbench-0.1.0-arm64.dmg`
+- `KnowledgeOS-Workbench-0.1.0-arm64.zip`
+- `SHA256SUMS.txt`
+
+Normal users should download the `.dmg` from the GitHub Release. Maintainers can use the `.zip` for quick app extraction or checksum verification.
+
+## Maintainer Build Commands
+
+Local packaging remains a maintainer operation:
 
 ```bash
 pnpm --dir apps/workbench install
@@ -17,7 +29,7 @@ pnpm --dir apps/workbench dist:mac
 - `KnowledgeOS Workbench-<version>-arm64.dmg`
 - `KnowledgeOS Workbench-<version>-arm64.zip`
 
-The `dist/` folder is ignored by `apps/workbench/.gitignore`. Keep generated desktop binaries out of normal source commits.
+The `dist/` folder is ignored by `apps/workbench/.gitignore`. Do not commit generated binaries.
 
 ## Bundled Runtime
 
@@ -32,7 +44,7 @@ Packaged builds include the minimum runtime surface needed by the Workbench:
 
 Development mode resolves the kernel from the repository. Packaged mode resolves it from Electron `resources/knowledgeos/`.
 
-`KNOWLEDGEOS_BIN` and `KNOWLEDGEOS_PROJECT_ROOT` remain available for local debugging, but normal packaged builds should use the bundled binary by default.
+`KNOWLEDGEOS_BIN` and `KNOWLEDGEOS_PROJECT_ROOT` remain available for local debugging, but normal packaged builds use the bundled binary by default.
 
 ## Security Boundary
 
@@ -44,9 +56,9 @@ Workbench is a monitoring app. It does not replace the KnowledgeOS kernel.
 - The UI does not expose Raw Shell, model execution, prompt launch, or project mutation endpoints.
 - Project writes still require the KnowledgeOS route, write guard, eval, verify, complete, and sync lifecycle outside the Workbench UI.
 
-## Ad-Hoc Local Builds
+## Ad-Hoc Signed v0.1.0
 
-The current package is ad-hoc signed for local Apple Silicon testing and not notarized. For local testing, open the app from Finder with **Right click -> Open** the first time.
+The current public build is ad-hoc signed for local Apple Silicon use and not notarized with an Apple Developer ID. On macOS, open the app from Finder with **Right click -> Open** the first time.
 
 If macOS quarantine blocks a build that you created locally and trust, remove quarantine from the generated `.app`:
 
@@ -54,16 +66,17 @@ If macOS quarantine blocks a build that you created locally and trust, remove qu
 xattr -dr com.apple.quarantine "apps/workbench/dist/mac-arm64/KnowledgeOS Workbench.app"
 ```
 
-Developer ID signing, notarization, auto-update, and GitHub Release asset upload are release engineering tasks for a later phase.
+Developer ID signing, notarization, and auto-update are future release engineering tasks.
 
-## GitHub Publishing
+## Release Boundary
 
-Commit source, tests, packaging config, and documentation to the `KnowledgeOS` repository. Do not commit generated binaries.
+The repository tracks Workbench source, packaging configuration, tests, and documentation. Release binaries belong in GitHub Releases.
 
 For a public release:
 
 1. Run the test ladder.
 2. Build with `pnpm --dir apps/workbench dist:mac`.
-3. Create a GitHub Release.
-4. Upload the generated `.dmg` and `.zip` as release assets.
-5. Document that the build is ad-hoc signed unless a notarized build is produced.
+3. Copy artifacts to release-safe names without spaces.
+4. Generate `SHA256SUMS.txt`.
+5. Create or update the GitHub Release.
+6. Upload the `.dmg`, `.zip`, and checksum file as Release assets.

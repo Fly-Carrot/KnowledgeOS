@@ -270,14 +270,20 @@ async function main() {
   assert(previewJs.includes('event.key !== "Escape"'), "Escape-to-close behavior is missing");
   assert(rootReadme.includes('subgraph Workbench["KnowledgeOS Workbench"]'), "Root README should describe Workbench as current, not future");
   assert(rootReadme.includes("KnowledgeOS Workbench is the current visual desktop"), "Root README project status should mention the current Workbench app");
+  assert(rootReadme.includes("Download Workbench"), "Root README should make the packaged app download visible");
+  assert(rootReadme.includes("KnowledgeOS-Workbench-0.1.0-arm64.dmg"), "Root README should link the v0.1.0 DMG release asset");
   assert(!rootReadme.includes("Future workbench apps are expected"), "Root README still contains old future Workbench wording");
-  assert(appReadme.includes("pnpm --dir apps/workbench dist:mac"), "App README should document the macOS distribution command");
+  assert(appReadme.includes("Use the packaged macOS app from the GitHub Release"), "App README should prioritize release download over local builds");
+  assert(appReadme.includes("Maintainer Commands"), "App README should keep build commands in a maintainer-only section");
+  assert(appReadme.includes("pnpm --dir apps/workbench dist:mac"), "App README should document the macOS distribution command for maintainers");
   assert(appReadme.includes("Right click -> Open"), "App README should document ad-hoc local macOS opening");
-  assert(appReadme.includes("does not track generated desktop binaries"), "App README should document the binary publishing boundary");
-  assert(packagingDoc.includes("Workbench macOS Packaging"), "Packaging doc is missing its title");
+  assert(appReadme.includes("does not track generated desktop binaries"), "App README should document the Release asset boundary");
+  assert(packagingDoc.includes("Workbench Release Packaging"), "Packaging doc is missing its release-focused title");
+  assert(packagingDoc.includes("Public Release Assets"), "Packaging doc should describe published release assets");
   assert(packagingDoc.includes("resources/knowledgeos"), "Packaging doc should document bundled kernel resource resolution");
   assert(packagingDoc.includes("bridge binds only to `127.0.0.1`"), "Packaging doc should document local bridge binding");
   assert(packagingDoc.includes("Do not commit generated binaries"), "Packaging doc should document release artifact boundaries");
+  assert(packagingDoc.includes("SHA256SUMS.txt"), "Packaging doc should document checksum release assets");
 
   assert(fs.existsSync(knowledgeosBin), `KnowledgeOS binary missing: ${knowledgeosBin}`);
   const child = spawn(knowledgeosBin, ["workbench-preview", "--project-root", projectRoot, "--host", "127.0.0.1", "--port", "0"], {

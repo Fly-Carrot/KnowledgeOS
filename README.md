@@ -26,6 +26,20 @@
 
 ---
 
+## Download Workbench
+
+KnowledgeOS Workbench is the packaged macOS desktop app for inspecting KnowledgeOS projects.
+
+- **Apple Silicon DMG:** [KnowledgeOS-Workbench-0.1.0-arm64.dmg](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/KnowledgeOS-Workbench-0.1.0-arm64.dmg)
+- **Apple Silicon ZIP:** [KnowledgeOS-Workbench-0.1.0-arm64.zip](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/KnowledgeOS-Workbench-0.1.0-arm64.zip)
+- **Checksums:** [SHA256SUMS.txt](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/SHA256SUMS.txt)
+
+The app bundles the KnowledgeOS kernel and opens a local read-only bridge on `127.0.0.1`. It is an observation layer for routes, receipts, runs, evidence, and knowledge cards; it does not expose a raw shell, model execution, or project mutation endpoint.
+
+This first public build is ad-hoc signed and not notarized. On macOS, use **Right click -> Open** the first time if Gatekeeper warns about an unidentified developer.
+
+---
+
 ## The Short Version
 
 KnowledgeOS turns an ordinary project folder into an **observable agent workspace**.
@@ -270,4 +284,4 @@ The scenario suite verifies that distracted-agent mistakes are blocked by doctor
 
 KnowledgeOS is a working prototype and design manifesto for turning AI-agent workspaces into governed, inspectable systems. The current focus is the **knowledge + development AgentOS** form: a system for research writing, literature synthesis, grant drafting, codebase maintenance, reproducible analysis, project migration, and long-horizon agentic development.
 
-KnowledgeOS Workbench is the current visual desktop for this OS layer: not the source of truth, but the place where humans inspect routes, receipts, artifacts, memory, graph state, and agent decisions. It ships as a local macOS desktop app that bundles the KnowledgeOS kernel and opens a read-only bridge on `127.0.0.1`.
+KnowledgeOS Workbench is the current visual desktop for this OS layer: not the source of truth, but the place where humans inspect routes, receipts, artifacts, memory, graph state, and agent decisions. Download the packaged macOS app from the GitHub Release; generated desktop binaries live in Releases, not in the source tree.

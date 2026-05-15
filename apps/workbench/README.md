@@ -2,42 +2,17 @@
 
 KnowledgeOS Workbench is a local monitoring surface for observable KnowledgeOS projects.
 
-This app bundles the KnowledgeOS kernel for packaged desktop builds, but it still does not replace KnowledgeOS routing rules. It starts the read-only `knowledgeos workbench-preview` bridge on `127.0.0.1` with an ephemeral port, then adds a minimal frameless Electron shell for local workspace switching and focused inspection.
+## Download
 
-## Commands
+Use the packaged macOS app from the GitHub Release:
 
-```bash
-pnpm --dir apps/workbench dev
-pnpm --dir apps/workbench package
-pnpm --dir apps/workbench dist:mac
-pnpm --dir apps/workbench smoke
-pnpm --dir apps/workbench diagnose
-```
+- [KnowledgeOS-Workbench-0.1.0-arm64.dmg](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/KnowledgeOS-Workbench-0.1.0-arm64.dmg)
+- [KnowledgeOS-Workbench-0.1.0-arm64.zip](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/KnowledgeOS-Workbench-0.1.0-arm64.zip)
+- [SHA256SUMS.txt](https://github.com/Fly-Carrot/KnowledgeOS/releases/download/v0.1.0/SHA256SUMS.txt)
 
-- `dev` opens the desktop app and starts a local read-only bridge.
-- `package` creates a packaged app directory with bundled KnowledgeOS resources.
-- `dist:mac` creates a local ad-hoc signed macOS `arm64` `.app`, `.dmg`, and `.zip`.
-- `smoke` runs fast structural checks and verifies the monitoring-only boundary.
-- `diagnose` starts the bridge, reads state and lifecycle JSON, then prints a concise health summary.
+This first build is ad-hoc signed for Apple Silicon and not notarized. On macOS, open it from Finder with **Right click -> Open** the first time if Gatekeeper warns about an unidentified developer.
 
-## Build A macOS App
-
-```bash
-pnpm --dir apps/workbench install
-pnpm --dir apps/workbench smoke
-pnpm --dir apps/workbench diagnose
-pnpm --dir apps/workbench dist:mac
-```
-
-The packaged output is written to `apps/workbench/dist/`. The source tree ignores that folder so local `.app`, `.dmg`, and `.zip` artifacts do not get committed accidentally.
-
-The current build is ad-hoc signed for local Apple Silicon testing but not notarized with an Apple Developer ID. On macOS, open it from Finder with **Right click -> Open** the first time, or remove quarantine locally if you trust the build you just produced:
-
-```bash
-xattr -dr com.apple.quarantine "apps/workbench/dist/mac-arm64/KnowledgeOS Workbench.app"
-```
-
-Developer ID signing and notarization are intentionally left for a later release step.
+Generated desktop binaries are published as GitHub Release assets. The repository does not track generated desktop binaries under `apps/workbench/dist/`.
 
 ## Product Boundary
 
@@ -55,20 +30,9 @@ The UI exposes the operating chain as read-only state:
 
 Project writes still happen outside the app through KnowledgeOS route, write guard, eval, and receipt commands.
 
-## Workspace Switcher
-
-The Workspace Switcher is local to the Electron app. It stores project roots under Electron's app data directory and inspects each selected root with KnowledgeOS doctor.
-
-It does not write the registry into project `.agent-os/`. Broad container folders such as `Desktop`, `Downloads`, `Documents`, `Library`, and `HOME` are treated as unsafe initialization targets.
-
-## Environment Overrides
-
-- `KNOWLEDGEOS_PROJECT_ROOT`: project root shown by the Workbench. Defaults to the KnowledgeOS repo root.
-- `KNOWLEDGEOS_BIN`: KnowledgeOS CLI path. Development defaults to the repo `bin/knowledgeos`; packaged builds default to the bundled `resources/knowledgeos/bin/knowledgeos`.
-
 ## Packaged Kernel
 
-Packaged Workbench builds include:
+Packaged Workbench builds include the KnowledgeOS runtime:
 
 - `bin/knowledgeos`
 - `knowledgeos/`
@@ -77,19 +41,40 @@ Packaged Workbench builds include:
 - `capability-layer/`
 - `templates/`
 
-This makes the desktop app self-contained for the KnowledgeOS runtime. Project workspaces are still selected explicitly through the Workspace Switcher, and writes still require the OS route, write guard, eval, and receipt flow.
+The app starts the read-only `knowledgeos workbench-preview` bridge on `127.0.0.1` with an ephemeral local port. The bridge process is terminated when the desktop app exits.
 
-The bridge process is terminated when the desktop app exits.
+## Workspace Switcher
 
-## GitHub Release Boundary
+The Workspace Switcher is local to the Electron app. It stores project roots under Electron's app data directory and inspects each selected root with KnowledgeOS doctor.
 
-The repository tracks Workbench source, packaging configuration, tests, and documentation. It does not track generated desktop binaries under `apps/workbench/dist/`.
+It does not write the registry into project `.agent-os/`. Broad container folders such as `Desktop`, `Downloads`, `Documents`, `Library`, and `HOME` are treated as unsafe initialization targets.
 
-For public releases, attach the generated `.dmg` or `.zip` as GitHub Release assets instead of committing them into the repository.
+## Maintainer Commands
+
+These commands are for maintainers who need to rebuild the app locally. Normal users should download the Release asset instead.
+
+```bash
+pnpm --dir apps/workbench dev
+pnpm --dir apps/workbench package
+pnpm --dir apps/workbench dist:mac
+pnpm --dir apps/workbench smoke
+pnpm --dir apps/workbench diagnose
+```
+
+- `dev` opens the desktop app and starts a local read-only bridge.
+- `package` creates a packaged app directory with bundled KnowledgeOS resources.
+- `dist:mac` creates a local ad-hoc signed macOS `arm64` `.app`, `.dmg`, and `.zip`.
+- `smoke` runs fast structural checks and verifies the monitoring-only boundary.
+- `diagnose` starts the bridge, reads state and lifecycle JSON, then prints a concise health summary.
+
+## Environment Overrides
+
+- `KNOWLEDGEOS_PROJECT_ROOT`: project root shown by the Workbench. Defaults to the KnowledgeOS repo root in development.
+- `KNOWLEDGEOS_BIN`: KnowledgeOS CLI path. Development defaults to the repo `bin/knowledgeos`; packaged builds default to the bundled `resources/knowledgeos/bin/knowledgeos`.
 
 ## Debugging
 
-If the app opens but looks stale, run:
+If the app opens but looks stale, maintainers can run:
 
 ```bash
 pnpm --dir apps/workbench diagnose
@@ -100,4 +85,4 @@ Common failure modes:
 - `KnowledgeOS binary missing`: set `KNOWLEDGEOS_BIN` to the local `bin/knowledgeos`.
 - `Bridge exited before URL`: run `./bin/knowledgeos doctor --project-root <root> --summary` and fix the reported OS state first.
 - `lifecycle schema mismatch`: the app and CLI are out of sync; rerun tests before launching the app.
-- macOS says the app is from an unidentified developer: this is expected for the ad-hoc local build; use **Right click -> Open** for local testing.
+- macOS says the app is from an unidentified developer: this is expected for the ad-hoc v0.1.0 build; use **Right click -> Open**.
