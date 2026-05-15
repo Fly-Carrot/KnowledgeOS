@@ -1182,3 +1182,16 @@ tasks:
       - "release audit reproduces any fixed bug before repair"
       - "bug fixes are minimal and covered by regression tests"
       - "published Workbench release docs and source remain consistent"
+  - id: KOS-T064
+    title: "Fix harness audit lifecycle drift detection"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "guardrail_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+    acceptance:
+      - "harness-audit detects dispatch-task entries that lack --run-id as lifecycle drift"
+      - "harness-audit apply upgrades all stale workflow profiles and doctor passes"
+      - "Project5.5 dry-run audit reports every stale router profile consistently"

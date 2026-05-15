@@ -3826,7 +3826,36 @@ def fill_missing_control_plane_files(
 
 
 def route_order_needs_lifecycle_upgrade(route_order: list[str]) -> bool:
-    return any(not any(marker in item for item in route_order) for marker in LIFECYCLE_COMMAND_MARKERS)
+    run_index = next((idx for idx, item in enumerate(route_order) if "run-task" in item), -1)
+    dispatch_event_index = next((idx for idx, item in enumerate(route_order) if "dispatch-task" in item and "--run-id" in item), -1)
+    context_index = next((idx for idx, item in enumerate(route_order) if "context-pack" in item), -1)
+    plan_index = next((idx for idx, item in enumerate(route_order) if "plan-task" in item), -1)
+    phase_index = next((idx for idx, item in enumerate(route_order) if "phase-task" in item), -1)
+    eval_index = next((idx for idx, item in enumerate(route_order) if "eval-task" in item), -1)
+    verify_context_index = next((idx for idx, item in enumerate(route_order) if "verify-context" in item), -1)
+    verify_index = next((idx for idx, item in enumerate(route_order) if "verify-lifecycle" in item), -1)
+    complete_index = next((idx for idx, item in enumerate(route_order) if "complete-task" in item), -1)
+
+    required_indices = [
+        run_index,
+        dispatch_event_index,
+        context_index,
+        plan_index,
+        phase_index,
+        eval_index,
+        verify_context_index,
+        verify_index,
+        complete_index,
+    ]
+    if any(index < 0 for index in required_indices):
+        return True
+    if not run_index < dispatch_event_index < context_index < plan_index:
+        return True
+    return not (
+        eval_index < complete_index
+        and verify_context_index < complete_index
+        and verify_index < complete_index
+    )
 
 
 def normalize_route_order(route_order: list[str]) -> list[str]:

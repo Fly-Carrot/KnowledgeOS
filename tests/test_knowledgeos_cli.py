@@ -246,6 +246,67 @@ class KnowledgeOSCliTests(unittest.TestCase):
             doctor = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
             self.assertIn("status: ok", doctor.stdout)
 
+    def test_harness_audit_detects_dispatch_without_run_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "LegacyDispatchProject"
+            project.mkdir()
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "LegacyDispatch",
+                "--global-root",
+                str(ROOT / "global-agent-fabric"),
+                "--capability-root",
+                str(ROOT / "capability-layer"),
+            )
+
+            router = project / ".agent-os" / "workflows" / "router.yaml"
+            modern_dispatch = "dispatch-task --project-root . --task-id <task-id> --run-id <run-id>"
+            legacy_dispatch = "dispatch-task --project-root . --task-id <task-id>"
+            router_text = router.read_text(encoding="utf-8")
+            self.assertIn(modern_dispatch, router_text)
+            router.write_text(router_text.replace(modern_dispatch, legacy_dispatch), encoding="utf-8")
+
+            doctor = self.run_cli("doctor", "--project-root", str(project), "--project-only", "--summary", check=False)
+            self.assertNotEqual(doctor.returncode, 0)
+            self.assertIn("workflow_router_lifecycle", doctor.stdout)
+
+            dry_run = self.run_cli(
+                "harness-audit",
+                "--root",
+                str(ROOT),
+                "--target-project",
+                str(project),
+                "--json",
+                check=False,
+            )
+            self.assertEqual(dry_run.returncode, 1)
+            dry_payload = json.loads(dry_run.stdout)
+            project_payload = dry_payload["projects"][0]
+            self.assertIn("workflow_router_lifecycle_drift", project_payload["issues"])
+            upgrade = next(action for action in project_payload["actions"] if action["action"] == "upgrade_workflow_router")
+            self.assertIn("report_task", upgrade["profiles"])
+
+            applied = self.run_cli(
+                "harness-audit",
+                "--root",
+                str(ROOT),
+                "--target-project",
+                str(project),
+                "--apply",
+                "--json",
+            )
+            self.assertEqual(json.loads(applied.stdout)["status"], "ok")
+            upgraded_router = router.read_text(encoding="utf-8")
+            self.assertIn(modern_dispatch, upgraded_router)
+            self.assertNotIn(f"      - {legacy_dispatch}\n", upgraded_router)
+            doctor_after = self.run_cli("doctor", "--project-root", str(project), "--project-only", "--summary")
+            self.assertIn("status: ok", doctor_after.stdout)
+
     def test_doctor_keeps_pre_gate_completed_runs_legacy_compatible(self):
         with tempfile.TemporaryDirectory() as tmp:
             runtime = Path(tmp) / "KnowledgeOSRuntime"
