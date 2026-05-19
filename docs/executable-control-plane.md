@@ -64,7 +64,7 @@ Checks include:
 - write-policy coverage;
 - capability guardrails;
 - workflow route coverage;
-- lifecycle consistency for `run-task -> context-pack -> plan-task -> phase-task -> eval-task -> verify-context -> verify-lifecycle -> complete-task`.
+- lifecycle consistency for `run-task -> context-pack -> plan-task -> phase-task -> eval-task -> verify-context -> verify-lifecycle -> verify-effects -> complete-task`.
 
 ### `init-project`
 
@@ -329,6 +329,32 @@ The command writes `.agent-os/runs/<RUN_ID>/capability-events.ndjson` and matchi
 CAPABILITY_OK kind=<kind> id=<capability-id> purpose=<short purpose>
 ```
 
+JSON output also includes a stable `capability_event_id`. Use that id when an effect assertion proves the real side effect produced by the capability. If `artifact-assert` is called with `--capability-event-id`, the id must already exist in the run's `capability-events.ndjson`; bogus links are rejected.
+
+### `artifact-assert`
+
+Verify a real artifact side effect before recording `EFFECT_OK`.
+
+```bash
+./bin/knowledgeos artifact-assert \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --kind file_contains \
+  --path docs/report.md \
+  --expect "verified result"
+```
+
+Supported assertion kinds are `file_exists`, `file_nonempty`, `file_contains`, `file_sha256`, `file_changed`, `json_key_equals`, and `html_self_contained`.
+
+Successful assertions write `.agent-os/runs/<RUN_ID>/effect-assertions.ndjson` and matching command evidence. Plain-text output begins with:
+
+```text
+EFFECT_OK kind=<kind> target=<path> evidence=<short evidence>
+```
+
+Failed assertions return non-zero and do not write a passing effect record. Assertions that claim a missing capability event id also fail.
+
 ### Dispatch Evidence
 
 `dispatch-task` can be run before a run exists to inspect the capability plan. After `run-task`, run it again with `--run-id` to bind that dispatch decision to the run ledger:
@@ -357,9 +383,30 @@ Missing phases, invalid phases, and skipped phases without reasons fail with exi
 
 It also requires run-bound `dispatch-task --run-id` evidence. If the dispatch plan marks a capability stage as required, the run must either record a matching `capability-event` or explain the skipped stage in the dispatch phase public note/evidence.
 
+### `verify-effects`
+
+Verify that declared outputs or other policy-selected artifacts have real effect assertions.
+
+```bash
+./bin/knowledgeos verify-effects \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-...
+```
+
+The project policy lives in `.agent-os/effect-policy.yaml`. `strictness: warn` records warnings without blocking completion. `strictness: enforce` blocks completion when required effect evidence is missing, forged, or linked to a nonexistent capability event. `strictness: off` requires a `downgrade_reason`.
+
+Plain output includes a visible marker:
+
+```text
+EFFECT_VERIFY_OK status=<passed|warning|failed|disabled> strictness=<level> assertions=<n> warnings=<n> errors=<n>
+```
+
+JSON output includes `effect_verify_marker: EFFECT_VERIFY_OK` and the full `marker` string. Agents must relay this marker before claiming effect verification success.
+
 ### `complete-task`
 
-Close a task only after `eval-task` passed, declared outputs exist, context verification passes, lifecycle verification passes, and required postflight succeeds or records an explicit pending reason.
+Close a task only after `eval-task` passed, declared outputs exist, context verification passes, lifecycle verification passes, effect verification passes or explicitly downgrades, and required postflight succeeds or records an explicit pending reason.
 
 ```bash
 ./bin/knowledgeos complete-task \
@@ -371,7 +418,52 @@ Close a task only after `eval-task` passed, declared outputs exist, context veri
 
 Manual `Status: passed` text is not enough unless an explicit override is used.
 
+Before postflight, `complete-task` runs `verify-effects`. It blocks on failed effect verification and records effect status, the `EFFECT_VERIFY_OK` marker, warnings, or explicit strictness downgrades in the receipt.
+
 If `.agent-os/fabric-link.yaml` sets `postflight_required: true`, `complete-task` runs the configured shared-fabric `after-task.sh` and only reports `sync_status: SYNC_OK` when the hook emits `[SYNC_OK]`. Use `--allow-pending-postflight "<reason>"` only as an explicit, receipt-recorded escape hatch.
+
+### `render-html`
+
+Render canonical Markdown evidence into static, composable HTML sidecars for human review.
+
+```bash
+./bin/knowledgeos render-html \
+  --project-root /path/to/project \
+  --run-id RUN-... \
+  --kind receipt
+
+./bin/knowledgeos render-html \
+  --project-root /path/to/project \
+  --run-id RUN-... \
+  --kind handoff
+
+./bin/knowledgeos render-html \
+  --project-root /path/to/project \
+  --input reports/drafts/x.md \
+  --kind rich-report \
+  --output reports/drafts/x.html
+```
+
+HTML is presentation only. Markdown, YAML, and NDJSON remain the source of truth. Generated pages include source path, source SHA-256, generated time, run id when available, and the notice `HTML is presentation, not source of truth.`
+
+Each render writes:
+
+```text
+<output>.html
+<output>.fragment.html
+<output>.manifest.json
+```
+
+Use the fragment and manifest for composition:
+
+```bash
+./bin/knowledgeos render-html \
+  --project-root /path/to/project \
+  --compose reports/drafts/report-manifest.json \
+  --output reports/final/combined.html
+```
+
+Composition embeds static fragments into one self-contained page. It does not use iframes, remote scripts, remote fonts, or CDN assets, and it does not bypass lifecycle, eval, receipt, or sync gates.
 
 ### `reopen-task`
 

@@ -1,10 +1,16 @@
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
+
+import knowledgeos.cli as cli
 
 ROOT = Path(__file__).resolve().parents[1]
 BIN = ROOT / "bin" / "knowledgeos"
@@ -179,7 +185,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
             router_lines = [
                 line
                 for line in router.read_text(encoding="utf-8").splitlines()
-                if not any(marker in line for marker in ["context-pack", "plan-task", "phase-task", "verify-context", "verify-lifecycle"])
+                if not any(marker in line for marker in ["context-pack", "plan-task", "phase-task", "verify-context", "verify-lifecycle", "verify-effects"])
             ]
             router.write_text("\n".join(router_lines) + "\n", encoding="utf-8")
             write_policy = project / ".agent-os" / "write-policy.yaml"
@@ -242,6 +248,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
             upgraded_router = router.read_text(encoding="utf-8")
             self.assertIn("context-pack --project-root .", upgraded_router)
             self.assertIn("verify-lifecycle --project-root .", upgraded_router)
+            self.assertIn("verify-effects --project-root .", upgraded_router)
             self.assertIn("archive/**", write_policy.read_text(encoding="utf-8"))
             doctor = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
             self.assertIn("status: ok", doctor.stdout)
@@ -683,6 +690,21 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("eval_profile: workspace_initialization", run_yaml)
             latest = project / ".agent-os" / "receipts" / "latest.md"
             self.assertIn(run_id, latest.read_text(encoding="utf-8"))
+
+    def test_run_task_allocates_unique_run_id_when_same_second_collides(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            fixed_now = datetime(2026, 5, 19, 12, 0, 0)
+            with patch.object(cli, "datetime") as fake_datetime:
+                fake_datetime.now.return_value = fixed_now
+                first = cli.create_run_envelope(project, "T001", "first run")
+                second = cli.create_run_envelope(project, "T001", "second run")
+            self.assertEqual(first["run_id"], "RUN-20260519-120000-T001")
+            self.assertEqual(second["run_id"], "RUN-20260519-120000-T001-01")
+            self.assertTrue((project / ".agent-os" / "runs" / first["run_id"]).exists())
+            self.assertTrue((project / ".agent-os" / "runs" / second["run_id"]).exists())
 
     def test_check_route_write_enforces_route_allowed_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1228,6 +1250,157 @@ class KnowledgeOSCliTests(unittest.TestCase):
             )
             self.assertEqual(json.loads(verified.stdout)["status"], "passed")
 
+    def test_complete_task_enforces_effect_verification_when_policy_enforces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            created = self.run_cli(
+                "create-task",
+                "--project-root",
+                str(project),
+                "--title",
+                "Effect gated completion",
+                "--type",
+                "report_task",
+                "--output",
+                "docs/report.md",
+                "--acceptance",
+                "report exists",
+                "--json",
+            )
+            task_id = json.loads(created.stdout)["task_id"]
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", task_id, "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.log_required_phases(project, task_id, run_id)
+            self.write_plan_context(project, task_id, run_id)
+            report = project / "docs" / "report.md"
+            report.parent.mkdir()
+            report.write_text("report\n", encoding="utf-8")
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id)
+            (project / ".agent-os" / "effect-policy.yaml").write_text(
+                "effect_policy:\n  strictness: enforce\n  required_for:\n    - declared_outputs\n",
+                encoding="utf-8",
+            )
+
+            blocked = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--summary",
+                "Should fail before effect proof.",
+                "--allow-pending-postflight",
+                "temporary project",
+                check=False,
+            )
+            self.assertEqual(blocked.returncode, 1)
+            self.assertIn("effect verification failed", blocked.stderr)
+
+            self.run_cli("artifact-assert", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id, "--kind", "file_exists", "--path", "docs/report.md")
+            completed = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--summary",
+                "Completed after effect proof.",
+                "--allow-pending-postflight",
+                "temporary project",
+                "--json",
+            )
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["status"], "completed")
+            self.assertEqual(payload["effect_status"], "passed")
+            self.assertIn("Effect Verification Status: passed", (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8"))
+
+    def test_complete_task_records_effect_warnings_and_downgrade_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            created = self.run_cli(
+                "create-task",
+                "--project-root",
+                str(project),
+                "--title",
+                "Warn effect completion",
+                "--type",
+                "report_task",
+                "--output",
+                "docs/report.md",
+                "--acceptance",
+                "report exists",
+                "--json",
+            )
+            task_id = json.loads(created.stdout)["task_id"]
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", task_id, "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.log_required_phases(project, task_id, run_id)
+            self.write_plan_context(project, task_id, run_id)
+            report = project / "docs" / "report.md"
+            report.parent.mkdir()
+            report.write_text("report\n", encoding="utf-8")
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id)
+            (project / ".agent-os" / "effect-policy.yaml").write_text(
+                "effect_policy:\n  strictness: warn\n  required_for:\n    - declared_outputs\n",
+                encoding="utf-8",
+            )
+            completed = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--summary",
+                "Completed with warnings.",
+                "--allow-pending-postflight",
+                "temporary project",
+                "--json",
+            )
+            self.assertEqual(json.loads(completed.stdout)["effect_status"], "warning")
+            receipt = (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("Effect Warnings:", receipt)
+            self.assertIn("missing_declared_output_effect", receipt)
+
+            reopened = self.run_cli("reopen-task", "--project-root", str(project), "--task-id", task_id, "--reason", "test downgrade receipt", "--json")
+            self.assertEqual(json.loads(reopened.stdout)["status"], "ready")
+            second = self.run_cli("run-task", "--project-root", str(project), "--task-id", task_id, "--json")
+            second_run = json.loads(second.stdout)["run_id"]
+            self.log_required_phases(project, task_id, second_run)
+            self.write_plan_context(project, task_id, second_run)
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", task_id, "--run-id", second_run)
+            (project / ".agent-os" / "effect-policy.yaml").write_text(
+                "effect_policy:\n  strictness: off\n  downgrade_reason: migration grace period\n  required_for:\n    - declared_outputs\n",
+                encoding="utf-8",
+            )
+            disabled = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                second_run,
+                "--summary",
+                "Completed with explicit downgrade.",
+                "--allow-pending-postflight",
+                "temporary project",
+                "--json",
+            )
+            self.assertEqual(json.loads(disabled.stdout)["effect_status"], "disabled")
+            downgraded = (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("STRICTNESS_DOWNGRADED", downgraded)
+            self.assertIn("migration grace period", downgraded)
+
     def test_phase_task_requires_skip_reason(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
@@ -1365,6 +1538,111 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn('"event_type": "capability-event"', (run_dir / "command-events.ndjson").read_text(encoding="utf-8"))
             self.assertIn('"kind": "orchestrator"', (run_dir / "capability-events.ndjson").read_text(encoding="utf-8"))
 
+            as_json = self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "shell",
+                "--id",
+                "unit-test-script",
+                "--purpose",
+                "Record a script capability for effect linkage.",
+                "--json",
+            )
+            payload = json.loads(as_json.stdout)
+            self.assertTrue(payload["capability_event_id"].startswith("CAP-"))
+            self.assertEqual(payload["record"]["capability_event_id"], payload["capability_event_id"])
+
+    def test_artifact_assert_can_link_to_capability_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            capability = self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "shell",
+                "--id",
+                "write-report",
+                "--purpose",
+                "Write report artifact.",
+                "--json",
+            )
+            capability_id = json.loads(capability.stdout)["capability_event_id"]
+            report = project / "docs" / "report.md"
+            report.parent.mkdir()
+            report.write_text("linked effect\n", encoding="utf-8")
+
+            bogus = self.run_cli(
+                "artifact-assert",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "file_contains",
+                "--path",
+                "docs/report.md",
+                "--expect",
+                "linked effect",
+                "--capability-event-id",
+                "CAP-DOES-NOT-EXIST",
+                "--json",
+                check=False,
+            )
+            self.assertEqual(bogus.returncode, 1)
+            self.assertIn("capability event not found", bogus.stderr)
+
+            assertion = self.run_cli(
+                "artifact-assert",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "file_contains",
+                "--path",
+                "docs/report.md",
+                "--expect",
+                "linked effect",
+                "--capability-event-id",
+                capability_id,
+                "--json",
+            )
+            payload = json.loads(assertion.stdout)
+            self.assertEqual(payload["record"]["capability_event_id"], capability_id)
+            run_dir = project / ".agent-os" / "runs" / run_id
+            ledger = run_dir / "effect-assertions.ndjson"
+            self.assertIn(capability_id, ledger.read_text(encoding="utf-8"))
+
+            forged = json.loads(ledger.read_text(encoding="utf-8").splitlines()[0])
+            forged["capability_event_id"] = "CAP-DOES-NOT-EXIST"
+            ledger.write_text(json.dumps(forged, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
+            (project / ".agent-os" / "effect-policy.yaml").write_text(
+                "effect_policy:\n  strictness: enforce\n",
+                encoding="utf-8",
+            )
+            verified = self.run_cli("verify-effects", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json", check=False)
+            self.assertEqual(verified.returncode, 2)
+            self.assertIn("effect_missing_capability_event", verified.stdout)
+
     def test_trace_step_records_public_operational_trace_marker(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
@@ -1410,6 +1688,274 @@ class KnowledgeOSCliTests(unittest.TestCase):
             payload = json.loads(as_json.stdout)
             self.assertEqual(payload["trace_marker"], "TRACE_OK")
             self.assertIn("TRACE_OK step=route_guard", payload["marker"])
+
+    def test_artifact_assert_records_effect_marker_for_real_file_checks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            report = project / "docs" / "report.md"
+            report.parent.mkdir()
+            report.write_text("# Report\n\nverified side effect\n", encoding="utf-8")
+
+            result = self.run_cli(
+                "artifact-assert",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "file_contains",
+                "--path",
+                "docs/report.md",
+                "--expect",
+                "verified side effect",
+            )
+            self.assertIn("EFFECT_OK kind=file_contains target=docs/report.md", result.stdout)
+            run_dir = project / ".agent-os" / "runs" / run_id
+            self.assertIn('"event_type": "artifact-assert"', (run_dir / "command-events.ndjson").read_text(encoding="utf-8"))
+            self.assertIn('"kind": "file_contains"', (run_dir / "effect-assertions.ndjson").read_text(encoding="utf-8"))
+
+    def test_artifact_assert_does_not_record_failed_assertion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            report = project / "docs" / "report.md"
+            report.parent.mkdir()
+            report.write_text("# Report\n\nactual content\n", encoding="utf-8")
+
+            result = self.run_cli(
+                "artifact-assert",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "file_contains",
+                "--path",
+                "docs/report.md",
+                "--expect",
+                "missing content",
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("does not contain expected text", result.stderr)
+            run_dir = project / ".agent-os" / "runs" / run_id
+            self.assertFalse((run_dir / "effect-assertions.ndjson").exists())
+
+    def test_artifact_assert_rejects_html_with_remote_assets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            html_path = project / "reports" / "x.html"
+            html_path.parent.mkdir()
+            html_path.write_text("<html><script src=\"https://example.com/app.js\"></script></html>", encoding="utf-8")
+
+            rejected = self.run_cli(
+                "artifact-assert",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "html_self_contained",
+                "--path",
+                "reports/x.html",
+                check=False,
+            )
+            self.assertEqual(rejected.returncode, 1)
+            self.assertIn("remote assets", rejected.stderr)
+
+            html_path.write_text("<html><style>body{font-family:sans-serif}</style><body>local</body></html>", encoding="utf-8")
+            accepted = self.run_cli(
+                "artifact-assert",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "html_self_contained",
+                "--path",
+                "reports/x.html",
+            )
+            self.assertIn("EFFECT_OK kind=html_self_contained", accepted.stdout)
+
+    def test_verify_effects_warns_without_blocking_when_policy_is_warn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            created = self.run_cli(
+                "create-task",
+                "--project-root",
+                str(project),
+                "--title",
+                "Effect output",
+                "--type",
+                "report_task",
+                "--output",
+                "docs/report.md",
+                "--acceptance",
+                "report exists",
+                "--json",
+            )
+            task_id = json.loads(created.stdout)["task_id"]
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", task_id, "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            (project / "docs").mkdir()
+            (project / "docs" / "report.md").write_text("report\n", encoding="utf-8")
+            (project / ".agent-os" / "effect-policy.yaml").write_text(
+                "effect_policy:\n  strictness: warn\n  required_for:\n    - declared_outputs\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_cli(
+                "verify-effects",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "warning")
+            self.assertEqual(payload["effect_verify_marker"], "EFFECT_VERIFY_OK")
+            self.assertIn("EFFECT_VERIFY_OK status=warning", payload["marker"])
+            self.assertTrue(any(item["label"] == "missing_declared_output_effect" for item in payload["warnings"]))
+            plain = self.run_cli(
+                "verify-effects",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+            )
+            self.assertIn("EFFECT_VERIFY_OK status=warning strictness=warn", plain.stdout)
+            self.assertIn("warnings: 2", plain.stdout)
+
+    def test_verify_effects_enforce_blocks_missing_or_forged_effects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            created = self.run_cli(
+                "create-task",
+                "--project-root",
+                str(project),
+                "--title",
+                "Effect output",
+                "--type",
+                "report_task",
+                "--output",
+                "docs/report.md",
+                "--acceptance",
+                "report exists",
+                "--json",
+            )
+            task_id = json.loads(created.stdout)["task_id"]
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", task_id, "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            report = project / "docs" / "report.md"
+            report.parent.mkdir()
+            report.write_text("report\n", encoding="utf-8")
+            (project / ".agent-os" / "effect-policy.yaml").write_text(
+                "effect_policy:\n  strictness: enforce\n  required_for:\n    - declared_outputs\n",
+                encoding="utf-8",
+            )
+
+            missing = self.run_cli(
+                "verify-effects",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(missing.returncode, 2)
+            self.assertIn("missing_declared_output_effect", missing.stdout)
+            missing_payload = json.loads(missing.stdout)
+            self.assertEqual(missing_payload["effect_verify_marker"], "EFFECT_VERIFY_OK")
+            self.assertIn("EFFECT_VERIFY_OK status=failed", missing_payload["marker"])
+
+            self.run_cli(
+                "artifact-assert",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--kind",
+                "file_exists",
+                "--path",
+                "docs/report.md",
+            )
+            passed = self.run_cli(
+                "verify-effects",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--json",
+            )
+            passed_payload = json.loads(passed.stdout)
+            self.assertEqual(passed_payload["status"], "passed")
+            self.assertEqual(passed_payload["effect_verify_marker"], "EFFECT_VERIFY_OK")
+            self.assertIn("assertions=1", passed_payload["marker"])
+
+            run_dir = project / ".agent-os" / "runs" / run_id
+            with (run_dir / "effect-assertions.ndjson").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "assertion_id": "EFFECT-FORGED",
+                            "task_id": task_id,
+                            "run_id": run_id,
+                            "kind": "file_exists",
+                            "path": "docs/report.md",
+                            "status": "passed",
+                        }
+                    )
+                    + "\n"
+                )
+            forged = self.run_cli(
+                "verify-effects",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(forged.returncode, 2)
+            self.assertIn("effect_missing_command_event", forged.stdout)
+            self.assertIn("EFFECT_VERIFY_OK status=failed", json.loads(forged.stdout)["marker"])
 
     def test_lifecycle_requires_dispatch_and_required_capability_trace(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1873,6 +2419,168 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertTrue(Path(payload["path"]).exists())
             self.assertIn("Manual receipt", (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8"))
 
+    def test_render_html_generates_receipt_and_handoff_sidecars_with_source_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli(
+                "run-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--summary",
+                "Start sidecar render test.",
+                "--json",
+            )
+            run_id = json.loads(started.stdout)["run_id"]
+            run_dir = project / ".agent-os" / "runs" / run_id
+
+            receipt = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--run-id",
+                run_id,
+                "--kind",
+                "receipt",
+                "--json",
+            )
+            receipt_payload = json.loads(receipt.stdout)
+            receipt_html = Path(receipt_payload["output"]).read_text(encoding="utf-8")
+            receipt_sha = hashlib.sha256((run_dir / "receipt.md").read_bytes()).hexdigest()
+            self.assertIn(receipt_sha, receipt_html)
+            self.assertIn("HTML is presentation, not source of truth.", receipt_html)
+            self.assertTrue(Path(receipt_payload["fragment"]).exists())
+            receipt_manifest = json.loads(Path(receipt_payload["manifest"]).read_text(encoding="utf-8"))
+            self.assertEqual(receipt_manifest["schema_version"], "knowledgeos.html-report.v1")
+            self.assertEqual(receipt_manifest["source_sha256"], receipt_sha)
+
+            handoff = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--run-id",
+                run_id,
+                "--kind",
+                "handoff",
+                "--json",
+            )
+            handoff_payload = json.loads(handoff.stdout)
+            handoff_html = Path(handoff_payload["output"]).read_text(encoding="utf-8")
+            handoff_sha = hashlib.sha256((run_dir / "handoff.md").read_bytes()).hexdigest()
+            self.assertIn(handoff_sha, handoff_html)
+            self.assertTrue(Path(handoff_payload["manifest"]).exists())
+            self.assertIn("status: ready", (project / ".agent-os" / "tasks.yaml").read_text(encoding="utf-8"))
+
+    def test_render_html_rich_report_is_self_contained_composable_and_stale_detectable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Example",
+                "--global-root",
+                str(ROOT / "global-agent-fabric"),
+                "--capability-root",
+                str(ROOT / "capability-layer"),
+            )
+            drafts = project / "reports" / "drafts"
+            drafts.mkdir(parents=True)
+            report_a = drafts / "alpha.md"
+            report_b = drafts / "beta.md"
+            report_a.write_text(
+                "# Alpha Report\n\n## Findings\n\n- Evidence lane one\n\n```text\nTRACE_OK\n```\n\n<script>alert('x')</script>\n",
+                encoding="utf-8",
+            )
+            report_b.write_text("# Beta Report\n\n## Findings\n\nHuman handoff content.\n", encoding="utf-8")
+
+            rendered_a = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/alpha.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/alpha.html",
+                "--theme",
+                'bad"></style><script>x</script>',
+                "--json",
+            )
+            rendered_b = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/beta.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/beta.html",
+                "--json",
+            )
+            alpha_payload = json.loads(rendered_a.stdout)
+            beta_payload = json.loads(rendered_b.stdout)
+            alpha_html = Path(alpha_payload["output"]).read_text(encoding="utf-8")
+            self.assertIn("<style>", alpha_html)
+            self.assertIn("&lt;script&gt;alert", alpha_html)
+            self.assertNotIn("<script", alpha_html.lower())
+            self.assertNotIn("<link", alpha_html.lower())
+            self.assertNotIn('src="http', alpha_html.lower())
+            self.assertNotIn('href="http', alpha_html.lower())
+
+            alpha_manifest = json.loads(Path(alpha_payload["manifest"]).read_text(encoding="utf-8"))
+            old_sha = alpha_manifest["source_sha256"]
+            report_a.write_text("# Alpha Report\n\nChanged source.\n", encoding="utf-8")
+            new_sha = hashlib.sha256(report_a.read_bytes()).hexdigest()
+            self.assertNotEqual(old_sha, new_sha)
+
+            compose_manifest = drafts / "compose.json"
+            compose_manifest.write_text(
+                json.dumps(
+                    {
+                        "title": "Combined HTML Sidecar",
+                        "reports": [
+                            "reports/drafts/alpha.manifest.json",
+                            "reports/drafts/beta.manifest.json",
+                        ],
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            composed = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--compose",
+                "reports/drafts/compose.json",
+                "--output",
+                "reports/drafts/combined.html",
+                "--json",
+            )
+            composed_payload = json.loads(composed.stdout)
+            combined_html = Path(composed_payload["output"]).read_text(encoding="utf-8")
+            self.assertEqual(combined_html.lower().count("<!doctype html>"), 1)
+            self.assertEqual(combined_html.lower().count("<html"), 1)
+            self.assertIn("Alpha Report", combined_html)
+            self.assertIn("Beta Report", combined_html)
+            heading_ids = re.findall(r'id="([^"]+)"', combined_html)
+            self.assertEqual(len(heading_ids), len(set(heading_ids)))
+            self.assertEqual(json.loads(Path(composed_payload["manifest"]).read_text(encoding="utf-8"))["report_count"], 2)
+
+            doctor = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
+            self.assertIn("status: ok", doctor.stdout)
+            self.assertIn("status: ready", (project / ".agent-os" / "tasks.yaml").read_text(encoding="utf-8"))
+
     def test_doctor_passes_initialized_project(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
@@ -1900,6 +2608,45 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertTrue(any(item["label"] == "phase_keys" for item in payload))
             self.assertTrue(any(item["label"] == "workflow_router" for item in payload))
             self.assertTrue(any(item["label"] == "tool_registry" for item in payload))
+            self.assertTrue(any(item["label"] == "effect_policy" for item in payload))
+
+    def test_effect_policy_defaults_to_observe_and_requires_reason_when_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            runtime = Path(tmp) / "KnowledgeOSRuntime"
+            self.run_cli("init-os", "--root", str(ROOT), "--os-root", str(runtime), "--json")
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Example",
+                "--global-root",
+                str(runtime / "global-agent-fabric"),
+                "--capability-root",
+                str(runtime / "capability-layer"),
+            )
+            policy = project / ".agent-os" / "effect-policy.yaml"
+            self.assertTrue(policy.exists())
+            policy.unlink()
+            missing = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
+            self.assertIn("status: ok", missing.stdout)
+
+            policy.write_text("effect_policy:\n  strictness: off\n  downgrade_reason:\n", encoding="utf-8")
+            disabled = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary", check=False)
+            self.assertEqual(disabled.returncode, 1)
+            self.assertIn("effect_policy", disabled.stdout)
+            self.assertIn("strictness=off requires downgrade_reason", disabled.stdout)
+
+            policy.write_text(
+                "effect_policy:\n  strictness: off\n  downgrade_reason: temporary migration only\n",
+                encoding="utf-8",
+            )
+            reasoned = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
+            self.assertIn("status: ok", reasoned.stdout)
 
     def test_doctor_rejects_router_without_eval_task_lifecycle(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2221,7 +2968,11 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("CHECKPOINT_OK", result.stdout)
             self.assertIn("capability-event", result.stdout)
             self.assertIn("CAPABILITY_OK", result.stdout)
+            self.assertIn("artifact-assert", result.stdout)
+            self.assertIn("EFFECT_OK", result.stdout)
             self.assertIn("verify-lifecycle", result.stdout)
+            self.assertIn("verify-effects", result.stdout)
+            self.assertIn("EFFECT_VERIFY_OK", result.stdout)
             self.assertIn("complete-task", result.stdout)
             self.assertIn("archive-legacy-project", result.stdout)
 
@@ -2237,6 +2988,10 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("CHECKPOINT_OK", result.stdout)
             self.assertIn("capability-event", result.stdout)
             self.assertIn("CAPABILITY_OK", result.stdout)
+            self.assertIn("artifact-assert", result.stdout)
+            self.assertIn("EFFECT_OK", result.stdout)
+            self.assertIn("verify-effects", result.stdout)
+            self.assertIn("EFFECT_VERIFY_OK", result.stdout)
 
     def test_dispatch_task_prioritizes_branch_builder_and_consultation(self):
         result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")

@@ -1,0 +1,101 @@
+{
+  "schema_version": "knowledgeos.html-report.v1",
+  "kind": "rich-report",
+  "title": "KnowledgeOS Capability Effect Verification Summary",
+  "theme": "knowledgeos-default",
+  "run_id": "",
+  "source": "docs/capability-effect-verification-summary.md",
+  "source_sha256": "07b986cbc1f1ee938f958560231f58cb5bdf6a6a840650c7090614b99038e3bf",
+  "output": "docs/capability-effect-verification-summary.html",
+  "fragment": "docs/capability-effect-verification-summary.fragment.html",
+  "sections": [
+    {
+      "id": "rich-report-07b986cbc1f1-knowledgeos-capability-effect-verification-summary",
+      "title": "KnowledgeOS Capability Effect Verification Summary",
+      "level": 1
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-executive-summary",
+      "title": "Executive Summary",
+      "level": 2
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-what-changed",
+      "title": "What Changed",
+      "level": 2
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-new-evidence-lane",
+      "title": "New Evidence Lane",
+      "level": 2
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-main-commands-added",
+      "title": "Main Commands Added",
+      "level": 2
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-artifact-assert",
+      "title": "`artifact-assert`",
+      "level": 3
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-verify-effects",
+      "title": "`verify-effects`",
+      "level": 3
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-effect-policy-yaml",
+      "title": "`effect-policy.yaml`",
+      "level": 3
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-bugs-found-and-fixed",
+      "title": "Bugs Found And Fixed",
+      "level": 2
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-1-capability-logs-did-not-prove-side-effects",
+      "title": "1. Capability logs did not prove side effects",
+      "level": 3
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-2-forged-assertion-rows-could-look-valid",
+      "title": "2. Forged assertion rows could look valid",
+      "level": 3
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-3-strict-effect-policy-could-break-old-projects",
+      "title": "3. Strict effect policy could break old projects",
+      "level": 3
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-4-completion-could-bypass-effect-verification",
+      "title": "4. Completion could bypass effect verification",
+      "level": 3
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-5-shell-variable-collision-during-assertion-registration",
+      "title": "5. Shell variable collision during assertion registration",
+      "level": 3
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-verification-evidence",
+      "title": "Verification Evidence",
+      "level": 2
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-design-meaning",
+      "title": "Design Meaning",
+      "level": 2
+    },
+    {
+      "id": "rich-report-07b986cbc1f1-follow-up-note",
+      "title": "Follow-Up Note",
+      "level": 2
+    }
+  ],
+  "generated_at": "2026-05-19T03:30:53.371468+00:00",
+  "html_source_of_truth": false,
+  "notice": "HTML is presentation, not source of truth."
+}

@@ -13,6 +13,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: scaffold_task
     human_gate: review_public_surface
@@ -37,6 +38,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: inventory_task
     human_gate: no_secret_materialization
@@ -57,6 +59,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: template_task
     human_gate: public_template_review
@@ -78,6 +81,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: executable_control_plane
     human_gate: test_before_release
@@ -101,6 +105,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: guardrail_task
     human_gate: review_before_agent_adoption
@@ -125,6 +130,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: workflow_router_task
     human_gate: review_unrouted_task_types
@@ -150,6 +156,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: tool_registry_task
     human_gate: external_tool_policy_review
@@ -162,6 +169,36 @@ workflows:
     notes:
       - Tool registry is configuration visibility, not automatic tool execution.
       - External tools must remain capability-matched and human-gated when risky.
+
+  report_task:
+    route_order:
+      - doctor --project-root .
+      - route-task --project-root . --task-id <task-id>
+      - check-route-write --project-root . --task-id <task-id> --path <planned-path>
+      - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: report_task
+    human_gate: final_reading
+    allowed_outputs:
+      - reports/drafts/
+      - reports/final/
+      - docs/
+      - outputs/
+      - knowledge/
+      - .agent-os/runs/
+      - .agent-os/receipts/
+      - .agent-os/handoffs/
+    notes:
+      - Preserve raw materials and record assumptions or uncertain claims.
+      - Keep major claims traceable to source material or mark them for human review.
 
   route_bound_execution_guard:
     route_order:
@@ -176,6 +213,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: route_bound_guard_task
     human_gate: security_review_before_release
@@ -192,6 +230,7 @@ workflows:
       - .agent-os/workspace.yaml
       - .agent-os/tool-registry.yaml
       - .agent-os/startup-prompt.md
+      - .agent-os/effect-policy.yaml
       - .agent-os/phase-policy.yaml
       - .agent-os/read-policy.yaml
       - .agent-os/write-policy.yaml
@@ -222,6 +261,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: capability_orchestration_task
     human_gate: orchestration_policy_review
@@ -255,6 +295,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: archive_task
     human_gate: explicit_archive_approval

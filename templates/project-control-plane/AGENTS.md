@@ -32,6 +32,7 @@ During substantial work:
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN trace-step --project-root . --task-id <task-id> --run-id <run-id> --step <step> --note "<public trace>" --evidence "<command/file/user confirmation>"` to record visible operational progress, and relay the returned `TRACE_OK` marker.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note "<public trace>" --evidence "<command/file/user confirmation>"` to record observable phase evidence, and relay the returned `CHECKPOINT_OK` marker.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"` before or after MCP, skill, subagent, orchestrator, or important script use, and relay the returned `CAPABILITY_OK` marker.
+- Use `CHANGE_ME_KNOWLEDGEOS_BIN artifact-assert --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --path <artifact>` to verify real side effects, and relay the returned `EFFECT_OK` marker.
 - Record run evidence under `.agent-os/runs/`.
 
 After substantial work:
@@ -39,7 +40,8 @@ After substantial work:
 - Run `CHANGE_ME_KNOWLEDGEOS_BIN eval-task --project-root . --task-id <task-id> --run-id <run-id>`; do not manually append eval status.
 - Run `CHANGE_ME_KNOWLEDGEOS_BIN verify-context --project-root . --task-id <task-id> --run-id <run-id>`.
 - Run `CHANGE_ME_KNOWLEDGEOS_BIN verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>`.
-- Use `CHANGE_ME_KNOWLEDGEOS_BIN complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"` to close task state. It enforces spec/context/plan, lifecycle evidence, and required postflight.
+- Run `CHANGE_ME_KNOWLEDGEOS_BIN verify-effects --project-root . --task-id <task-id> --run-id <run-id>` and relay the returned `EFFECT_VERIFY_OK` marker before claiming effect verification success.
+- Use `CHANGE_ME_KNOWLEDGEOS_BIN complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"` to close task state. It enforces spec/context/plan, lifecycle evidence, effect evidence, and required postflight.
 - Report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.
 
 Reset and migration:

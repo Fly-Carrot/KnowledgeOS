@@ -571,3 +571,90 @@ Validation:
 
 - Added targeted tests for checkpoint markers, capability-event ledgers, and missing required capability traces.
 - Updated the distracted-agent guardrail scenario to require dispatch evidence and capability visibility.
+
+## 2026-05-15 - HTML Sidecar Reports
+
+Status: implemented locally as a presentation sidecar, not an OS source format.
+
+Why:
+
+- Markdown, YAML, and NDJSON should remain canonical evidence for doctor, lifecycle, eval, receipt, handoff, and sync.
+- Human-facing reports benefit from richer layout, stable anchors, metadata cards, and composable sections.
+
+Fix:
+
+- Added `render-html` with `receipt`, `handoff`, `rich-report`, and `--compose` modes.
+- Generated HTML includes source path, source SHA-256, run id when available, generated time, and the notice `HTML is presentation, not source of truth.`
+- Each report writes a full page, a reusable `.fragment.html`, and a `.manifest.json` for stitching.
+- Composition merges fragments into one self-contained static page without iframes, remote scripts, remote fonts, or CDN assets.
+
+Validation:
+
+- Added targeted tests for receipt/handoff sidecars, rich-report escaping, self-contained output, composition, stale source hash detection, and doctor ignoring HTML sidecars as source evidence.
+
+## 2026-05-19 - Hardening Note: Capability Effect Verification
+
+Status: implemented locally after reproducing missing side-effect verification.
+
+Bug reproduced:
+
+- `artifact-assert` and `verify-effects` did not exist, so capability visibility could prove that a tool call was declared but not that a real artifact changed.
+- `complete-task` could not distinguish between a real output and a claimed side effect beyond declared output existence.
+- Initial effect assertion ids used second-level timestamps, which could collide during rapid same-kind assertions.
+
+Fix:
+
+- Added `.agent-os/effect-policy.yaml` with project-level strictness: `observe`, `warn`, `enforce`, and `off` with downgrade reason.
+- Added `artifact-assert`, which verifies real artifacts and emits `EFFECT_OK` only after checks such as `file_exists`, `file_contains`, `file_sha256`, `file_changed`, `json_key_equals`, or `html_self_contained` pass.
+- Added stable `capability_event_id` values to `capability-event` so effect assertions can link a tool/subagent/script call to its verified artifact side effect.
+- Added `verify-effects`, which rejects missing or forged effect evidence under `strictness: enforce` and records warnings under `strictness: warn`.
+- Integrated `verify-effects` into router lifecycle checks and `complete-task` before postflight.
+- Human-gated direct writes to `effect-assertions.ndjson` and documented `EFFECT_OK` in startup prompts, templates, agent guide, and release checklist.
+
+Validation:
+
+- Targeted tests verify successful and failed `artifact-assert` behavior, capability-to-effect linkage, warn/enforce/off strictness behavior, forged ledger rejection, and `complete-task` effect gating.
+- Dry-run temporary projects confirm completion is blocked without required effect proof and succeeds after a real `artifact-assert`.
+
+## 2026-05-19 - Hardening Note: Explicit Effect Verification Reporting
+
+Status: implemented locally after reproducing hidden verifier reporting.
+
+Bug reproduced:
+
+- `verify-effects` returned structured status but did not emit a dedicated visible marker like `CHECKPOINT_OK`, `CAPABILITY_OK`, or `EFFECT_OK`.
+- This meant effect verification was enforced at completion time, but a human watching the session did not get a crisp one-line confirmation unless the agent summarized the JSON manually.
+
+Fix:
+
+- Added `EFFECT_VERIFY_OK status=<status> strictness=<level> assertions=<n> warnings=<n> errors=<n>`.
+- Added `effect_verify_marker: EFFECT_VERIFY_OK` and `marker` to `verify-effects --json`.
+- Updated `complete-task` receipts and JSON to include the effect verification marker.
+- Updated startup prompts, template `AGENTS.md`, agent guide, executable control-plane docs, route-bound guard docs, and release checklist to require relaying `EFFECT_VERIFY_OK` before claiming effect verification success.
+
+Validation:
+
+- Reproduced the missing marker with an existing completed run.
+- Added targeted tests for plain and JSON `verify-effects` marker output.
+- Verified the marker appears after the patch and remains command-evidenced.
+
+## 2026-05-19 - Audit Note: Capability Link And Run Id Robustness
+
+Status: implemented locally during staged-diff and robustness audit.
+
+Bug reproduced:
+
+- `artifact-assert --capability-event-id CAP-DOES-NOT-EXIST` succeeded even though the referenced capability event did not exist.
+- Rapidly reopening and rerunning the same task could allocate the same second-level `RUN-YYYYMMDD-HHMMSS-<TASK>` id and fail with `File exists`.
+
+Fix:
+
+- `artifact-assert` now rejects nonexistent capability event ids before writing a passing `EFFECT_OK` record.
+- `verify-effects` now rejects existing effect assertions that claim a missing capability event id.
+- `run-task` now allocates a suffixed run id such as `RUN-20260519-120000-T001-01` when a same-second run id already exists.
+
+Validation:
+
+- Reproduced the bogus capability link acceptance in a temporary project, then verified the same command fails with `capability event not found`.
+- Added targeted regression coverage for bogus capability links, forged effect ledgers, and same-second run id collisions.
+- Re-ran harness audit, guardrail scenarios, unit tests, smoke, and diff checks after the fix.

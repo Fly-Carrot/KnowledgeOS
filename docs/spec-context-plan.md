@@ -52,6 +52,7 @@ create-spec or align-spec
 -> eval-task
 -> verify-context
 -> verify-lifecycle
+-> verify-effects
 -> complete-task
 ```
 

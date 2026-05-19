@@ -18,6 +18,11 @@ Before publishing KnowledgeOS, verify:
 - `phase-task` and `verify-lifecycle` work;
 - `phase-task` returns a visible `CHECKPOINT_OK` marker;
 - `capability-event` records capability visibility and returns `CAPABILITY_OK`;
+- `artifact-assert` verifies real side effects and returns `EFFECT_OK`;
+- `artifact-assert` rejects bogus `--capability-event-id` links;
+- `verify-effects` returns a visible `EFFECT_VERIFY_OK` marker with status, strictness, assertion count, warning count, and error count;
+- `verify-effects` refuses missing or forged effect evidence when policy is `enforce`;
 - `verify-lifecycle` refuses missing dispatch or required capability evidence;
 - `complete-task` refuses missing phases;
+- `complete-task` runs effect verification and records warnings or downgrade reasons;
 - `complete-task` runs required postflight or records an explicit pending reason.

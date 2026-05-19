@@ -156,7 +156,7 @@ flowchart LR
     Route --> Reopen["reopen-task\nrerun one task"]:::guard
     Route --> Migrate["migrate-legacy-project\nwrite-plan / apply"]:::guard
     Route --> Archive["archive-legacy-project\ncold storage plan / apply"]:::guard
-    Route --> Execute["route-task -> dispatch-task -> check-route-write -> run-task -> context-pack -> plan-task -> eval-task -> verify-context -> complete-task"]:::guard
+    Route --> Execute["route-task -> dispatch-task -> check-route-write -> run-task -> context-pack -> plan-task -> eval-task -> verify-context -> verify-lifecycle -> verify-effects -> complete-task"]:::guard
 
     Reset --> Evidence["Plan or receipt"]:::kernel
     Reopen --> Evidence
@@ -182,7 +182,7 @@ Example natural-language requests and expected system calls:
 | "Reorganize this old project into KnowledgeOS structure." | `knowledgeos migrate-legacy-project --project-root . --write-plan` | Produces a review-first migration plan |
 | "Now apply the approved migration plan." | `knowledgeos migrate-legacy-project --project-root . --apply` | Moves only confidently classified top-level entries |
 | "Move old leftovers out of active context but keep them." | `knowledgeos archive-legacy-project --project-root . --write-plan` | Produces a cold archive plan before moving anything |
-| "Write code for this task." | `route-task -> dispatch-task -> check-route-write -> run-task -> context-pack -> plan-task -> eval-task -> verify-context -> complete-task` | Prevents blind file mutation and stale context |
+| "Write code for this task." | `route-task -> dispatch-task -> check-route-write -> run-task -> context-pack -> plan-task -> eval-task -> verify-context -> verify-lifecycle -> verify-effects -> complete-task` | Prevents blind file mutation and stale context |
 
 ## Fixed Lifecycle, Extensible Classification
 
@@ -447,7 +447,7 @@ flowchart TB
     Write --> Run["run-task\ncreate run evidence"]:::kernel
     Run --> Context["context-pack + plan-task\nfreeze spec, context, and plan"]:::kernel
     Context --> Eval["eval-task\ndeclared outputs exist and checks pass"]:::guard
-    Eval --> Verify["verify-context + verify-lifecycle\ncontext and checkpoint gates pass"]:::guard
+    Eval --> Verify["verify-context + verify-lifecycle + verify-effects\ncontext and checkpoint gates pass"]:::guard
     Verify --> Complete["complete-task\nclose state only after all gates"]:::kernel
     Complete --> Receipt["receipt + handoff\nobservable continuation"]:::kernel
 

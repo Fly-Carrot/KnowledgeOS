@@ -31,6 +31,7 @@ write_policy:
     - .agent-os/dispatch-policy.yaml
     - .agent-os/tool-registry.yaml
     - .agent-os/workflows/router.yaml
+    - .agent-os/effect-policy.yaml
     - .agent-os/phase-policy.yaml
     - .agent-os/fabric-link.yaml
     - .agent-os/runs/**/run.yaml
@@ -41,6 +42,7 @@ write_policy:
     - .agent-os/runs/**/phases.ndjson
     - .agent-os/runs/**/command-events.ndjson
     - .agent-os/runs/**/capability-events.ndjson
+    - .agent-os/runs/**/effect-assertions.ndjson
     - .agent-os/runs/**/postflight.md
 
   require_receipt_for:

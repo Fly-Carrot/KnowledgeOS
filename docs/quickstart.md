@@ -169,9 +169,11 @@ context-pack write/refresh spec-snapshot.md and context-pack.md for a run
 plan-task    write plan.md after the context pack exists
 phase-task   write public checkpoint evidence and emit CHECKPOINT_OK
 capability-event record visible MCP/skill/subagent/orchestrator/script use and emit CAPABILITY_OK
+artifact-assert verify real side effects and emit EFFECT_OK
 eval-task    write deterministic run eval evidence and output-existence checks
 verify-context verify spec/context/plan evidence and spec drift
 verify-lifecycle verify required public phase checkpoint evidence
+verify-effects verify real artifact effect evidence
 complete-task close a task only after context, lifecycle, eval, outputs, and postflight gates pass
 reopen-task  reopen a task for rerun and optionally archive its declared outputs
 reset-project reset volatile OS state or archive/remove the project control plane

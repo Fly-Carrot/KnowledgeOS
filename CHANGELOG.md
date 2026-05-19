@@ -8,6 +8,12 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ### Added
 
+- `render-html` for HTML presentation sidecars without replacing Markdown, YAML, or NDJSON as canonical evidence.
+- Composable HTML report manifests and fragments for receipt, handoff, rich-report, and stitched report outputs.
+- `.agent-os/effect-policy.yaml` for project-level capability effect verification strictness.
+- `artifact-assert` for verifying real artifact side effects after capability calls and emitting `EFFECT_OK`.
+- `verify-effects` for checking capability-to-artifact effect evidence and emitting `EFFECT_VERIFY_OK`.
+- Completion receipts and JSON now surface effect verification status alongside lifecycle, eval, context, and sync evidence.
 - Root `CHANGELOG.md` as the public release and repair history for the project.
 - Root changelog support in the local write policy and route-bound execution profile so future release notes are governed artifacts instead of unclassified writes.
 - `phase-task` now emits a visible `CHECKPOINT_OK` marker in plain output and JSON.
@@ -19,6 +25,9 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ### Fixed
 
+- `artifact-assert` now rejects nonexistent `capability_event_id` links instead of allowing forged capability-to-effect evidence.
+- `verify-effects` now rejects existing effect assertions that reference missing capability events.
+- `run-task` now allocates suffixed run ids when the same task is run more than once within the same second.
 - Local Codex operator configuration can use the current `hooks` feature flag instead of the deprecated `codex_hooks` feature path.
 - `verify-lifecycle` now blocks completion when dispatch evidence or required capability-stage evidence is missing.
 - Root and template startup prompts now mention `TRACE_OK`, `CHECKPOINT_OK`, and `CAPABILITY_OK` as separate public evidence channels.

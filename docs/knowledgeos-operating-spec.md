@@ -23,6 +23,7 @@ doctor
 -> eval-task
 -> verify-context
 -> verify-lifecycle
+-> verify-effects
 -> complete-task
 ```
 

@@ -1,0 +1,143 @@
+<article class="kos-report-fragment" data-kos-fragment="true" data-kind="rich-report" data-source-sha256="07b986cbc1f1ee938f958560231f58cb5bdf6a6a840650c7090614b99038e3bf">
+  <div class="kos-eyebrow">rich-report</div>
+  <h1 id="rich-report-07b986cbc1f1-knowledgeos-capability-effect-verification-summary">KnowledgeOS Capability Effect Verification Summary</h1>
+<blockquote>HTML sidecar summary for the KOS-T066 change set. Markdown remains the canonical source; HTML is generated for human review.</blockquote>
+<h2 id="rich-report-07b986cbc1f1-executive-summary">Executive Summary</h2>
+<p>This change upgrades KnowledgeOS from **capability visibility** to **capability effect verification**. The previous system could show that an agent claimed to use a tool, skill, shell command, or subagent. The new system asks the more important operational question: **did the claimed side effect actually land?**</p>
+<p>The implementation adds a small verification layer built around `artifact-assert`, `verify-effects`, and `effect-policy.yaml`. These commands make real artifacts touchable, auditable, and enforceable before `complete-task` can report success.</p>
+<h2 id="rich-report-07b986cbc1f1-what-changed">What Changed</h2>
+<p>| Area | Before | After |</p>
+<p>| --- | --- | --- |</p>
+<p>| Capability trace | `capability-event` recorded declared calls | `capability-event` now exposes stable `capability_event_id` values |</p>
+<p>| Artifact proof | No first-class side-effect verifier | `artifact-assert` records `EFFECT_OK` only after checking a real artifact |</p>
+<p>| Completion gate | `complete-task` checked eval, context, lifecycle, and sync | `complete-task` also runs `verify-effects` before postflight |</p>
+<p>| Project strictness | No effect-verification policy | `.agent-os/effect-policy.yaml` supports `observe`, `warn`, `enforce`, and `off` |</p>
+<p>| Forgery resistance | Ledger rows could be manually imitated | `verify-effects` requires matching command evidence for assertions |</p>
+<p>| Templates | No effect policy in project template | New projects receive `effect-policy.yaml` by default |</p>
+<h2 id="rich-report-07b986cbc1f1-new-evidence-lane">New Evidence Lane</h2>
+<p>The change introduces a fifth practical evidence lane that complements the existing mission-control model:</p>
+<p>1. `step-events.ndjson` records public operational trace.</p>
+<p>2. `phases.ndjson` records lifecycle checkpoints.</p>
+<p>3. `capability-events.ndjson` records visible capability calls.</p>
+<p>4. `effect-assertions.ndjson` records real artifact side-effect checks.</p>
+<p>5. `postflight.md` records completion and `[SYNC_OK]`.</p>
+<p>This preserves the KnowledgeOS philosophy: **small kernel, pluggable modules, optional apps, project-level strictness, and mandatory public checkpoints for substantial work.**</p>
+<h2 id="rich-report-07b986cbc1f1-main-commands-added">Main Commands Added</h2>
+<h3 id="rich-report-07b986cbc1f1-artifact-assert">`artifact-assert`</h3>
+<p>Records artifact-level proof only after a real check passes.</p>
+<p>Supported assertion kinds:</p>
+<ul class="kos-list">
+<li>`file_exists`</li>
+<li>`file_nonempty`</li>
+<li>`file_contains`</li>
+<li>`file_sha256`</li>
+<li>`file_changed`</li>
+<li>`json_key_equals`</li>
+<li>`html_self_contained`</li>
+</ul>
+<p>Example:</p>
+<pre><code>knowledgeos artifact-assert \
+  --project-root . \
+  --task-id KOS-T066 \
+  --run-id RUN-20260519-092120-KOS-T066 \
+  --kind file_contains \
+  --path knowledgeos/cli.py \
+  --expect &quot;def verify_effects&quot;</code></pre>
+<h3 id="rich-report-07b986cbc1f1-verify-effects">`verify-effects`</h3>
+<p>Checks whether declared task outputs have corresponding passed assertions and whether those assertions have command evidence.</p>
+<p>Example:</p>
+<pre><code>knowledgeos verify-effects \
+  --project-root . \
+  --task-id KOS-T066 \
+  --run-id RUN-20260519-092120-KOS-T066 \
+  --json</code></pre>
+<h3 id="rich-report-07b986cbc1f1-effect-policy-yaml">`effect-policy.yaml`</h3>
+<p>Controls project strictness.</p>
+<pre><code>effect_policy:
+  strictness: warn
+  downgrade_reason:
+  default_assertion: file_exists
+  required_for:
+    - declared_outputs</code></pre>
+<h2 id="rich-report-07b986cbc1f1-bugs-found-and-fixed">Bugs Found And Fixed</h2>
+<h3 id="rich-report-07b986cbc1f1-1-capability-logs-did-not-prove-side-effects">1. Capability logs did not prove side effects</h3>
+<ul class="kos-list">
+<li>**Root cause:** `capability-event` showed agent intent, not artifact reality.</li>
+<li>**Reproduction:** Before this change, a task could register a shell or MCP call and still not prove the expected file changed.</li>
+<li>**Fix:** Added `artifact-assert` and required effect verification before task completion.</li>
+</ul>
+<h3 id="rich-report-07b986cbc1f1-2-forged-assertion-rows-could-look-valid">2. Forged assertion rows could look valid</h3>
+<ul class="kos-list">
+<li>**Root cause:** A plain NDJSON assertion row could be manually appended.</li>
+<li>**Reproduction:** Tests append forged effect rows without matching command evidence.</li>
+<li>**Fix:** `verify-effects` rejects assertions that do not have corresponding `artifact-assert` command events.</li>
+</ul>
+<h3 id="rich-report-07b986cbc1f1-3-strict-effect-policy-could-break-old-projects">3. Strict effect policy could break old projects</h3>
+<ul class="kos-list">
+<li>**Root cause:** Making `.agent-os/effect-policy.yaml` mandatory would cause existing projects to fail doctor immediately.</li>
+<li>**Reproduction:** Old project without `effect-policy.yaml` fails if the file is required.</li>
+<li>**Fix:** Existing projects default to `observe`; templates create the policy for new projects.</li>
+</ul>
+<h3 id="rich-report-07b986cbc1f1-4-completion-could-bypass-effect-verification">4. Completion could bypass effect verification</h3>
+<ul class="kos-list">
+<li>**Root cause:** `complete-task` did not previously call `verify-effects`.</li>
+<li>**Reproduction:** A task with eval and lifecycle evidence could complete without artifact side-effect proof.</li>
+<li>**Fix:** `complete-task` now runs effect verification and records effect status in receipts.</li>
+</ul>
+<h3 id="rich-report-07b986cbc1f1-5-shell-variable-collision-during-assertion-registration">5. Shell variable collision during assertion registration</h3>
+<ul class="kos-list">
+<li>**Root cause:** A zsh loop used the variable name `path`, which maps to `PATH` in zsh.</li>
+<li>**Reproduction:** The shell reported `env: bash: No such file or directory` after `PATH` was clobbered.</li>
+<li>**Fix:** Renamed the loop variable to `relpath`.</li>
+</ul>
+<h2 id="rich-report-07b986cbc1f1-verification-evidence">Verification Evidence</h2>
+<p>The KOS-T066 implementation passed the following checks:</p>
+<ul class="kos-list">
+<li>`python3 -B -m py_compile knowledgeos/cli.py`</li>
+<li>`python3 -B -m unittest discover -s tests -v`</li>
+<li>`./examples/scenarios/run_guardrail_scenarios.sh`</li>
+<li>`make smoke`</li>
+<li>`./bin/knowledgeos doctor --root . --project-root . --summary`</li>
+<li>`./bin/knowledgeos verify-context --project-root . --task-id KOS-T066 --run-id RUN-20260519-092120-KOS-T066 --json`</li>
+<li>`./bin/knowledgeos verify-lifecycle --project-root . --task-id KOS-T066 --run-id RUN-20260519-092120-KOS-T066 --json`</li>
+<li>`./bin/knowledgeos verify-effects --project-root . --task-id KOS-T066 --run-id RUN-20260519-092120-KOS-T066 --json`</li>
+<li>`./bin/knowledgeos complete-task --project-root . --task-id KOS-T066 --run-id RUN-20260519-092120-KOS-T066 --summary ... --json`</li>
+</ul>
+<p>Final completion evidence:</p>
+<ul class="kos-list">
+<li>Task: `KOS-T066`</li>
+<li>Run: `RUN-20260519-092120-KOS-T066`</li>
+<li>Lifecycle status: `passed`</li>
+<li>Context status: `passed`</li>
+<li>Effect status: `passed`</li>
+<li>Sync status: `SYNC_OK`</li>
+<li>Status marker: `[SYNC_OK]`</li>
+</ul>
+<h2 id="rich-report-07b986cbc1f1-design-meaning">Design Meaning</h2>
+<p>The important product move is not just adding another command. It is creating a sharper contract between the agent and the project:</p>
+<blockquote>A capability call is not success. A real verified effect is success.</blockquote>
+<p>This keeps KnowledgeOS lightweight while making long-running agent work more trustworthy. The kernel stays small; verification remains policy-driven; projects can choose strictness; apps can visualize evidence without becoming the rule engine.</p>
+<h2 id="rich-report-07b986cbc1f1-follow-up-note">Follow-Up Note</h2>
+<p>During this summary task, a dry run found that the local KnowledgeOS project router lacks a `report_task` profile even though the project template includes one. To avoid a control-plane mutation inside a documentation-only task, this summary was routed to `docs/` instead of `reports/drafts/`. That router alignment should be handled as a separate small bugfix task.</p>
+  <details class="kos-fragment-meta">
+    <summary>Source metadata</summary>
+    <dl class="kos-meta"><div><dt>Kind</dt><dd>rich-report</dd></div>
+<div><dt>Run ID</dt><dd>not run-bound</dd></div>
+<div><dt>Source</dt><dd>docs/capability-effect-verification-summary.md</dd></div>
+<div><dt>Source SHA-256</dt><dd>07b986cbc1f1ee938f958560231f58cb5bdf6a6a840650c7090614b99038e3bf</dd></div>
+<div><dt>Generated</dt><dd>2026-05-19T03:30:53.371468+00:00</dd></div></dl>
+    <p class="kos-notice">HTML is presentation, not source of truth.</p>
+    <nav class="kos-nav" aria-label="Report sections"><ul class="kos-list"><li><a href="#rich-report-07b986cbc1f1-knowledgeos-capability-effect-verification-summary">KnowledgeOS Capability Effect Verification Summary</a></li>
+<li><a href="#rich-report-07b986cbc1f1-executive-summary">Executive Summary</a></li>
+<li><a href="#rich-report-07b986cbc1f1-what-changed">What Changed</a></li>
+<li><a href="#rich-report-07b986cbc1f1-new-evidence-lane">New Evidence Lane</a></li>
+<li><a href="#rich-report-07b986cbc1f1-main-commands-added">Main Commands Added</a></li>
+<li><a href="#rich-report-07b986cbc1f1-artifact-assert">`artifact-assert`</a></li>
+<li><a href="#rich-report-07b986cbc1f1-verify-effects">`verify-effects`</a></li>
+<li><a href="#rich-report-07b986cbc1f1-effect-policy-yaml">`effect-policy.yaml`</a></li>
+<li><a href="#rich-report-07b986cbc1f1-bugs-found-and-fixed">Bugs Found And Fixed</a></li>
+<li><a href="#rich-report-07b986cbc1f1-1-capability-logs-did-not-prove-side-effects">1. Capability logs did not prove side effects</a></li>
+<li><a href="#rich-report-07b986cbc1f1-2-forged-assertion-rows-could-look-valid">2. Forged assertion rows could look valid</a></li>
+<li><a href="#rich-report-07b986cbc1f1-3-strict-effect-policy-could-break-old-projects">3. Strict effect policy could break old projects</a></li></ul></nav>
+  </details>
+</article>

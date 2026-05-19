@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="knowledgeos-source-sha256" content="07b986cbc1f1ee938f958560231f58cb5bdf6a6a840650c7090614b99038e3bf">
+  <meta name="knowledgeos-source-path" content="docs/capability-effect-verification-summary.md">
+  <title>KnowledgeOS Capability Effect Verification Summary</title>
+  <style>:root {
+  --kos-bg: #f5f7fb;
+  --kos-ink: #152033;
+  --kos-muted: #607089;
+  --kos-card: #ffffff;
+  --kos-line: #dce5f2;
+  --kos-accent: #0f766e;
+  --kos-accent-2: #2563eb;
+  --kos-warn: #b45309;
+  --kos-radius: 20px;
+  --kos-shadow: 0 24px 70px rgba(21, 32, 51, 0.12);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--kos-ink);
+  background:
+    radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 36rem),
+    radial-gradient(circle at top right, rgba(15, 118, 110, 0.16), transparent 34rem),
+    var(--kos-bg);
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.62;
+}
+.kos-shell { max-width: 1120px; margin: 0 auto; padding: 56px 24px 48px; }
+.kos-hero {
+  padding: 34px;
+  border: 1px solid rgba(255,255,255,0.7);
+  border-radius: 28px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.94), rgba(236,245,255,0.86));
+  box-shadow: var(--kos-shadow);
+}
+.kos-eyebrow { color: var(--kos-accent); font-size: 0.78rem; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; }
+h1 { margin: 10px 0 12px; font-size: clamp(2.2rem, 6vw, 4.4rem); line-height: 0.95; letter-spacing: -0.055em; }
+.kos-subtitle { max-width: 760px; color: var(--kos-muted); font-size: 1.05rem; }
+.kos-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 22px; margin-top: 24px; align-items: start; }
+.kos-report-fragment, .kos-panel {
+  background: rgba(255,255,255,0.92);
+  border: 1px solid var(--kos-line);
+  border-radius: var(--kos-radius);
+  box-shadow: 0 14px 40px rgba(21, 32, 51, 0.07);
+}
+.kos-report-fragment { padding: 28px; overflow: hidden; }
+.kos-panel { padding: 20px; position: sticky; top: 20px; }
+.kos-report-fragment h1, .kos-report-fragment h2, .kos-report-fragment h3 { letter-spacing: -0.025em; line-height: 1.15; }
+.kos-report-fragment h1 { font-size: 2.2rem; }
+.kos-report-fragment h2 { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--kos-line); color: #102a43; }
+.kos-report-fragment p, .kos-report-fragment li { color: #26364d; }
+.kos-list { padding-left: 1.25rem; }
+pre { overflow: auto; padding: 16px; border-radius: 16px; background: #101827; color: #e5edf8; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9em; }
+blockquote { margin: 18px 0; padding: 14px 18px; border-left: 4px solid var(--kos-accent-2); background: #eef5ff; border-radius: 12px; }
+.kos-meta { display: grid; gap: 10px; margin: 0; }
+.kos-meta div { padding: 10px 12px; border-radius: 12px; background: #f4f8fd; border: 1px solid var(--kos-line); overflow-wrap: anywhere; }
+.kos-meta dt { color: var(--kos-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.kos-meta dd { margin: 2px 0 0; font-weight: 700; }
+.kos-nav { display: grid; gap: 8px; margin-top: 16px; }
+.kos-nav a { color: var(--kos-accent-2); text-decoration: none; font-weight: 700; }
+.kos-fragment-meta { margin-top: 28px; }
+details { margin-top: 20px; padding: 14px 16px; border: 1px solid var(--kos-line); border-radius: 16px; background: #fbfdff; }
+summary { cursor: pointer; font-weight: 800; }
+.kos-footer { margin-top: 28px; color: var(--kos-muted); font-size: 0.9rem; text-align: center; }
+.kos-notice { color: var(--kos-warn); font-weight: 800; }
+@media (max-width: 860px) {
+  .kos-shell { padding: 28px 14px; }
+  .kos-grid { grid-template-columns: 1fr; }
+  .kos-panel { position: static; }
+  .kos-hero { padding: 24px; }
+}
+/* theme: knowledgeos-default */</style>
+</head>
+<body>
+  <main class="kos-shell">
+    <section class="kos-hero">
+      <div class="kos-eyebrow">Composable sidecar report</div>
+      <h1>KnowledgeOS Capability Effect Verification Summary</h1>
+      <p class="kos-subtitle">A self-contained KnowledgeOS HTML sidecar generated from canonical Markdown, YAML, or NDJSON evidence. Use it for human review; keep source files as the contract.</p>
+    </section>
+    <section class="kos-grid">
+      <div><article class="kos-report-fragment" data-kos-fragment="true" data-kind="rich-report" data-source-sha256="07b986cbc1f1ee938f958560231f58cb5bdf6a6a840650c7090614b99038e3bf">
+  <div class="kos-eyebrow">rich-report</div>
+  <h1 id="rich-report-07b986cbc1f1-knowledgeos-capability-effect-verification-summary">KnowledgeOS Capability Effect Verification Summary</h1>
+<blockquote>HTML sidecar summary for the KOS-T066 change set. Markdown remains the canonical source; HTML is generated for human review.</blockquote>
+<h2 id="rich-report-07b986cbc1f1-executive-summary">Executive Summary</h2>
+<p>This change upgrades KnowledgeOS from **capability visibility** to **capability effect verification**. The previous system could show that an agent claimed to use a tool, skill, shell command, or subagent. The new system asks the more important operational question: **did the claimed side effect actually land?**</p>
+<p>The implementation adds a small verification layer built around `artifact-assert`, `verify-effects`, and `effect-policy.yaml`. These commands make real artifacts touchable, auditable, and enforceable before `complete-task` can report success.</p>
+<h2 id="rich-report-07b986cbc1f1-what-changed">What Changed</h2>
+<p>| Area | Before | After |</p>
+<p>| --- | --- | --- |</p>
+<p>| Capability trace | `capability-event` recorded declared calls | `capability-event` now exposes stable `capability_event_id` values |</p>
+<p>| Artifact proof | No first-class side-effect verifier | `artifact-assert` records `EFFECT_OK` only after checking a real artifact |</p>
+<p>| Completion gate | `complete-task` checked eval, context, lifecycle, and sync | `complete-task` also runs `verify-effects` before postflight |</p>
+<p>| Project strictness | No effect-verification policy | `.agent-os/effect-policy.yaml` supports `observe`, `warn`, `enforce`, and `off` |</p>
+<p>| Forgery resistance | Ledger rows could be manually imitated | `verify-effects` requires matching command evidence for assertions |</p>
+<p>| Templates | No effect policy in project template | New projects receive `effect-policy.yaml` by default |</p>
+<h2 id="rich-report-07b986cbc1f1-new-evidence-lane">New Evidence Lane</h2>
+<p>The change introduces a fifth practical evidence lane that complements the existing mission-control model:</p>
+<p>1. `step-events.ndjson` records public operational trace.</p>
+<p>2. `phases.ndjson` records lifecycle checkpoints.</p>
+<p>3. `capability-events.ndjson` records visible capability calls.</p>
+<p>4. `effect-assertions.ndjson` records real artifact side-effect checks.</p>
+<p>5. `postflight.md` records completion and `[SYNC_OK]`.</p>
+<p>This preserves the KnowledgeOS philosophy: **small kernel, pluggable modules, optional apps, project-level strictness, and mandatory public checkpoints for substantial work.**</p>
+<h2 id="rich-report-07b986cbc1f1-main-commands-added">Main Commands Added</h2>
+<h3 id="rich-report-07b986cbc1f1-artifact-assert">`artifact-assert`</h3>
+<p>Records artifact-level proof only after a real check passes.</p>
+<p>Supported assertion kinds:</p>
+<ul class="kos-list">
+<li>`file_exists`</li>
+<li>`file_nonempty`</li>
+<li>`file_contains`</li>
+<li>`file_sha256`</li>
+<li>`file_changed`</li>
+<li>`json_key_equals`</li>
+<li>`html_self_contained`</li>
+</ul>
+<p>Example:</p>
+<pre><code>knowledgeos artifact-assert \
+  --project-root . \
+  --task-id KOS-T066 \
+  --run-id RUN-20260519-092120-KOS-T066 \
+  --kind file_contains \
+  --path knowledgeos/cli.py \
+  --expect &quot;def verify_effects&quot;</code></pre>
+<h3 id="rich-report-07b986cbc1f1-verify-effects">`verify-effects`</h3>
+<p>Checks whether declared task outputs have corresponding passed assertions and whether those assertions have command evidence.</p>
+<p>Example:</p>
+<pre><code>knowledgeos verify-effects \
+  --project-root . \
+  --task-id KOS-T066 \
+  --run-id RUN-20260519-092120-KOS-T066 \
+  --json</code></pre>
+<h3 id="rich-report-07b986cbc1f1-effect-policy-yaml">`effect-policy.yaml`</h3>
+<p>Controls project strictness.</p>
+<pre><code>effect_policy:
+  strictness: warn
+  downgrade_reason:
+  default_assertion: file_exists
+  required_for:
+    - declared_outputs</code></pre>
+<h2 id="rich-report-07b986cbc1f1-bugs-found-and-fixed">Bugs Found And Fixed</h2>
+<h3 id="rich-report-07b986cbc1f1-1-capability-logs-did-not-prove-side-effects">1. Capability logs did not prove side effects</h3>
+<ul class="kos-list">
+<li>**Root cause:** `capability-event` showed agent intent, not artifact reality.</li>
+<li>**Reproduction:** Before this change, a task could register a shell or MCP call and still not prove the expected file changed.</li>
+<li>**Fix:** Added `artifact-assert` and required effect verification before task completion.</li>
+</ul>
+<h3 id="rich-report-07b986cbc1f1-2-forged-assertion-rows-could-look-valid">2. Forged assertion rows could look valid</h3>
+<ul class="kos-list">
+<li>**Root cause:** A plain NDJSON assertion row could be manually appended.</li>
+<li>**Reproduction:** Tests append forged effect rows without matching command evidence.</li>
+<li>**Fix:** `verify-effects` rejects assertions that do not have corresponding `artifact-assert` command events.</li>
+</ul>
+<h3 id="rich-report-07b986cbc1f1-3-strict-effect-policy-could-break-old-projects">3. Strict effect policy could break old projects</h3>
+<ul class="kos-list">
+<li>**Root cause:** Making `.agent-os/effect-policy.yaml` mandatory would cause existing projects to fail doctor immediately.</li>
+<li>**Reproduction:** Old project without `effect-policy.yaml` fails if the file is required.</li>
+<li>**Fix:** Existing projects default to `observe`; templates create the policy for new projects.</li>
+</ul>
+<h3 id="rich-report-07b986cbc1f1-4-completion-could-bypass-effect-verification">4. Completion could bypass effect verification</h3>
+<ul class="kos-list">
+<li>**Root cause:** `complete-task` did not previously call `verify-effects`.</li>
+<li>**Reproduction:** A task with eval and lifecycle evidence could complete without artifact side-effect proof.</li>
+<li>**Fix:** `complete-task` now runs effect verification and records effect status in receipts.</li>
+</ul>
+<h3 id="rich-report-07b986cbc1f1-5-shell-variable-collision-during-assertion-registration">5. Shell variable collision during assertion registration</h3>
+<ul class="kos-list">
+<li>**Root cause:** A zsh loop used the variable name `path`, which maps to `PATH` in zsh.</li>
+<li>**Reproduction:** The shell reported `env: bash: No such file or directory` after `PATH` was clobbered.</li>
+<li>**Fix:** Renamed the loop variable to `relpath`.</li>
+</ul>
+<h2 id="rich-report-07b986cbc1f1-verification-evidence">Verification Evidence</h2>
+<p>The KOS-T066 implementation passed the following checks:</p>
+<ul class="kos-list">
+<li>`python3 -B -m py_compile knowledgeos/cli.py`</li>
+<li>`python3 -B -m unittest discover -s tests -v`</li>
+<li>`./examples/scenarios/run_guardrail_scenarios.sh`</li>
+<li>`make smoke`</li>
+<li>`./bin/knowledgeos doctor --root . --project-root . --summary`</li>
+<li>`./bin/knowledgeos verify-context --project-root . --task-id KOS-T066 --run-id RUN-20260519-092120-KOS-T066 --json`</li>
+<li>`./bin/knowledgeos verify-lifecycle --project-root . --task-id KOS-T066 --run-id RUN-20260519-092120-KOS-T066 --json`</li>
+<li>`./bin/knowledgeos verify-effects --project-root . --task-id KOS-T066 --run-id RUN-20260519-092120-KOS-T066 --json`</li>
+<li>`./bin/knowledgeos complete-task --project-root . --task-id KOS-T066 --run-id RUN-20260519-092120-KOS-T066 --summary ... --json`</li>
+</ul>
+<p>Final completion evidence:</p>
+<ul class="kos-list">
+<li>Task: `KOS-T066`</li>
+<li>Run: `RUN-20260519-092120-KOS-T066`</li>
+<li>Lifecycle status: `passed`</li>
+<li>Context status: `passed`</li>
+<li>Effect status: `passed`</li>
+<li>Sync status: `SYNC_OK`</li>
+<li>Status marker: `[SYNC_OK]`</li>
+</ul>
+<h2 id="rich-report-07b986cbc1f1-design-meaning">Design Meaning</h2>
+<p>The important product move is not just adding another command. It is creating a sharper contract between the agent and the project:</p>
+<blockquote>A capability call is not success. A real verified effect is success.</blockquote>
+<p>This keeps KnowledgeOS lightweight while making long-running agent work more trustworthy. The kernel stays small; verification remains policy-driven; projects can choose strictness; apps can visualize evidence without becoming the rule engine.</p>
+<h2 id="rich-report-07b986cbc1f1-follow-up-note">Follow-Up Note</h2>
+<p>During this summary task, a dry run found that the local KnowledgeOS project router lacks a `report_task` profile even though the project template includes one. To avoid a control-plane mutation inside a documentation-only task, this summary was routed to `docs/` instead of `reports/drafts/`. That router alignment should be handled as a separate small bugfix task.</p>
+  <details class="kos-fragment-meta">
+    <summary>Source metadata</summary>
+    <dl class="kos-meta"><div><dt>Kind</dt><dd>rich-report</dd></div>
+<div><dt>Run ID</dt><dd>not run-bound</dd></div>
+<div><dt>Source</dt><dd>docs/capability-effect-verification-summary.md</dd></div>
+<div><dt>Source SHA-256</dt><dd>07b986cbc1f1ee938f958560231f58cb5bdf6a6a840650c7090614b99038e3bf</dd></div>
+<div><dt>Generated</dt><dd>2026-05-19T03:30:53.371468+00:00</dd></div></dl>
+    <p class="kos-notice">HTML is presentation, not source of truth.</p>
+    <nav class="kos-nav" aria-label="Report sections"><ul class="kos-list"><li><a href="#rich-report-07b986cbc1f1-knowledgeos-capability-effect-verification-summary">KnowledgeOS Capability Effect Verification Summary</a></li>
+<li><a href="#rich-report-07b986cbc1f1-executive-summary">Executive Summary</a></li>
+<li><a href="#rich-report-07b986cbc1f1-what-changed">What Changed</a></li>
+<li><a href="#rich-report-07b986cbc1f1-new-evidence-lane">New Evidence Lane</a></li>
+<li><a href="#rich-report-07b986cbc1f1-main-commands-added">Main Commands Added</a></li>
+<li><a href="#rich-report-07b986cbc1f1-artifact-assert">`artifact-assert`</a></li>
+<li><a href="#rich-report-07b986cbc1f1-verify-effects">`verify-effects`</a></li>
+<li><a href="#rich-report-07b986cbc1f1-effect-policy-yaml">`effect-policy.yaml`</a></li>
+<li><a href="#rich-report-07b986cbc1f1-bugs-found-and-fixed">Bugs Found And Fixed</a></li>
+<li><a href="#rich-report-07b986cbc1f1-1-capability-logs-did-not-prove-side-effects">1. Capability logs did not prove side effects</a></li>
+<li><a href="#rich-report-07b986cbc1f1-2-forged-assertion-rows-could-look-valid">2. Forged assertion rows could look valid</a></li>
+<li><a href="#rich-report-07b986cbc1f1-3-strict-effect-policy-could-break-old-projects">3. Strict effect policy could break old projects</a></li></ul></nav>
+  </details>
+</article></div>
+      <aside class="kos-panel" aria-label="Report metadata">
+        <h2>Evidence Metadata</h2>
+        <dl class="kos-meta"><div><dt>Kind</dt><dd>rich-report</dd></div>
+<div><dt>Run ID</dt><dd>not run-bound</dd></div>
+<div><dt>Source</dt><dd>docs/capability-effect-verification-summary.md</dd></div>
+<div><dt>Source SHA-256</dt><dd>07b986cbc1f1ee938f958560231f58cb5bdf6a6a840650c7090614b99038e3bf</dd></div>
+<div><dt>Generated</dt><dd>2026-05-19T03:30:53.371468+00:00</dd></div>
+<div><dt>Theme</dt><dd>knowledgeos-default</dd></div></dl>
+        <p class="kos-notice">HTML is presentation, not source of truth.</p>
+      </aside>
+    </section>
+    <footer class="kos-footer">HTML is presentation, not source of truth.</footer>
+  </main>
+</body>
+</html>

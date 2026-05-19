@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import html as html_lib
 import ipaddress
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -77,6 +78,7 @@ REQUIRED_PUBLIC_FILES = [
     "templates/project-control-plane/.agent-os/tasks.yaml",
     "templates/project-control-plane/.agent-os/specs.yaml",
     "templates/project-control-plane/.agent-os/phase-policy.yaml",
+    "templates/project-control-plane/.agent-os/effect-policy.yaml",
     "templates/project-control-plane/.agent-os/read-policy.yaml",
     "templates/project-control-plane/.agent-os/write-policy.yaml",
     "templates/project-control-plane/archive/README.md",
@@ -144,6 +146,16 @@ READ_POLICY_SECTIONS = {
 EXPECTED_PHASE_KEYS = ["route", "plan", "review", "dispatch", "execute", "report"]
 PHASE_STATUSES = {"completed", "skipped"}
 CAPABILITY_EVENT_KINDS = {"mcp", "skill", "subagent", "orchestrator", "script", "shell", "file_read"}
+EFFECT_STRICTNESS_LEVELS = {"observe", "warn", "enforce", "off"}
+EFFECT_ASSERTION_KINDS = {
+    "file_exists",
+    "file_nonempty",
+    "file_contains",
+    "file_sha256",
+    "file_changed",
+    "json_key_equals",
+    "html_self_contained",
+}
 OPERATIONAL_TRACE_STEPS = [
     "user_intent",
     "load_rules",
@@ -174,6 +186,7 @@ LIFECYCLE_ROUTE_COMMANDS = [
     "eval-task --project-root . --task-id <task-id> --run-id <run-id>",
     "verify-context --project-root . --task-id <task-id> --run-id <run-id>",
     "verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>",
+    "verify-effects --project-root . --task-id <task-id> --run-id <run-id>",
     "complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>",
 ]
 LIFECYCLE_COMMAND_MARKERS = [
@@ -184,6 +197,7 @@ LIFECYCLE_COMMAND_MARKERS = [
     "eval-task",
     "verify-context",
     "verify-lifecycle",
+    "verify-effects",
     "complete-task",
 ]
 TASK_STATUSES = {"backlog", "ready", "in_progress", "blocked", "completed", "cancelled"}
@@ -464,6 +478,46 @@ def validate_phase_policy(project_root: Path) -> list[CheckResult]:
         CheckResult(required == EXPECTED_PHASE_KEYS, "phase_policy", f"default required phases={required}"),
         CheckResult(require_skip_reason, "phase_policy", "skipped phases require a skip reason"),
     ]
+
+
+def parse_effect_policy(project_root: Path) -> dict[str, Any]:
+    policy_path = project_root / ".agent-os" / "effect-policy.yaml"
+    if not policy_path.exists():
+        return {
+            "exists": False,
+            "strictness": "observe",
+            "downgrade_reason": "",
+            "required_for": [],
+            "default_assertion": "file_exists",
+        }
+    scalars = parse_scalar_values(policy_path, {"strictness", "downgrade_reason", "default_assertion"})
+    required_for = parse_simple_list_sections(policy_path, {"required_for"}).get("required_for", [])
+    return {
+        "exists": True,
+        "strictness": (scalars.get("strictness") or "observe").lower(),
+        "downgrade_reason": scalars.get("downgrade_reason", ""),
+        "required_for": required_for,
+        "default_assertion": scalars.get("default_assertion") or "file_exists",
+    }
+
+
+def validate_effect_policy(project_root: Path) -> list[CheckResult]:
+    policy = parse_effect_policy(project_root)
+    strictness = str(policy.get("strictness", "observe"))
+    results = [
+        CheckResult(
+            strictness in EFFECT_STRICTNESS_LEVELS,
+            "effect_policy",
+            f"strictness={strictness}" if strictness in EFFECT_STRICTNESS_LEVELS else f"invalid strictness={strictness}",
+        )
+    ]
+    if not policy.get("exists"):
+        results.append(CheckResult(True, "effect_policy", "missing effect-policy defaults to strictness=observe"))
+        return results
+    if strictness == "off":
+        reason = str(policy.get("downgrade_reason", "")).strip()
+        results.append(CheckResult(bool(reason), "effect_policy", "strictness=off requires downgrade_reason"))
+    return results
 
 
 def parse_named_blocks(path: Path) -> list[dict[str, str]]:
@@ -1632,6 +1686,10 @@ def capability_events_path(run_dir: Path) -> Path:
     return run_dir / "capability-events.ndjson"
 
 
+def effect_assertions_path(run_dir: Path) -> Path:
+    return run_dir / "effect-assertions.ndjson"
+
+
 def step_events_path(run_dir: Path) -> Path:
     return run_dir / "step-events.ndjson"
 
@@ -1692,6 +1750,22 @@ def load_capability_events(run_dir: Path) -> list[dict[str, Any]]:
             item = {"_invalid_json": raw, "_line": line_number}
         events.append(item)
     return events
+
+
+def load_effect_assertions(run_dir: Path) -> list[dict[str, Any]]:
+    path = effect_assertions_path(run_dir)
+    if not path.exists():
+        return []
+    assertions: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(read_text(path).splitlines(), start=1):
+        if not raw.strip():
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            item = {"_invalid_json": raw, "_line": line_number}
+        assertions.append(item)
+    return assertions
 
 
 def short_marker_value(value: str, limit: int = 96) -> str:
@@ -2373,6 +2447,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
     phases = parse_simple_list_sections(agent_os / "fabric-link.yaml", {"phase_keys"}).get("phase_keys", [])
     results.append(CheckResult(phases == EXPECTED_PHASE_KEYS, "phase_keys", f"{phases}"))
     results.extend(validate_phase_policy(project_root))
+    results.extend(validate_effect_policy(project_root))
 
     policy = load_write_policy(project_root)
     for section in sorted(WRITE_POLICY_SECTIONS):
@@ -2486,6 +2561,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                 has_eval = any("eval-task" in item for item in route_order)
                 has_verify_context = any("verify-context" in item for item in route_order)
                 has_verify = any("verify-lifecycle" in item for item in route_order)
+                has_verify_effects = any("verify-effects" in item for item in route_order)
                 has_complete = any("complete-task" in item for item in route_order)
                 run_index = next((idx for idx, item in enumerate(route_order) if "run-task" in item), -1)
                 dispatch_event_index = next((idx for idx, item in enumerate(route_order) if "dispatch-task" in item and "--run-id" in item), -1)
@@ -2494,6 +2570,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                 eval_index = next((idx for idx, item in enumerate(route_order) if "eval-task" in item), -1)
                 verify_context_index = next((idx for idx, item in enumerate(route_order) if "verify-context" in item), -1)
                 verify_index = next((idx for idx, item in enumerate(route_order) if "verify-lifecycle" in item), -1)
+                verify_effects_index = next((idx for idx, item in enumerate(route_order) if "verify-effects" in item), -1)
                 complete_index = next((idx for idx, item in enumerate(route_order) if "complete-task" in item), -1)
                 results.append(CheckResult(has_run, "workflow_router_lifecycle", f"{name} includes run-task"))
                 results.append(CheckResult(has_dispatch_event, "workflow_router_lifecycle", f"{name} includes dispatch-task --run-id"))
@@ -2503,6 +2580,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                 results.append(CheckResult(has_eval, "workflow_router_lifecycle", f"{name} includes eval-task"))
                 results.append(CheckResult(has_verify_context, "workflow_router_lifecycle", f"{name} includes verify-context"))
                 results.append(CheckResult(has_verify, "workflow_router_lifecycle", f"{name} includes verify-lifecycle"))
+                results.append(CheckResult(has_verify_effects, "workflow_router_lifecycle", f"{name} includes verify-effects"))
                 results.append(CheckResult(has_complete, "workflow_router_lifecycle", f"{name} includes complete-task"))
                 results.append(
                     CheckResult(
@@ -2539,6 +2617,13 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                         f"{name} verify-lifecycle before complete-task",
                     )
                 )
+                results.append(
+                    CheckResult(
+                        verify_effects_index >= 0 and complete_index >= 0 and verify_effects_index < complete_index,
+                        "workflow_router_lifecycle",
+                        f"{name} verify-effects before complete-task",
+                    )
+                )
             else:
                 results.append(CheckResult(False, "workflow_router_lifecycle", f"{name} route_order is not a list"))
     else:
@@ -2564,6 +2649,7 @@ def build_agent_guide(project_root: Path) -> str:
             "   - .agent-os/tasks.yaml",
             "   - .agent-os/specs.yaml",
             "   - .agent-os/phase-policy.yaml",
+            "   - .agent-os/effect-policy.yaml",
             "   - .agent-os/decisions.yaml",
             "   - .agent-os/evals.yaml",
             "   - .agent-os/capabilities.yaml",
@@ -2596,9 +2682,11 @@ def build_agent_guide(project_root: Path) -> str:
             f"   - {bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note <public-trace> --evidence <evidence>; echo or relay TRACE_OK;",
             f"   - {bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>; echo or relay CHECKPOINT_OK;",
             f"   - {bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose <purpose> before/after MCP, skill, subagent, orchestrator, or important script use; echo or relay CAPABILITY_OK;",
+            f"   - {bin_path} artifact-assert --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --path <artifact>; echo or relay EFFECT_OK;",
             f"   - {bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
             f"   - {bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
             f"   - {bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
+            f"   - {bin_path} verify-effects --project-root {project_root} --task-id <task-id> --run-id <run-id>; echo or relay EFFECT_VERIFY_OK;",
             f"   - {bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary <summary>",
             "",
             "7. For shared-fabric hosts, finish with canonical postflight.",
@@ -2629,7 +2717,7 @@ def build_startup_prompt(project_root: Path) -> str:
             "Before substantial work:",
             "",
             "1. Read `AGENTS.md`.",
-            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/specs.yaml`, `.agent-os/phase-policy.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
+            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/specs.yaml`, `.agent-os/phase-policy.yaml`, `.agent-os/effect-policy.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
             f"3. Run `{bin_path} doctor --project-root {project_root} --summary` and do not proceed if it fails.",
             f"4. If the user says `create spec`, `align spec`, `对齐spec`, or equivalent, run `{bin_path} create-spec --project-root {project_root} --title \"<title>\"` or `{bin_path} align-spec --project-root {project_root} --task-id <task-id>` before execution.",
             f"5. Select or confirm one task id from `.agent-os/tasks.yaml`; if the user asks for new work and no ready task fits, run `{bin_path} create-task --project-root {project_root} --title \"<title>\" --type <type> --output <path> --acceptance \"<check>\"`.",
@@ -2643,15 +2731,16 @@ def build_startup_prompt(project_root: Path) -> str:
             f"13. Record public operational progress with `{bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `TRACE_OK` marker.",
             f"14. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `CHECKPOINT_OK` marker.",
             f"15. Record MCP, skill, subagent, orchestrator, or important script use with `{bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose \"<purpose>\"`; relay the returned `CAPABILITY_OK` marker.",
-            f"16. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
-            f"17. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
-            f"18. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, capability visibility, and required postflight.",
-            "19. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
-            f"20. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
-            f"21. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
-            f"22. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
+            f"16. Verify real side effects with `{bin_path} artifact-assert --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --path <artifact>`; relay the returned `EFFECT_OK` marker.",
+            f"17. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
+            f"18. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>`, `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`, and `{bin_path} verify-effects --project-root {project_root} --task-id <task-id> --run-id <run-id>`; relay the returned `EFFECT_VERIFY_OK` marker before claiming effect verification success.",
+            f"19. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, capability visibility, effect verification, and required postflight.",
+            "20. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
+            f"21. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
+            f"22. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
+            f"23. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
             "",
-            "Never claim boot, route, dispatch, write safety, spec alignment, context pack, plan, checkpoint, eval, completion, or sync success without command evidence.",
+            "Never claim boot, route, dispatch, write safety, spec alignment, context pack, plan, trace, checkpoint, capability, effect, eval, completion, or sync success without command evidence.",
             "",
         ]
     )
@@ -3267,7 +3356,7 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
     route = build_task_route(project_root, task_id, None)
     if route.get("status") != "routed":
         raise ValueError(f"task {task_id} is not runnable because routing failed: {route.get('reason', 'unknown route failure')}")
-    run_id = f"RUN-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{safe_slug(task_id)}"
+    run_id = next_run_id(project_root, task_id)
     run_dir = project_root / ".agent-os" / "runs" / run_id
     created = [
         run_dir / "run.yaml",
@@ -3312,6 +3401,16 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
         write_text(project_root / ".agent-os" / "receipts" / "latest.md", receipt)
         write_text(project_root / ".agent-os" / "handoffs" / "current.md", f"# Current Handoff\n\nCurrent run: {run_id}\n\nTask: {task_id}\n")
     return {"run_id": run_id, "task": task, "route": route, "created": [str(p) for p in created], "dry_run": dry_run}
+
+
+def next_run_id(project_root: Path, task_id: str) -> str:
+    runs_root = project_root / ".agent-os" / "runs"
+    base = f"RUN-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{safe_slug(task_id)}"
+    for index in range(100):
+        candidate = base if index == 0 else f"{base}-{index:02d}"
+        if not (runs_root / candidate).exists():
+            return candidate
+    raise ValueError(f"could not allocate a unique run id for {task_id}")
 
 
 def ensure_run_belongs_to_task(project_root: Path, task_id: str, run_id: str) -> Path:
@@ -3400,7 +3499,14 @@ def record_capability_event(
         raise ValueError("--id is required")
     if not purpose.strip():
         raise ValueError("--purpose is required")
+    capability_event_id = (
+        "CAP-"
+        + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        + "-"
+        + safe_slug(f"{kind}-{capability_id.strip()}")[:48]
+    )
     record = {
+        "capability_event_id": capability_event_id,
         "task_id": task_id,
         "run_id": run_id,
         "kind": kind,
@@ -3418,12 +3524,20 @@ def record_capability_event(
         "capability-event",
         task_id,
         run_id,
+        capability_event_id=capability_event_id,
         kind=kind,
         id=capability_id.strip(),
         status=record["status"],
     )
     marker = f"CAPABILITY_OK kind={kind} id={capability_id.strip()} purpose={short_marker_value(purpose)}"
-    return {"status": "recorded", "capability_marker": "CAPABILITY_OK", "marker": marker, "ledger": str(event_path), "record": record}
+    return {
+        "status": "recorded",
+        "capability_marker": "CAPABILITY_OK",
+        "capability_event_id": capability_event_id,
+        "marker": marker,
+        "ledger": str(event_path),
+        "record": record,
+    }
 
 
 def record_trace_step(
@@ -3456,6 +3570,307 @@ def record_trace_step(
     append_command_event(run_dir, "trace-step", task_id, run_id, step=step, status=record["status"])
     marker = f"TRACE_OK step={step} status={record['status']} evidence={short_marker_value(evidence or note)}"
     return {"status": "recorded", "trace_marker": "TRACE_OK", "marker": marker, "ledger": str(event_path), "record": record}
+
+
+def get_json_key(data: Any, key_path: str) -> Any:
+    current = data
+    for part in key_path.split("."):
+        if not part:
+            raise ValueError("--json-key must not contain empty path segments")
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+            continue
+        raise ValueError(f"json key not found: {key_path}")
+    return current
+
+
+def html_has_remote_dependency(text: str) -> bool:
+    patterns = [
+        r"<script\b[^>]*\bsrc\s*=\s*['\"]?\s*(?:https?:)?//",
+        r"<link\b[^>]*\bhref\s*=\s*['\"]?\s*(?:https?:)?//",
+        r"<img\b[^>]*\bsrc\s*=\s*['\"]?\s*(?:https?:)?//",
+        r"@import\s+(?:url\()?['\"]?\s*(?:https?:)?//",
+        r"url\(['\"]?\s*(?:https?:)?//",
+    ]
+    return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def run_artifact_assertion(
+    project_root: Path,
+    task_id: str,
+    run_id: str,
+    *,
+    kind: str,
+    target_path: str,
+    expect: str = "",
+    before_sha: str = "",
+    json_key: str = "",
+    capability_event_id: str = "",
+) -> dict[str, Any]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    if kind not in EFFECT_ASSERTION_KINDS:
+        raise ValueError(f"invalid artifact assertion kind {kind!r}; expected one of {sorted(EFFECT_ASSERTION_KINDS)}")
+    if not target_path.strip():
+        raise ValueError("--path is required")
+    capability_link = capability_event_id.strip()
+    if capability_link and not capability_event_id_exists(run_dir, capability_link, task_id, run_id):
+        raise ValueError(f"capability event not found for assertion: {capability_link}")
+    target = resolve_project_artifact(project_root, target_path)
+    relative = project_relative(project_root, target)
+    evidence = ""
+
+    if kind == "file_exists":
+        if not target.exists():
+            raise ValueError(f"artifact assertion failed: {relative} does not exist")
+        evidence = f"{relative} exists"
+    elif kind == "file_nonempty":
+        if not target.exists() or not target.is_file() or target.stat().st_size <= 0:
+            raise ValueError(f"artifact assertion failed: {relative} is missing or empty")
+        evidence = f"{relative} size={target.stat().st_size}"
+    elif kind == "file_contains":
+        if not expect:
+            raise ValueError("--expect is required for file_contains")
+        if not target.exists() or not target.is_file():
+            raise ValueError(f"artifact assertion failed: {relative} is missing")
+        text = read_text(target)
+        if expect not in text:
+            raise ValueError(f"artifact assertion failed: {relative} does not contain expected text")
+        evidence = f"{relative} contains {short_marker_value(expect)}"
+    elif kind == "file_sha256":
+        if not expect:
+            raise ValueError("--expect is required for file_sha256")
+        if not target.exists() or not target.is_file():
+            raise ValueError(f"artifact assertion failed: {relative} is missing")
+        digest = sha256_file(target)
+        if digest != expect:
+            raise ValueError(f"artifact assertion failed: {relative} sha256 {digest} != {expect}")
+        evidence = f"{relative} sha256={digest}"
+    elif kind == "file_changed":
+        if not before_sha:
+            raise ValueError("--before-sha is required for file_changed")
+        if not target.exists() or not target.is_file():
+            raise ValueError(f"artifact assertion failed: {relative} is missing")
+        digest = sha256_file(target)
+        if digest == before_sha:
+            raise ValueError(f"artifact assertion failed: {relative} sha256 unchanged")
+        evidence = f"{relative} changed {before_sha[:12]}->{digest[:12]}"
+    elif kind == "json_key_equals":
+        if not json_key:
+            raise ValueError("--json-key is required for json_key_equals")
+        if not expect:
+            raise ValueError("--expect is required for json_key_equals")
+        if not target.exists() or not target.is_file():
+            raise ValueError(f"artifact assertion failed: {relative} is missing")
+        observed = get_json_key(json.loads(read_text(target)), json_key)
+        if str(observed) != expect:
+            raise ValueError(f"artifact assertion failed: {relative} {json_key}={observed!r} != {expect!r}")
+        evidence = f"{relative} {json_key}={expect}"
+    elif kind == "html_self_contained":
+        if not target.exists() or not target.is_file():
+            raise ValueError(f"artifact assertion failed: {relative} is missing")
+        text = read_text(target)
+        if html_has_remote_dependency(text):
+            raise ValueError(f"artifact assertion failed: {relative} references remote assets")
+        evidence = f"{relative} has no remote scripts/fonts/assets"
+
+    assertion_id = "EFFECT-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + f"-{safe_slug(kind)}"
+    record = {
+        "assertion_id": assertion_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "kind": kind,
+        "path": relative,
+        "expect": expect,
+        "before_sha": before_sha,
+        "json_key": json_key,
+        "capability_event_id": capability_link,
+        "status": "passed",
+        "evidence": evidence,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    ledger_path = effect_assertions_path(run_dir)
+    with ledger_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    append_command_event(
+        run_dir,
+        "artifact-assert",
+        task_id,
+        run_id,
+        assertion_id=assertion_id,
+        kind=kind,
+        path=relative,
+        status="passed",
+        capability_event_id=capability_link,
+    )
+    marker = f"EFFECT_OK kind={kind} target={relative} evidence={short_marker_value(evidence)}"
+    return {"status": "passed", "effect_marker": "EFFECT_OK", "marker": marker, "ledger": str(ledger_path), "record": record}
+
+
+def capability_event_id_exists(run_dir: Path, capability_event_id: str, task_id: str, run_id: str) -> bool:
+    return any(
+        event.get("capability_event_id") == capability_event_id
+        and event.get("task_id") == task_id
+        and event.get("run_id") == run_id
+        and event.get("status") == "completed"
+        for event in load_capability_events(run_dir)
+        if "_invalid_json" not in event
+    )
+
+
+def assertion_has_command_event(run_dir: Path, assertion: dict[str, Any], task_id: str, run_id: str) -> bool:
+    return has_command_event(
+        run_dir,
+        "artifact-assert",
+        task_id,
+        run_id,
+        assertion_id=str(assertion.get("assertion_id", "")),
+        kind=str(assertion.get("kind", "")),
+        path=str(assertion.get("path", "")),
+        status="passed",
+    )
+
+
+def declared_output_effect_targets(project_root: Path, task_id: str) -> list[str]:
+    targets: list[str] = []
+    for output in task_declared_outputs(project_root, task_id):
+        cleaned = output.strip().strip('"').strip("'")
+        if not cleaned:
+            continue
+        if any(char in cleaned for char in "*?[]"):
+            matches = sorted(project_root.glob(cleaned))
+            targets.extend(project_relative(project_root, match) for match in matches)
+            if not matches:
+                targets.append(cleaned)
+            continue
+        targets.append(project_relative(project_root, output_path(project_root, cleaned)))
+    return targets
+
+
+def assertion_covers_target(assertion_path: str, target: str, project_root: Path) -> bool:
+    if assertion_path == target:
+        return True
+    path = project_root / target
+    return path.is_dir() and assertion_path.startswith(target.rstrip("/") + "/")
+
+
+def effect_issue_status(strictness: str, errors: list[dict[str, Any]], warnings: list[dict[str, Any]]) -> str:
+    if strictness == "off":
+        return "disabled"
+    if strictness == "observe":
+        return "passed"
+    if strictness == "warn":
+        return "warning" if errors or warnings else "passed"
+    return "failed" if errors else "passed"
+
+
+def build_effect_verify_marker(result: dict[str, Any]) -> str:
+    return (
+        "EFFECT_VERIFY_OK "
+        f"status={result.get('status', '')} "
+        f"strictness={result.get('strictness', '')} "
+        f"assertions={len(result.get('assertions', []))} "
+        f"warnings={len(result.get('warnings', []))} "
+        f"errors={len(result.get('errors', []))}"
+    )
+
+
+def verify_effects(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
+    policy = parse_effect_policy(project_root)
+    strictness = str(policy.get("strictness", "observe"))
+    if strictness not in EFFECT_STRICTNESS_LEVELS:
+        raise ValueError(f"invalid effect strictness: {strictness}")
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    if strictness == "off":
+        reason = str(policy.get("downgrade_reason", "")).strip()
+        if not reason:
+            errors.append({"label": "missing_downgrade_reason", "detail": "strictness=off requires downgrade_reason"})
+        result = {
+            "status": "failed" if errors else "disabled",
+            "task_id": task_id,
+            "run_id": run_id,
+            "strictness": strictness,
+            "downgrade_reason": reason,
+            "required_for": policy.get("required_for", []),
+            "assertions": [],
+            "errors": errors,
+            "warnings": warnings,
+            "ledger": str(effect_assertions_path(run_dir)),
+        }
+        result["effect_verify_marker"] = "EFFECT_VERIFY_OK"
+        result["marker"] = build_effect_verify_marker(result)
+        append_command_event(
+            run_dir,
+            "verify-effects",
+            task_id,
+            run_id,
+            status=str(result["status"]),
+            strictness=strictness,
+            effect_verify_marker=result["effect_verify_marker"],
+            marker=result["marker"],
+        )
+        return result
+
+    assertions = load_effect_assertions(run_dir)
+    valid_assertions: list[dict[str, Any]] = []
+    for assertion in assertions:
+        if "_invalid_json" in assertion:
+            errors.append({"label": "invalid_effect_assertion", "detail": f"line {assertion.get('_line')} is not JSON"})
+            continue
+        if assertion.get("task_id") != task_id or assertion.get("run_id") != run_id:
+            errors.append({"label": "effect_scope_mismatch", "detail": assertion})
+            continue
+        if assertion.get("status") != "passed":
+            errors.append({"label": "effect_not_passed", "detail": assertion})
+            continue
+        if str(assertion.get("kind", "")) not in EFFECT_ASSERTION_KINDS:
+            errors.append({"label": "invalid_effect_kind", "detail": assertion.get("kind")})
+            continue
+        if not assertion_has_command_event(run_dir, assertion, task_id, run_id):
+            errors.append({"label": "effect_missing_command_event", "detail": assertion.get("assertion_id", assertion.get("path", ""))})
+            continue
+        capability_link = str(assertion.get("capability_event_id", "")).strip()
+        if capability_link and not capability_event_id_exists(run_dir, capability_link, task_id, run_id):
+            errors.append({"label": "effect_missing_capability_event", "detail": capability_link})
+            continue
+        valid_assertions.append(assertion)
+
+    if "declared_outputs" in policy.get("required_for", []):
+        for target in declared_output_effect_targets(project_root, task_id):
+            if any(assertion_covers_target(str(assertion.get("path", "")), target, project_root) for assertion in valid_assertions):
+                continue
+            errors.append({"label": "missing_declared_output_effect", "detail": target})
+
+    if not assertions:
+        warnings.append({"label": "no_effect_assertions", "detail": "no artifact assertions were recorded"})
+    status = effect_issue_status(strictness, errors, warnings)
+    result = {
+        "status": status,
+        "task_id": task_id,
+        "run_id": run_id,
+        "strictness": strictness,
+        "downgrade_reason": str(policy.get("downgrade_reason", "")).strip(),
+        "required_for": policy.get("required_for", []),
+        "assertions": valid_assertions,
+        "errors": [] if strictness in {"observe", "warn"} else errors,
+        "warnings": warnings + (errors if strictness in {"observe", "warn"} else []),
+        "ledger": str(effect_assertions_path(run_dir)),
+    }
+    result["effect_verify_marker"] = "EFFECT_VERIFY_OK"
+    result["marker"] = build_effect_verify_marker(result)
+    append_command_event(
+        run_dir,
+        "verify-effects",
+        task_id,
+        run_id,
+        status=status,
+        strictness=strictness,
+        effect_verify_marker=result["effect_verify_marker"],
+        marker=result["marker"],
+    )
+    return result
 
 
 def load_phase_records(run_dir: Path) -> list[dict[str, Any]]:
@@ -3834,6 +4249,7 @@ def route_order_needs_lifecycle_upgrade(route_order: list[str]) -> bool:
     eval_index = next((idx for idx, item in enumerate(route_order) if "eval-task" in item), -1)
     verify_context_index = next((idx for idx, item in enumerate(route_order) if "verify-context" in item), -1)
     verify_index = next((idx for idx, item in enumerate(route_order) if "verify-lifecycle" in item), -1)
+    verify_effects_index = next((idx for idx, item in enumerate(route_order) if "verify-effects" in item), -1)
     complete_index = next((idx for idx, item in enumerate(route_order) if "complete-task" in item), -1)
 
     required_indices = [
@@ -3845,6 +4261,7 @@ def route_order_needs_lifecycle_upgrade(route_order: list[str]) -> bool:
         eval_index,
         verify_context_index,
         verify_index,
+        verify_effects_index,
         complete_index,
     ]
     if any(index < 0 for index in required_indices):
@@ -3855,6 +4272,7 @@ def route_order_needs_lifecycle_upgrade(route_order: list[str]) -> bool:
         eval_index < complete_index
         and verify_context_index < complete_index
         and verify_index < complete_index
+        and verify_effects_index < complete_index
     )
 
 
@@ -4216,6 +4634,9 @@ def complete_task(
     context_contract = verify_context_contract(project_root, task_id, run_id)
     if context_contract.get("status") != "passed":
         raise ValueError("context contract verification failed: " + json.dumps(context_contract.get("errors", []), ensure_ascii=False))
+    effects = verify_effects(project_root, task_id, run_id)
+    if effects.get("status") == "failed":
+        raise ValueError("effect verification failed: " + json.dumps(effects.get("errors", []), ensure_ascii=False))
 
     postflight = run_postflight_gate(project_root, run_dir, summary, allow_pending_postflight)
     completed_at = datetime.now(timezone.utc).isoformat()
@@ -4236,9 +4657,31 @@ def complete_task(
         "",
         f"Context Contract Status: {context_contract.get('status')}",
         "",
+        f"Effect Verification Status: {effects.get('status')}",
+        "",
+        f"Effect Verify Marker: {effects.get('marker', '')}",
+        "",
         f"Sync Status: {postflight.get('sync_status')}",
         "",
     ]
+    if effects.get("strictness") == "off":
+        receipt_lines.extend(
+            [
+                "STRICTNESS_DOWNGRADED:",
+                "",
+                str(effects.get("downgrade_reason", "")),
+                "",
+            ]
+        )
+    if effects.get("warnings"):
+        receipt_lines.extend(
+            [
+                "Effect Warnings:",
+                "",
+                json.dumps(effects.get("warnings", []), ensure_ascii=False),
+                "",
+            ]
+        )
     if postflight.get("status_marker"):
         receipt_lines.extend([f"Status Marker: {postflight['status_marker']}", ""])
     if postflight.get("pending_reason"):
@@ -4281,11 +4724,473 @@ def complete_task(
         "status": "completed",
         "lifecycle_status": lifecycle.get("status"),
         "context_contract_status": context_contract.get("status"),
+        "effect_status": effects.get("status"),
+        "effect_verify_marker": effects.get("marker", ""),
         "sync_status": postflight.get("sync_status"),
         "status_marker": postflight.get("status_marker", ""),
         "postflight": postflight.get("postflight", ""),
         "receipt": str(run_dir / "receipt.md"),
         "handoff": str(run_dir / "handoff.md"),
+    }
+
+
+HTML_REPORT_KINDS = {"receipt", "handoff", "rich-report"}
+HTML_DEFAULT_THEME = "knowledgeos-default"
+HTML_SOURCE_TRUTH_NOTICE = "HTML is presentation, not source of truth."
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def project_relative(project_root: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(project_root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def resolve_project_artifact(project_root: Path, value: str) -> Path:
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = project_root / candidate
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(project_root.resolve())
+    except ValueError as exc:
+        raise ValueError(f"path must stay inside project root: {value}") from exc
+    return resolved
+
+
+def html_escape(text: Any) -> str:
+    return html_lib.escape(str(text), quote=True)
+
+
+def markdown_heading_anchor(title: str, used: set[str]) -> str:
+    base = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "-", title.lower()).strip("-")
+    if not base:
+        base = "section"
+    anchor = base
+    index = 2
+    while anchor in used:
+        anchor = f"{base}-{index}"
+        index += 1
+    used.add(anchor)
+    return anchor
+
+
+def markdown_to_html_fragment(markdown: str, anchor_prefix: str = "") -> tuple[str, str, list[dict[str, Any]]]:
+    """Render a safe, small Markdown subset into a composable HTML fragment."""
+    lines = markdown.splitlines()
+    html_lines: list[str] = []
+    sections: list[dict[str, Any]] = []
+    title = "KnowledgeOS Report"
+    anchors: set[str] = set()
+    in_list = False
+    in_code = False
+    code_lines: list[str] = []
+
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            html_lines.append("</ul>")
+            in_list = False
+
+    def close_code() -> None:
+        nonlocal in_code, code_lines
+        html_lines.append(f"<pre><code>{html_escape(chr(10).join(code_lines))}</code></pre>")
+        code_lines = []
+        in_code = False
+
+    for raw_line in lines:
+        line = raw_line.rstrip("\n")
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if in_code:
+                close_code()
+            else:
+                close_list()
+                in_code = True
+                code_lines = []
+            continue
+        if in_code:
+            code_lines.append(line)
+            continue
+        if not stripped:
+            close_list()
+            continue
+        heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", stripped)
+        if heading:
+            close_list()
+            level = len(heading.group(1))
+            heading_title = heading.group(2).strip()
+            if title == "KnowledgeOS Report" and level == 1:
+                title = heading_title
+            anchor = markdown_heading_anchor(heading_title, anchors)
+            if anchor_prefix:
+                anchor = f"{anchor_prefix}-{anchor}"
+            sections.append({"id": anchor, "title": heading_title, "level": level})
+            html_lines.append(
+                f'<h{level} id="{html_escape(anchor)}">{html_escape(heading_title)}</h{level}>'
+            )
+            continue
+        if stripped.startswith(("- ", "* ")):
+            if not in_list:
+                html_lines.append('<ul class="kos-list">')
+                in_list = True
+            html_lines.append(f"<li>{html_escape(stripped[2:].strip())}</li>")
+            continue
+        close_list()
+        if stripped.startswith(">"):
+            html_lines.append(f"<blockquote>{html_escape(stripped.lstrip('> ').strip())}</blockquote>")
+        else:
+            html_lines.append(f"<p>{html_escape(stripped)}</p>")
+    close_list()
+    if in_code:
+        close_code()
+    return "\n".join(html_lines), title, sections
+
+
+def html_report_css(theme: str) -> str:
+    return f"""
+:root {{
+  --kos-bg: #f5f7fb;
+  --kos-ink: #152033;
+  --kos-muted: #607089;
+  --kos-card: #ffffff;
+  --kos-line: #dce5f2;
+  --kos-accent: #0f766e;
+  --kos-accent-2: #2563eb;
+  --kos-warn: #b45309;
+  --kos-radius: 20px;
+  --kos-shadow: 0 24px 70px rgba(21, 32, 51, 0.12);
+}}
+* {{ box-sizing: border-box; }}
+body {{
+  margin: 0;
+  color: var(--kos-ink);
+  background:
+    radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 36rem),
+    radial-gradient(circle at top right, rgba(15, 118, 110, 0.16), transparent 34rem),
+    var(--kos-bg);
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.62;
+}}
+.kos-shell {{ max-width: 1120px; margin: 0 auto; padding: 56px 24px 48px; }}
+.kos-hero {{
+  padding: 34px;
+  border: 1px solid rgba(255,255,255,0.7);
+  border-radius: 28px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.94), rgba(236,245,255,0.86));
+  box-shadow: var(--kos-shadow);
+}}
+.kos-eyebrow {{ color: var(--kos-accent); font-size: 0.78rem; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; }}
+h1 {{ margin: 10px 0 12px; font-size: clamp(2.2rem, 6vw, 4.4rem); line-height: 0.95; letter-spacing: -0.055em; }}
+.kos-subtitle {{ max-width: 760px; color: var(--kos-muted); font-size: 1.05rem; }}
+.kos-grid {{ display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 22px; margin-top: 24px; align-items: start; }}
+.kos-report-fragment, .kos-panel {{
+  background: rgba(255,255,255,0.92);
+  border: 1px solid var(--kos-line);
+  border-radius: var(--kos-radius);
+  box-shadow: 0 14px 40px rgba(21, 32, 51, 0.07);
+}}
+.kos-report-fragment {{ padding: 28px; overflow: hidden; }}
+.kos-panel {{ padding: 20px; position: sticky; top: 20px; }}
+.kos-report-fragment h1, .kos-report-fragment h2, .kos-report-fragment h3 {{ letter-spacing: -0.025em; line-height: 1.15; }}
+.kos-report-fragment h1 {{ font-size: 2.2rem; }}
+.kos-report-fragment h2 {{ margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--kos-line); color: #102a43; }}
+.kos-report-fragment p, .kos-report-fragment li {{ color: #26364d; }}
+.kos-list {{ padding-left: 1.25rem; }}
+pre {{ overflow: auto; padding: 16px; border-radius: 16px; background: #101827; color: #e5edf8; }}
+code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9em; }}
+blockquote {{ margin: 18px 0; padding: 14px 18px; border-left: 4px solid var(--kos-accent-2); background: #eef5ff; border-radius: 12px; }}
+.kos-meta {{ display: grid; gap: 10px; margin: 0; }}
+.kos-meta div {{ padding: 10px 12px; border-radius: 12px; background: #f4f8fd; border: 1px solid var(--kos-line); overflow-wrap: anywhere; }}
+.kos-meta dt {{ color: var(--kos-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; }}
+.kos-meta dd {{ margin: 2px 0 0; font-weight: 700; }}
+.kos-nav {{ display: grid; gap: 8px; margin-top: 16px; }}
+.kos-nav a {{ color: var(--kos-accent-2); text-decoration: none; font-weight: 700; }}
+.kos-fragment-meta {{ margin-top: 28px; }}
+details {{ margin-top: 20px; padding: 14px 16px; border: 1px solid var(--kos-line); border-radius: 16px; background: #fbfdff; }}
+summary {{ cursor: pointer; font-weight: 800; }}
+.kos-footer {{ margin-top: 28px; color: var(--kos-muted); font-size: 0.9rem; text-align: center; }}
+.kos-notice {{ color: var(--kos-warn); font-weight: 800; }}
+@media (max-width: 860px) {{
+  .kos-shell {{ padding: 28px 14px; }}
+  .kos-grid {{ grid-template-columns: 1fr; }}
+  .kos-panel {{ position: static; }}
+  .kos-hero {{ padding: 24px; }}
+}}
+/* theme: {html_escape(safe_slug(theme))} */
+""".strip()
+
+
+def build_html_fragment(
+    *,
+    kind: str,
+    title: str,
+    source_rel: str,
+    source_sha: str,
+    run_id: str,
+    body_html: str,
+    sections: list[dict[str, Any]],
+    generated_at: str,
+) -> str:
+    section_items = "\n".join(
+        f'<li><a href="#{html_escape(item["id"])}">{html_escape(item["title"])}</a></li>' for item in sections[:12]
+    )
+    section_nav = f'<ul class="kos-list">{section_items}</ul>' if section_items else "<p>No headings detected.</p>"
+    metadata = [
+        ("Kind", kind),
+        ("Run ID", run_id or "not run-bound"),
+        ("Source", source_rel),
+        ("Source SHA-256", source_sha),
+        ("Generated", generated_at),
+    ]
+    meta_html = "\n".join(
+        f"<div><dt>{html_escape(label)}</dt><dd>{html_escape(value)}</dd></div>" for label, value in metadata
+    )
+    return f"""
+<article class="kos-report-fragment" data-kos-fragment="true" data-kind="{html_escape(kind)}" data-source-sha256="{html_escape(source_sha)}">
+  <div class="kos-eyebrow">{html_escape(kind)}</div>
+  {body_html}
+  <details class="kos-fragment-meta">
+    <summary>Source metadata</summary>
+    <dl class="kos-meta">{meta_html}</dl>
+    <p class="kos-notice">{HTML_SOURCE_TRUTH_NOTICE}</p>
+    <nav class="kos-nav" aria-label="Report sections">{section_nav}</nav>
+  </details>
+</article>
+""".strip()
+
+
+def build_html_document(
+    *,
+    title: str,
+    kind: str,
+    body: str,
+    source_rel: str,
+    source_sha: str,
+    run_id: str,
+    generated_at: str,
+    theme: str,
+) -> str:
+    nav_hint = "Composable sidecar report"
+    subtitle = (
+        "A self-contained KnowledgeOS HTML sidecar generated from canonical Markdown, YAML, or NDJSON evidence. "
+        "Use it for human review; keep source files as the contract."
+    )
+    meta_rows = [
+        ("Kind", kind),
+        ("Run ID", run_id or "not run-bound"),
+        ("Source", source_rel),
+        ("Source SHA-256", source_sha),
+        ("Generated", generated_at),
+        ("Theme", theme),
+    ]
+    meta_html = "\n".join(
+        f"<div><dt>{html_escape(label)}</dt><dd>{html_escape(value)}</dd></div>" for label, value in meta_rows
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="knowledgeos-source-sha256" content="{html_escape(source_sha)}">
+  <meta name="knowledgeos-source-path" content="{html_escape(source_rel)}">
+  <title>{html_escape(title)}</title>
+  <style>{html_report_css(theme)}</style>
+</head>
+<body>
+  <main class="kos-shell">
+    <section class="kos-hero">
+      <div class="kos-eyebrow">{html_escape(nav_hint)}</div>
+      <h1>{html_escape(title)}</h1>
+      <p class="kos-subtitle">{html_escape(subtitle)}</p>
+    </section>
+    <section class="kos-grid">
+      <div>{body}</div>
+      <aside class="kos-panel" aria-label="Report metadata">
+        <h2>Evidence Metadata</h2>
+        <dl class="kos-meta">{meta_html}</dl>
+        <p class="kos-notice">{HTML_SOURCE_TRUTH_NOTICE}</p>
+      </aside>
+    </section>
+    <footer class="kos-footer">{HTML_SOURCE_TRUTH_NOTICE}</footer>
+  </main>
+</body>
+</html>
+"""
+
+
+def render_html_sidecar(
+    project_root: Path,
+    *,
+    kind: str,
+    source_path: Path,
+    output_path: Path,
+    run_id: str = "",
+    theme: str = HTML_DEFAULT_THEME,
+) -> dict[str, Any]:
+    if kind not in HTML_REPORT_KINDS:
+        raise ValueError(f"unsupported render kind: {kind}")
+    if not source_path.exists():
+        raise FileNotFoundError(source_path)
+    if source_path.suffix.lower() not in {".md", ".markdown", ".txt"}:
+        raise ValueError("render-html v1 expects a Markdown or text source")
+    markdown = read_text(source_path)
+    source_sha = content_fingerprint(markdown)
+    anchor_prefix = safe_slug(f"{kind}-{source_sha[:12]}")
+    body_html, title, sections = markdown_to_html_fragment(markdown, anchor_prefix=anchor_prefix)
+    if kind == "receipt" and run_id:
+        title = f"KnowledgeOS Receipt {run_id}"
+    elif kind == "handoff" and run_id:
+        title = f"KnowledgeOS Handoff {run_id}"
+    generated_at = datetime.now(timezone.utc).isoformat()
+    source_rel = project_relative(project_root, source_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fragment_path = output_path.with_suffix(".fragment.html")
+    manifest_path = output_path.with_suffix(".manifest.json")
+    fragment_html = build_html_fragment(
+        kind=kind,
+        title=title,
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id=run_id,
+        body_html=body_html,
+        sections=sections,
+        generated_at=generated_at,
+    )
+    write_text(fragment_path, fragment_html)
+    full_html = build_html_document(
+        title=title,
+        kind=kind,
+        body=fragment_html,
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id=run_id,
+        generated_at=generated_at,
+        theme=theme,
+    )
+    write_text(output_path, full_html)
+    manifest = {
+        "schema_version": "knowledgeos.html-report.v1",
+        "kind": kind,
+        "title": title,
+        "theme": theme,
+        "run_id": run_id,
+        "source": source_rel,
+        "source_sha256": source_sha,
+        "output": project_relative(project_root, output_path),
+        "fragment": project_relative(project_root, fragment_path),
+        "sections": sections,
+        "generated_at": generated_at,
+        "html_source_of_truth": False,
+        "notice": HTML_SOURCE_TRUTH_NOTICE,
+    }
+    write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    return {
+        "status": "rendered",
+        "kind": kind,
+        "title": title,
+        "output": str(output_path),
+        "fragment": str(fragment_path),
+        "manifest": str(manifest_path),
+        "source": str(source_path),
+        "source_sha256": source_sha,
+        "run_id": run_id,
+        "html_source_of_truth": False,
+    }
+
+
+def resolve_manifest_reference(project_root: Path, manifest_dir: Path, value: str) -> Path:
+    candidate = Path(value).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+    project_candidate = (project_root / candidate).resolve()
+    if project_candidate.exists():
+        return project_candidate
+    return (manifest_dir / candidate).resolve()
+
+
+def compose_html_reports(
+    project_root: Path,
+    *,
+    compose_manifest_path: Path,
+    output_path: Path,
+    theme: str = HTML_DEFAULT_THEME,
+) -> dict[str, Any]:
+    if not compose_manifest_path.exists():
+        raise FileNotFoundError(compose_manifest_path)
+    compose_manifest = json.loads(read_text(compose_manifest_path))
+    if "reports" in compose_manifest:
+        report_refs = compose_manifest.get("reports") or []
+    elif "fragment" in compose_manifest:
+        report_refs = [project_relative(project_root, compose_manifest_path)]
+    else:
+        raise ValueError("compose manifest must contain reports or fragment")
+    if not report_refs:
+        raise ValueError("compose manifest reports list is empty")
+    generated_at = datetime.now(timezone.utc).isoformat()
+    fragments: list[str] = []
+    child_manifests: list[dict[str, Any]] = []
+    for ref in report_refs:
+        child_path = resolve_manifest_reference(project_root, compose_manifest_path.parent, str(ref))
+        child = json.loads(read_text(child_path))
+        if "fragment" not in child:
+            raise ValueError(f"child manifest lacks fragment: {child_path}")
+        fragment_path = resolve_manifest_reference(project_root, child_path.parent, str(child["fragment"]))
+        if not fragment_path.exists():
+            raise FileNotFoundError(fragment_path)
+        fragments.append(read_text(fragment_path))
+        child_manifests.append(
+            {
+                "manifest": project_relative(project_root, child_path),
+                "fragment": project_relative(project_root, fragment_path),
+                "source": child.get("source", ""),
+                "source_sha256": child.get("source_sha256", ""),
+                "title": child.get("title", ""),
+                "kind": child.get("kind", ""),
+            }
+        )
+    compose_source_sha = sha256_file(compose_manifest_path)
+    title = str(compose_manifest.get("title") or "KnowledgeOS Combined Report")
+    body = "\n".join(fragments)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    full_html = build_html_document(
+        title=title,
+        kind="composed-report",
+        body=body,
+        source_rel=project_relative(project_root, compose_manifest_path),
+        source_sha=compose_source_sha,
+        run_id=str(compose_manifest.get("run_id") or ""),
+        generated_at=generated_at,
+        theme=str(compose_manifest.get("theme") or theme),
+    )
+    write_text(output_path, full_html)
+    manifest_path = output_path.with_suffix(".manifest.json")
+    manifest = {
+        "schema_version": "knowledgeos.html-composition.v1",
+        "title": title,
+        "theme": str(compose_manifest.get("theme") or theme),
+        "source": project_relative(project_root, compose_manifest_path),
+        "source_sha256": compose_source_sha,
+        "output": project_relative(project_root, output_path),
+        "report_count": len(child_manifests),
+        "reports": child_manifests,
+        "generated_at": generated_at,
+        "html_source_of_truth": False,
+        "notice": HTML_SOURCE_TRUTH_NOTICE,
+    }
+    write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    return {
+        "status": "composed",
+        "output": str(output_path),
+        "manifest": str(manifest_path),
+        "report_count": len(child_manifests),
+        "source": str(compose_manifest_path),
+        "source_sha256": compose_source_sha,
+        "html_source_of_truth": False,
     }
 
 
@@ -4745,6 +5650,31 @@ def cmd_trace_step(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_artifact_assert(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = run_artifact_assertion(
+            project_root,
+            args.task_id,
+            args.run_id,
+            kind=args.kind,
+            target_path=args.path,
+            expect=args.expect or "",
+            before_sha=args.before_sha or "",
+            json_key=args.json_key or "",
+            capability_event_id=args.capability_event_id or "",
+        )
+    except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
+    return 0
+
+
 def cmd_context_pack(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
@@ -4787,6 +5717,25 @@ def cmd_verify_lifecycle(args: argparse.Namespace) -> int:
         return 1
     emit(result, args.json)
     return 0 if result.get("status") == "passed" else 2
+
+
+def cmd_verify_effects(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = verify_effects(project_root, args.task_id, args.run_id)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
+        if result.get("warnings"):
+            print(f"warnings: {len(result['warnings'])}")
+        if result.get("errors"):
+            print(f"errors: {len(result['errors'])}")
+    return 2 if result.get("status") == "failed" else 0
 
 
 def cmd_complete_task(args: argparse.Namespace) -> int:
@@ -4855,6 +5804,58 @@ def cmd_dispatch_task(args: argparse.Namespace) -> int:
         return 1
     emit(result, args.json)
     return 0 if result.get("status") == "dispatch_ready" or args.allow_unrouted else 2
+
+
+def cmd_render_html(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        if args.compose:
+            if not args.output:
+                raise ValueError("render-html --compose requires --output")
+            result = compose_html_reports(
+                project_root,
+                compose_manifest_path=resolve_project_artifact(project_root, args.compose),
+                output_path=resolve_project_artifact(project_root, args.output),
+                theme=args.theme,
+            )
+            emit(result, args.json)
+            return 0
+
+        if not args.kind:
+            raise ValueError("render-html requires --kind unless --compose is used")
+        if args.kind in {"receipt", "handoff"}:
+            if not args.run_id:
+                raise ValueError(f"render-html --kind {args.kind} requires --run-id")
+            run_dir = resolve_run_dir(project_root, args.run_id)
+            source_path = run_dir / f"{args.kind}.md"
+            output_path = resolve_project_artifact(project_root, args.output) if args.output else run_dir / f"{args.kind}.html"
+            result = render_html_sidecar(
+                project_root,
+                kind=args.kind,
+                source_path=source_path,
+                output_path=output_path,
+                run_id=args.run_id,
+                theme=args.theme,
+            )
+        elif args.kind == "rich-report":
+            if not args.input:
+                raise ValueError("render-html --kind rich-report requires --input")
+            source_path = resolve_project_artifact(project_root, args.input)
+            output_path = resolve_project_artifact(project_root, args.output) if args.output else source_path.with_suffix(".html")
+            result = render_html_sidecar(
+                project_root,
+                kind=args.kind,
+                source_path=source_path,
+                output_path=output_path,
+                theme=args.theme,
+            )
+        else:
+            raise ValueError(f"unsupported render kind: {args.kind}")
+    except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0
 
 
 def cmd_receipt(args: argparse.Namespace) -> int:
@@ -5217,6 +6218,19 @@ def build_parser() -> argparse.ArgumentParser:
     trace_step_parser.add_argument("--json", action="store_true")
     trace_step_parser.set_defaults(func=cmd_trace_step)
 
+    artifact_assert_parser = sub.add_parser("artifact-assert", help="verify a real side effect before recording EFFECT_OK evidence")
+    artifact_assert_parser.add_argument("--project-root", required=True)
+    artifact_assert_parser.add_argument("--task-id", required=True)
+    artifact_assert_parser.add_argument("--run-id", required=True)
+    artifact_assert_parser.add_argument("--kind", required=True, choices=sorted(EFFECT_ASSERTION_KINDS))
+    artifact_assert_parser.add_argument("--path", required=True, help="artifact path inside the project root")
+    artifact_assert_parser.add_argument("--expect", default="", help="expected text, sha256, or JSON scalar value for assertion kinds that need it")
+    artifact_assert_parser.add_argument("--before-sha", default="", help="previous sha256 for file_changed assertions")
+    artifact_assert_parser.add_argument("--json-key", default="", help="dot-separated JSON key path for json_key_equals assertions")
+    artifact_assert_parser.add_argument("--capability-event-id", default="", help="optional capability event id this effect proves")
+    artifact_assert_parser.add_argument("--json", action="store_true")
+    artifact_assert_parser.set_defaults(func=cmd_artifact_assert)
+
     context_pack_parser = sub.add_parser("context-pack", help="write run context-pack.md and spec-snapshot.md")
     context_pack_parser.add_argument("--project-root", required=True)
     context_pack_parser.add_argument("--task-id", required=True)
@@ -5246,6 +6260,13 @@ def build_parser() -> argparse.ArgumentParser:
     verify_lifecycle_parser.add_argument("--run-id", required=True)
     verify_lifecycle_parser.add_argument("--json", action="store_true")
     verify_lifecycle_parser.set_defaults(func=cmd_verify_lifecycle)
+
+    verify_effects_parser = sub.add_parser("verify-effects", help="verify artifact effect assertions for a run")
+    verify_effects_parser.add_argument("--project-root", required=True)
+    verify_effects_parser.add_argument("--task-id", required=True)
+    verify_effects_parser.add_argument("--run-id", required=True)
+    verify_effects_parser.add_argument("--json", action="store_true")
+    verify_effects_parser.set_defaults(func=cmd_verify_effects)
 
     complete = sub.add_parser("complete-task", help="complete a task only after eval, lifecycle, outputs, and required postflight pass")
     complete.add_argument("--project-root", required=True)
@@ -5282,6 +6303,17 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--allow-unrouted", action="store_true", help="return success even when human triage is required")
     dispatch.add_argument("--json", action="store_true")
     dispatch.set_defaults(func=cmd_dispatch_task)
+
+    render_html = sub.add_parser("render-html", help="render Markdown evidence into composable static HTML sidecars")
+    render_html.add_argument("--project-root", required=True)
+    render_html.add_argument("--kind", choices=sorted(HTML_REPORT_KINDS), help="receipt, handoff, or rich-report")
+    render_html.add_argument("--run-id", help="run id for receipt or handoff rendering")
+    render_html.add_argument("--input", help="Markdown source for rich-report")
+    render_html.add_argument("--output", help="HTML output path; defaults beside the source")
+    render_html.add_argument("--compose", help="compose report manifests into one HTML page")
+    render_html.add_argument("--theme", default=HTML_DEFAULT_THEME)
+    render_html.add_argument("--json", action="store_true")
+    render_html.set_defaults(func=cmd_render_html)
 
     receipt = sub.add_parser("receipt", help="write a local project receipt")
     receipt.add_argument("--project-root", required=True)

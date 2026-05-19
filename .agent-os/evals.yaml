@@ -6,6 +6,13 @@ evals:
       - architecture_terms_defined
     human_gate: final_reading
 
+  report_task:
+    required_checks:
+      - source_material_traceable
+      - no_uncertain_claims_unmarked
+      - human_readable_summary_exists
+    human_gate: final_reading
+
   migration_task:
     required_checks:
       - source_paths_listed

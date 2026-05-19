@@ -47,6 +47,7 @@ workflows:
       - eval-task --project-root . --task-id <task-id> --run-id <run-id>
       - verify-context --project-root . --task-id <task-id> --run-id <run-id>
       - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
       - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
     eval_profile: workspace_initialization
     human_gate: review_generated_control_plane

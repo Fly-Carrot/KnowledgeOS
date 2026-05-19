@@ -1,0 +1,6 @@
+effect_policy:
+  strictness: warn
+  downgrade_reason:
+  default_assertion: file_exists
+  required_for:
+    - declared_outputs
