@@ -658,3 +658,98 @@ Validation:
 - Reproduced the bogus capability link acceptance in a temporary project, then verified the same command fails with `capability event not found`.
 - Added targeted regression coverage for bogus capability links, forged effect ledgers, and same-second run id collisions.
 - Re-ran harness audit, guardrail scenarios, unit tests, smoke, and diff checks after the fix.
+
+## 2026-05-29 - Module Note: Decision Graph
+
+Status: implemented locally as an optional module, not a kernel expansion.
+
+Bug / product gap reproduced:
+
+- Long research and agent sessions could record what happened through trace steps and lifecycle checkpoints, but they had no first-class public record of why a plan branched, why a route was abandoned, or why a rollback happened.
+- Without a decision ledger, the human-readable plan could drift from the executed path, especially when a task inserted new checks or changed route midway.
+- Completion could not distinguish between ordinary linear progress and important decision changes that should be auditable.
+
+Fix:
+
+- Added `decision-event` to write `.agent-os/runs/<RUN_ID>/decision-events.ndjson` and return `DECISION_OK`.
+- Added `decision-query` for filtering decision events by run, task, kind, status, or parent id.
+- Added `verify-decisions` to detect forged events, orphan nodes, invalid kinds/statuses, and unexplained abandoned, rollback, or superseded branches.
+- Added `.agent-os/decision-policy.yaml` with default `strictness: warn`; `strictness: enforce` makes `complete-task` block on decision verification failure.
+- Added `render-html --kind decision-map` to generate a readable HTML sidecar from the decision ledger while keeping NDJSON as source of truth.
+- Updated agent guide, startup prompts, operating spec, executable control-plane docs, release checklist, project template, and tests.
+
+Validation:
+
+- Reproduced missing CLI behavior before implementation: `decision-event` was an invalid command and completion did not enforce decision verification.
+- Added targeted tests for event creation, query, orphan detection, strict policy completion blocking, default warn policy, startup prompt contract, doctor policy validation, and decision-map HTML output.
+- Verified `python3 -B -m py_compile knowledgeos/cli.py`.
+- Verified `python3 -B -m unittest discover -s tests -v`: 87 tests passed.
+- Verified `./examples/scenarios/run_guardrail_scenarios.sh`: 30 checkpoints passed.
+- Verified `./bin/knowledgeos doctor --root . --project-root . --summary`: 1789 checks passed.
+- Verified `git diff --check`.
+
+## 2026-05-29 - Reporting Note: Mission Flow
+
+Status: implemented locally as a presentation/reporting layer, not kernel evidence.
+
+Product gap reproduced:
+
+- Medium and complex tasks could finish with strong command evidence but still require the user to mentally assemble what happened from raw markers such as `CHECKPOINT_OK`, `CAPABILITY_OK`, `EFFECT_OK`, `DECISION_OK`, and `[SYNC_OK]`.
+- The user-facing closeout needed a readable flow diagram with plain labels, not a dense dump of internal lifecycle terms.
+
+Fix:
+
+- Added `flow-summary`, which writes `.agent-os/runs/<RUN_ID>/mission-flow.md` and emits `FLOW_OK`.
+- Added `render-html --kind mission-flow`, which creates a self-contained HTML sidecar with colored cards and source metadata.
+- Updated `complete-task` so medium, high, and complex tasks return `flow_marker`, `flow_summary_marker`, `flow_mermaid`, and `flow_source`.
+- Kept Mission Flow out of kernel enforcement. It summarizes existing evidence lanes for humans and does not replace Markdown, YAML, or NDJSON evidence.
+- Updated executable docs, operating spec, agent guide, startup prompts, templates, changelog, and tests.
+
+Validation:
+
+- Added targeted tests for `flow-summary`, mission-flow HTML sidecars, and `complete-task` flow output.
+- Verified the diagram uses readable labels such as `Goal`, `Health Check`, `Task & Plan`, `Safe Writes`, `Work Done`, `Tools Used`, `Proof`, `Decisions`, and `Finish`.
+
+## 2026-05-29 - Module Note: Thread Plan Ledger
+
+Status: implemented locally as a chat-level planning module, not a lifecycle checkpoint.
+
+Product gap reproduced:
+
+- Run-level Mission Flow summarizes one completed task but does not preserve the whole chat-window plan as the conversation grows.
+- Long research/product conversations need a natural-language version map: Plan A / Plan B, Phase A / Phase B, current route, inserted steps, linked runs, and deferred branches.
+- The desired view should be readable by humans and should not add another completion gate.
+
+Fix:
+
+- Added `thread-plan start`, `thread-plan current`, `thread-plan append`, `thread-plan link-run`, and `thread-plan render`.
+- Added `.agent-os/threads/<THREAD_ID>/thread-plan.ndjson` as the append-only source of truth, with Markdown and HTML sidecars for review.
+- Added `THREAD_PLAN_OK` command output for successful thread-plan operations.
+- Kept Thread Plan Ledger out of `complete-task`, `verify-lifecycle`, and checkpoint enforcement.
+- Updated executable docs, operating spec, agent guide, startup prompts, templates, release checklist, changelog, and tests.
+
+Validation:
+
+- Added targeted tests for start/current/append/link-run/render and append-only ledger behavior.
+- Verified Markdown includes `Plan A / Plan B`, `Phase A / Phase B`, current working line, and linked run evidence.
+- Verified HTML sidecar is self-contained and marks HTML as presentation, not source of truth.
+
+## 2026-05-30 - Bugfix Note: Thread Plan HTML Heading
+
+Status: fixed and regression-tested.
+
+Bug reproduced:
+
+- `thread-plan render --format html` produced three `<h1>` headings for one thread-plan page.
+- Root cause: the HTML document shell already renders a page title, the Thread Plan renderer manually prepended another `<h1>`, and the Markdown fragment converted its own top-level title into a third `<h1>`.
+
+Fix:
+
+- Removed the extra hand-written Thread Plan body heading from `render_thread_plan_html`.
+- Kept the canonical Markdown title and the outer HTML shell title intact.
+
+Validation:
+
+- Reproduced the issue in a temporary project before the fix: `h1_count=3`.
+- Re-ran the same reproduction after the fix: `h1_count=2`.
+- Added a regression assertion to the Thread Plan Ledger test.

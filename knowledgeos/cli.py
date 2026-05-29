@@ -45,6 +45,8 @@ REQUIRED_PUBLIC_FILES = [
     "docs/spec-context-plan.md",
     "docs/reset-and-migration.md",
     "docs/archive-policy.md",
+    "docs/decision-graph-module.md",
+    "docs/thread-plan-ledger.md",
     "templates/governance-core/README.md",
     "templates/governance-core/STRUCTURE-CHECK.md",
     "templates/governance-core/rules/global.md",
@@ -78,6 +80,7 @@ REQUIRED_PUBLIC_FILES = [
     "templates/project-control-plane/.agent-os/tasks.yaml",
     "templates/project-control-plane/.agent-os/specs.yaml",
     "templates/project-control-plane/.agent-os/phase-policy.yaml",
+    "templates/project-control-plane/.agent-os/decision-policy.yaml",
     "templates/project-control-plane/.agent-os/effect-policy.yaml",
     "templates/project-control-plane/.agent-os/read-policy.yaml",
     "templates/project-control-plane/.agent-os/write-policy.yaml",
@@ -136,6 +139,11 @@ WRITE_POLICY_SECTIONS = {
     "forbidden_without_human_gate",
     "require_receipt_for",
 }
+LOCAL_EXTERNAL_WRITE_POLICY_SECTIONS = {
+    "external_controlled",
+    "external_forbidden_without_human_gate",
+    "external_require_receipt_for",
+}
 READ_POLICY_SECTIONS = {
     "default_context",
     "cold_storage",
@@ -147,6 +155,35 @@ EXPECTED_PHASE_KEYS = ["route", "plan", "review", "dispatch", "execute", "report
 PHASE_STATUSES = {"completed", "skipped"}
 CAPABILITY_EVENT_KINDS = {"mcp", "skill", "subagent", "orchestrator", "script", "shell", "file_read"}
 EFFECT_STRICTNESS_LEVELS = {"observe", "warn", "enforce", "off"}
+DECISION_STRICTNESS_LEVELS = {"warn", "enforce", "off"}
+DECISION_EVENT_KINDS = {
+    "plan_node",
+    "branch_opened",
+    "branch_selected",
+    "step_inserted",
+    "branch_abandoned",
+    "rollback",
+    "superseded",
+    "deferred",
+    "human_decision",
+    "risk_tradeoff",
+    "final_decision",
+}
+DECISION_EVENT_STATUSES = {
+    "planned",
+    "active",
+    "selected",
+    "executed",
+    "skipped",
+    "abandoned",
+    "rolled_back",
+    "superseded",
+    "deferred",
+    "blocked",
+}
+DECISION_EXPLANATION_REQUIRED_KINDS = {"branch_abandoned", "rollback", "superseded"}
+THREAD_PLAN_EVENT_KINDS = {"plan", "phase", "branch", "decision", "progress", "change", "summary"}
+THREAD_PLAN_MARKER = "THREAD_PLAN_OK"
 EFFECT_ASSERTION_KINDS = {
     "file_exists",
     "file_nonempty",
@@ -520,6 +557,41 @@ def validate_effect_policy(project_root: Path) -> list[CheckResult]:
     return results
 
 
+def parse_decision_policy(project_root: Path) -> dict[str, Any]:
+    policy_path = project_root / ".agent-os" / "decision-policy.yaml"
+    if not policy_path.exists():
+        return {
+            "exists": False,
+            "strictness": "warn",
+            "downgrade_reason": "",
+        }
+    scalars = parse_scalar_values(policy_path, {"strictness", "downgrade_reason"})
+    return {
+        "exists": True,
+        "strictness": (scalars.get("strictness") or "warn").lower(),
+        "downgrade_reason": scalars.get("downgrade_reason", ""),
+    }
+
+
+def validate_decision_policy(project_root: Path) -> list[CheckResult]:
+    policy = parse_decision_policy(project_root)
+    strictness = str(policy.get("strictness", "warn"))
+    results = [
+        CheckResult(
+            strictness in DECISION_STRICTNESS_LEVELS,
+            "decision_policy",
+            f"strictness={strictness}" if strictness in DECISION_STRICTNESS_LEVELS else f"invalid strictness={strictness}",
+        )
+    ]
+    if not policy.get("exists"):
+        results.append(CheckResult(True, "decision_policy", "missing decision-policy defaults to strictness=warn"))
+        return results
+    if strictness == "off":
+        reason = str(policy.get("downgrade_reason", "")).strip()
+        results.append(CheckResult(bool(reason), "decision_policy", "strictness=off requires downgrade_reason"))
+    return results
+
+
 def parse_named_blocks(path: Path) -> list[dict[str, str]]:
     blocks: list[dict[str, str]] = []
     current: dict[str, str] | None = None
@@ -655,6 +727,13 @@ def load_write_policy(project_root: Path) -> dict[str, list[str]]:
     if not policy_path.exists():
         raise FileNotFoundError(f"missing write policy: {policy_path}")
     return parse_simple_list_sections(policy_path, WRITE_POLICY_SECTIONS)
+
+
+def load_local_external_write_policy(project_root: Path) -> dict[str, list[str]]:
+    policy_path = project_root / ".knowledgeos-local" / "write-policy.local.yaml"
+    if not policy_path.exists():
+        return {section: [] for section in LOCAL_EXTERNAL_WRITE_POLICY_SECTIONS}
+    return parse_simple_list_sections(policy_path, LOCAL_EXTERNAL_WRITE_POLICY_SECTIONS)
 
 
 def load_read_policy(project_root: Path) -> dict[str, list[str]]:
@@ -945,6 +1024,7 @@ def route_output_match(relative: str, allowed_outputs: list[str]) -> str | None:
 
 def classify_write(project_root: Path, target: str) -> dict[str, Any]:
     policy = load_write_policy(project_root)
+    local_external_policy = load_local_external_write_policy(project_root)
     absolute, relative, inside = path_for_policy(project_root, target)
     absolute_value = absolute.as_posix()
 
@@ -969,6 +1049,35 @@ def classify_write(project_root: Path, target: str) -> dict[str, Any]:
         }
 
     if not inside:
+        external_forbidden_match = matches_any(
+            absolute_value,
+            local_external_policy["external_forbidden_without_human_gate"],
+        )
+        if external_forbidden_match:
+            return {
+                "decision": "human_gate_required",
+                "reason": f"matches external_forbidden_without_human_gate pattern {external_forbidden_match}",
+                "path": absolute_value,
+                "inside_project": False,
+            }
+
+        external_controlled_match = matches_any(
+            absolute_value,
+            local_external_policy["external_controlled"],
+        )
+        if external_controlled_match:
+            receipt_match = matches_any(
+                absolute_value,
+                local_external_policy["external_require_receipt_for"],
+            )
+            return {
+                "decision": "allow",
+                "reason": f"matches external_controlled pattern {external_controlled_match}",
+                "path": absolute_value,
+                "inside_project": False,
+                "receipt_required": bool(receipt_match),
+                "receipt_pattern": receipt_match,
+            }
         return {
             "decision": "deny",
             "reason": "path is outside the project root and no explicit allow policy matched",
@@ -1012,6 +1121,25 @@ def classify_route_write(project_root: Path, task_id: str, target: str) -> dict[
             **write_decision,
             "task_id": task_id,
             "route_status": "blocked_by_write_policy",
+            "route": route,
+        }
+
+    if not write_decision.get("inside_project", True):
+        if str(route.get("allow_external_controlled", "")).lower() == "true":
+            return {
+                **write_decision,
+                "task_id": task_id,
+                "route_status": "allowed_by_external_route",
+                "route_output_match": "external_controlled",
+                "route": route,
+            }
+        return {
+            "decision": "route_output_denied",
+            "reason": f"path is allowed by local external write policy but task {task_id} route does not allow external controlled writes",
+            "path": write_decision["path"],
+            "inside_project": False,
+            "task_id": task_id,
+            "allowed_outputs": route.get("allowed_outputs", []),
             "route": route,
         }
 
@@ -1535,6 +1663,7 @@ def write_task_plan(project_root: Path, task_id: str, run_id: str, *, summary: s
         "- Record public lifecycle checkpoints with phase-task.",
         "- Record MCP, skill, subagent, orchestrator, or important script use with capability-event.",
         "- Complete only after eval-task, verify-lifecycle, and postflight pass.",
+        "- For medium, high, or complex tasks, include a readable FLOW_OK Mission Flow in the final answer.",
         "",
     ]
     write_text(run_dir / "plan.md", "\n".join(lines).rstrip() + "\n")
@@ -1690,6 +1819,10 @@ def effect_assertions_path(run_dir: Path) -> Path:
     return run_dir / "effect-assertions.ndjson"
 
 
+def decision_events_path(run_dir: Path) -> Path:
+    return run_dir / "decision-events.ndjson"
+
+
 def step_events_path(run_dir: Path) -> Path:
     return run_dir / "step-events.ndjson"
 
@@ -1766,6 +1899,423 @@ def load_effect_assertions(run_dir: Path) -> list[dict[str, Any]]:
             item = {"_invalid_json": raw, "_line": line_number}
         assertions.append(item)
     return assertions
+
+
+def load_decision_events(run_dir: Path) -> list[dict[str, Any]]:
+    path = decision_events_path(run_dir)
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(read_text(path).splitlines(), start=1):
+        if not raw.strip():
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            item = {"_invalid_json": raw, "_line": line_number}
+        events.append(item)
+    return events
+
+
+def threads_root(project_root: Path) -> Path:
+    return project_root / ".agent-os" / "threads"
+
+
+def current_thread_path(project_root: Path) -> Path:
+    return threads_root(project_root) / "current.json"
+
+
+def thread_dir(project_root: Path, thread_id: str) -> Path:
+    return threads_root(project_root) / thread_id
+
+
+def thread_plan_path(project_root: Path, thread_id: str) -> Path:
+    return thread_dir(project_root, thread_id) / "thread-plan.ndjson"
+
+
+def thread_command_events_path(project_root: Path, thread_id: str) -> Path:
+    return thread_dir(project_root, thread_id) / "command-events.ndjson"
+
+
+def thread_meta_path(project_root: Path, thread_id: str) -> Path:
+    return thread_dir(project_root, thread_id) / "thread.json"
+
+
+def utc_event_stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+
+
+def make_thread_id(project_root: Path, title: str) -> str:
+    base = f"THREAD-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{safe_slug(title)[:36]}"
+    candidate = base.rstrip("-")
+    suffix = 2
+    while thread_dir(project_root, candidate).exists():
+        candidate = f"{base}-{suffix}".rstrip("-")
+        suffix += 1
+    return candidate
+
+
+def append_thread_command_event(project_root: Path, thread_id: str, event_type: str, **extra: Any) -> None:
+    record = {
+        "event_type": event_type,
+        "thread_id": thread_id,
+        "generated_by": "knowledgeos",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        **extra,
+    }
+    path = thread_command_events_path(project_root, thread_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def load_thread_meta(project_root: Path, thread_id: str) -> dict[str, Any]:
+    path = thread_meta_path(project_root, thread_id)
+    if not path.exists():
+        raise FileNotFoundError(f"missing thread metadata: {path}")
+    return json.loads(read_text(path))
+
+
+def load_current_thread(project_root: Path) -> dict[str, Any]:
+    path = current_thread_path(project_root)
+    if not path.exists():
+        raise FileNotFoundError(f"missing current thread pointer: {path}")
+    current = json.loads(read_text(path))
+    thread_id = str(current.get("thread_id", ""))
+    if not thread_id:
+        raise ValueError("current thread pointer is missing thread_id")
+    if not thread_dir(project_root, thread_id).exists():
+        raise FileNotFoundError(f"current thread directory missing: {thread_id}")
+    return current
+
+
+def load_thread_events(project_root: Path, thread_id: str) -> list[dict[str, Any]]:
+    path = thread_plan_path(project_root, thread_id)
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(read_text(path).splitlines(), start=1):
+        if not raw.strip():
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            item = {"_invalid_json": raw, "_line": line_number}
+        events.append(item)
+    return events
+
+
+def write_thread_current(project_root: Path, meta: dict[str, Any]) -> None:
+    current = {
+        "thread_id": meta.get("thread_id", ""),
+        "title": meta.get("title", ""),
+        "spec_id": meta.get("spec_id", ""),
+        "created_at": meta.get("created_at", ""),
+        "last_updated_at": meta.get("last_updated_at", ""),
+    }
+    write_text(current_thread_path(project_root), json.dumps(current, indent=2, ensure_ascii=False) + "\n")
+
+
+def update_thread_meta(project_root: Path, thread_id: str, **updates: Any) -> dict[str, Any]:
+    meta = load_thread_meta(project_root, thread_id)
+    meta.update(updates)
+    meta["last_updated_at"] = datetime.now(timezone.utc).isoformat()
+    write_text(thread_meta_path(project_root, thread_id), json.dumps(meta, indent=2, ensure_ascii=False) + "\n")
+    write_thread_current(project_root, meta)
+    return meta
+
+
+def thread_event_label(text: str, limit: int = 52) -> str:
+    cleaned = " ".join(str(text).split())
+    if len(cleaned) > limit:
+        cleaned = cleaned[: max(0, limit - 3)].rstrip() + "..."
+    return cleaned.replace('"', "'").replace("[", "(").replace("]", ")")
+
+
+def append_thread_plan_event(
+    project_root: Path,
+    *,
+    thread_id: str,
+    kind: str,
+    text: str,
+    linked_spec_id: str = "",
+    linked_task_id: str = "",
+    linked_run_id: str = "",
+    parent_event_id: str = "",
+    event_type: str = "thread-plan append",
+) -> dict[str, Any]:
+    if kind not in THREAD_PLAN_EVENT_KINDS:
+        raise ValueError(f"invalid thread-plan kind: {kind}")
+    if not text.strip():
+        raise ValueError("thread-plan text is required")
+    if not thread_dir(project_root, thread_id).exists():
+        raise FileNotFoundError(f"thread not found: {thread_id}")
+    event_id = f"TPE-{utc_event_stamp()}-{safe_slug(kind)}"
+    record = {
+        "event_id": event_id,
+        "thread_id": thread_id,
+        "kind": kind,
+        "text": text.strip(),
+        "linked_spec_id": linked_spec_id.strip(),
+        "linked_task_id": linked_task_id.strip(),
+        "linked_run_id": linked_run_id.strip(),
+        "parent_event_id": parent_event_id.strip(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "append_only": True,
+    }
+    path = thread_plan_path(project_root, thread_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    update_thread_meta(project_root, thread_id)
+    append_thread_command_event(
+        project_root,
+        thread_id,
+        event_type,
+        event_id=event_id,
+        kind=kind,
+        linked_task_id=linked_task_id.strip(),
+        linked_run_id=linked_run_id.strip(),
+        linked_spec_id=linked_spec_id.strip(),
+    )
+    render_thread_plan_markdown(project_root, thread_id)
+    marker = f"{THREAD_PLAN_MARKER} action=append thread={thread_id} kind={kind}"
+    return {
+        "status": "recorded",
+        "thread_plan_marker": THREAD_PLAN_MARKER,
+        "marker": marker,
+        "thread_id": thread_id,
+        "event_id": event_id,
+        "ledger": str(path),
+        "record": record,
+    }
+
+
+def start_thread_plan(project_root: Path, *, title: str, spec_id: str = "") -> dict[str, Any]:
+    if not title.strip():
+        raise ValueError("thread-plan title is required")
+    thread_id = make_thread_id(project_root, title)
+    created_at = datetime.now(timezone.utc).isoformat()
+    meta = {
+        "thread_id": thread_id,
+        "title": title.strip(),
+        "spec_id": spec_id.strip(),
+        "created_at": created_at,
+        "last_updated_at": created_at,
+    }
+    thread_dir(project_root, thread_id).mkdir(parents=True, exist_ok=True)
+    write_text(thread_meta_path(project_root, thread_id), json.dumps(meta, indent=2, ensure_ascii=False) + "\n")
+    write_thread_current(project_root, meta)
+    result = append_thread_plan_event(
+        project_root,
+        thread_id=thread_id,
+        kind="plan",
+        text=f"总体计划：{title.strip()}",
+        linked_spec_id=spec_id,
+        event_type="thread-plan start",
+    )
+    result.update({"status": "started", "title": title.strip(), "spec_id": spec_id.strip()})
+    result["marker"] = f"{THREAD_PLAN_MARKER} action=start thread={thread_id}"
+    return result
+
+
+def render_thread_plan_mermaid(project_root: Path, thread_id: str) -> str:
+    meta = load_thread_meta(project_root, thread_id)
+    events = [event for event in load_thread_events(project_root, thread_id) if "_invalid_json" not in event]
+    lines = ["flowchart LR"]
+    lines.append(f'  S["Start: {thread_event_label(str(meta.get("title", thread_id)))}"]')
+    previous = "S"
+    branch_anchor = "S"
+    if not events:
+        lines.append('  E["No plan notes yet"]')
+        lines.append("  S --> E")
+    for index, event in enumerate(events, start=1):
+        node = f"N{index}"
+        kind = str(event.get("kind", "summary"))
+        label = thread_event_label(str(event.get("text", "")))
+        lines.append(f'  {node}["{label}"]')
+        if kind == "branch":
+            lines.append(f"  {branch_anchor} -.-> {node}")
+        else:
+            lines.append(f"  {previous} --> {node}")
+            previous = node
+            branch_anchor = node
+    lines.extend(
+        [
+            "",
+            "  classDef start fill:#E8F3FF,stroke:#2B6CB0,color:#102A43;",
+            "  classDef plan fill:#ECFEFF,stroke:#0891B2,color:#083344;",
+            "  classDef phase fill:#E9FBEF,stroke:#2F855A,color:#123524;",
+            "  classDef branch fill:#FFF7ED,stroke:#EA580C,color:#431407;",
+            "  classDef decision fill:#F3E8FF,stroke:#6B46C1,color:#2D174D;",
+            "  classDef progress fill:#DCFCE7,stroke:#15803D,color:#052E16;",
+            "  class S start;",
+        ]
+    )
+    classes: dict[str, list[str]] = {"plan": [], "phase": [], "branch": [], "decision": [], "progress": []}
+    for index, event in enumerate(events, start=1):
+        kind = str(event.get("kind", "summary"))
+        css_kind = kind if kind in classes else ("decision" if kind in {"change", "summary"} else "plan")
+        classes.setdefault(css_kind, []).append(f"N{index}")
+    for kind, nodes in classes.items():
+        if nodes:
+            lines.append(f"  class {','.join(nodes)} {kind};")
+    return "\n".join(lines)
+
+
+def render_thread_plan_markdown(project_root: Path, thread_id: str) -> dict[str, Any]:
+    meta = load_thread_meta(project_root, thread_id)
+    events = [event for event in load_thread_events(project_root, thread_id) if "_invalid_json" not in event]
+    by_kind: dict[str, list[dict[str, Any]]] = {kind: [] for kind in THREAD_PLAN_EVENT_KINDS}
+    for event in events:
+        by_kind.setdefault(str(event.get("kind", "")), []).append(event)
+    current_line = next((event for event in reversed(events) if str(event.get("kind")) in {"progress", "phase", "decision", "change", "summary"}), None)
+    lines = [
+        f"# Thread Plan {thread_id}",
+        "",
+        f"目标：{meta.get('title', '')}",
+        "",
+        f"当前工作线：{current_line.get('text', '还没有记录进展。') if current_line else '还没有记录进展。'}",
+        "",
+        "## 总体计划",
+        "",
+    ]
+    for event in by_kind.get("plan", []):
+        lines.append(f"- {event.get('text', '')}")
+    if not by_kind.get("plan"):
+        lines.append("- 尚未记录总体计划。")
+    lines.extend(["", "## Plan A / Plan B", ""])
+    branch_events = by_kind.get("branch", [])
+    if branch_events:
+        for index, event in enumerate(branch_events, start=1):
+            label = chr(ord("A") + min(index - 1, 25))
+            lines.append(f"- Plan {label}: {event.get('text', '')}")
+    else:
+        lines.append("- 当前没有分支计划。")
+    lines.extend(["", "## Phase A / Phase B", ""])
+    phase_events = by_kind.get("phase", [])
+    if phase_events:
+        for index, event in enumerate(phase_events, start=1):
+            label = chr(ord("A") + min(index - 1, 25))
+            lines.append(f"- Phase {label}: {event.get('text', '')}")
+    else:
+        lines.append("- 当前没有阶段拆分。")
+    lines.extend(["", "## 当前选择", ""])
+    choice_events = by_kind.get("decision", []) + by_kind.get("change", [])
+    if choice_events:
+        for event in choice_events:
+            lines.append(f"- {event.get('text', '')}")
+    else:
+        lines.append("- 尚未记录改路或选择。")
+    lines.extend(["", "## 已完成", ""])
+    progress_events = by_kind.get("progress", [])
+    if progress_events:
+        for event in progress_events:
+            lines.append(f"- {event.get('text', '')}")
+    else:
+        lines.append("- 尚未记录完成项。")
+    lines.extend(["", "## 下一步", ""])
+    summary_events = by_kind.get("summary", [])
+    if summary_events:
+        lines.append(f"- {summary_events[-1].get('text', '')}")
+    else:
+        lines.append("- 等待下一轮计划推进。")
+    lines.extend(["", "## 关联证据", ""])
+    linked = [
+        event
+        for event in events
+        if event.get("linked_spec_id") or event.get("linked_task_id") or event.get("linked_run_id")
+    ]
+    if linked:
+        for event in linked:
+            parts = [str(event.get(key, "")) for key in ["linked_spec_id", "linked_task_id", "linked_run_id"] if event.get(key)]
+            lines.append(f"- {event.get('event_id', '')}: {' / '.join(parts)}")
+    else:
+        lines.append("- 尚未关联 spec/task/run。")
+    lines.extend(["", "## Mermaid", "", "```mermaid", render_thread_plan_mermaid(project_root, thread_id), "```", ""])
+    source_path = thread_dir(project_root, thread_id) / "thread-plan.md"
+    markdown = "\n".join(lines).rstrip() + "\n"
+    write_text(source_path, markdown)
+    return {
+        "status": "rendered",
+        "thread_plan_marker": THREAD_PLAN_MARKER,
+        "marker": f"{THREAD_PLAN_MARKER} action=render thread={thread_id} format=markdown",
+        "thread_id": thread_id,
+        "format": "markdown",
+        "output": str(source_path),
+        "markdown": markdown,
+        "event_count": len(events),
+    }
+
+
+def render_thread_plan_html(project_root: Path, thread_id: str) -> dict[str, Any]:
+    markdown_result = render_thread_plan_markdown(project_root, thread_id)
+    source_path = thread_plan_path(project_root, thread_id)
+    if not source_path.exists():
+        raise FileNotFoundError(source_path)
+    source_sha = sha256_file(source_path)
+    mermaid = render_thread_plan_mermaid(project_root, thread_id)
+    body_html, _title, sections = markdown_to_html_fragment(markdown_result["markdown"], anchor_prefix=safe_slug(thread_id.lower()))
+    body_html = (
+        "<details><summary>Visual plan map</summary>"
+        f"<pre><code>{html_escape(mermaid)}</code></pre>"
+        "</details>"
+        + body_html
+    )
+    output_path = thread_dir(project_root, thread_id) / "thread-map.html"
+    fragment_path = output_path.with_suffix(".fragment.html")
+    manifest_path = output_path.with_suffix(".manifest.json")
+    generated_at = datetime.now(timezone.utc).isoformat()
+    source_rel = project_relative(project_root, source_path)
+    fragment_html = build_html_fragment(
+        kind="thread-plan",
+        title=f"Thread Plan {thread_id}",
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id="not run-bound",
+        body_html=body_html,
+        sections=sections,
+        generated_at=generated_at,
+    )
+    write_text(fragment_path, fragment_html)
+    full_html = build_html_document(
+        title=f"Thread Plan {thread_id}",
+        kind="thread-plan",
+        body=fragment_html,
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id="not run-bound",
+        generated_at=generated_at,
+        theme=HTML_DEFAULT_THEME,
+    )
+    write_text(output_path, full_html)
+    manifest = {
+        "schema_version": "knowledgeos.html-report.v1",
+        "kind": "thread-plan",
+        "title": f"Thread Plan {thread_id}",
+        "thread_id": thread_id,
+        "source": source_rel,
+        "source_sha256": source_sha,
+        "output": project_relative(project_root, output_path),
+        "fragment": project_relative(project_root, fragment_path),
+        "sections": sections,
+        "generated_at": generated_at,
+        "html_source_of_truth": False,
+        "notice": HTML_SOURCE_TRUTH_NOTICE,
+    }
+    write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    return {
+        "status": "rendered",
+        "thread_plan_marker": THREAD_PLAN_MARKER,
+        "marker": f"{THREAD_PLAN_MARKER} action=render thread={thread_id} format=html",
+        "thread_id": thread_id,
+        "format": "html",
+        "output": str(output_path),
+        "manifest": str(manifest_path),
+        "source": str(source_path),
+        "source_sha256": source_sha,
+        "html_source_of_truth": False,
+    }
 
 
 def short_marker_value(value: str, limit: int = 96) -> str:
@@ -2447,6 +2997,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
     phases = parse_simple_list_sections(agent_os / "fabric-link.yaml", {"phase_keys"}).get("phase_keys", [])
     results.append(CheckResult(phases == EXPECTED_PHASE_KEYS, "phase_keys", f"{phases}"))
     results.extend(validate_phase_policy(project_root))
+    results.extend(validate_decision_policy(project_root))
     results.extend(validate_effect_policy(project_root))
 
     policy = load_write_policy(project_root)
@@ -2649,6 +3200,7 @@ def build_agent_guide(project_root: Path) -> str:
             "   - .agent-os/tasks.yaml",
             "   - .agent-os/specs.yaml",
             "   - .agent-os/phase-policy.yaml",
+            "   - .agent-os/decision-policy.yaml",
             "   - .agent-os/effect-policy.yaml",
             "   - .agent-os/decisions.yaml",
             "   - .agent-os/evals.yaml",
@@ -2661,6 +3213,8 @@ def build_agent_guide(project_root: Path) -> str:
             f"   - {bin_path} tool-registry --project-root {project_root}",
             f"   - {bin_path} create-spec --project-root {project_root} --title <title>  # when the user asks to create/align spec",
             f"   - {bin_path} align-spec --project-root {project_root} --task-id <task-id>",
+            f"   - {bin_path} thread-plan current --project-root {project_root}  # restore the chat-level plan when one exists; relay THREAD_PLAN_OK",
+            f"   - {bin_path} thread-plan start --project-root {project_root} --title <natural-language-goal>  # when a long-lived plan/spec starts; relay THREAD_PLAN_OK",
             f"   - {bin_path} create-task --project-root {project_root} --title <title> --type <type> --output <path> --acceptance <check>",
             f"   - {bin_path} route-task --project-root {project_root} --task-id <task-id>",
             f"   - {bin_path} dispatch-task --project-root {project_root} --task-id <task-id>",
@@ -2682,12 +3236,17 @@ def build_agent_guide(project_root: Path) -> str:
             f"   - {bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note <public-trace> --evidence <evidence>; echo or relay TRACE_OK;",
             f"   - {bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>; echo or relay CHECKPOINT_OK;",
             f"   - {bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose <purpose> before/after MCP, skill, subagent, orchestrator, or important script use; echo or relay CAPABILITY_OK;",
+            f"   - {bin_path} decision-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --title <title> --summary <summary> --reason <reason> --evidence <evidence>; echo or relay DECISION_OK when the plan branches, changes, rolls back, or abandons a route;",
+            f"   - {bin_path} thread-plan append --project-root {project_root} --thread-id <thread-id> --kind <plan|phase|branch|decision|progress|change|summary> --text <natural-language-note> when the chat-level plan changes or advances; relay THREAD_PLAN_OK;",
+            f"   - {bin_path} thread-plan link-run --project-root {project_root} --thread-id <thread-id> --task-id <task-id> --run-id <run-id> to connect a run to the long-lived plan;",
             f"   - {bin_path} artifact-assert --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --path <artifact>; echo or relay EFFECT_OK;",
             f"   - {bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
             f"   - {bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
             f"   - {bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
             f"   - {bin_path} verify-effects --project-root {project_root} --task-id <task-id> --run-id <run-id>; echo or relay EFFECT_VERIFY_OK;",
+            f"   - {bin_path} verify-decisions --project-root {project_root} --task-id <task-id> --run-id <run-id>; echo or relay DECISION_VERIFY_OK;",
             f"   - {bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary <summary>",
+            f"   - for medium, high, or complex tasks, include the returned FLOW_OK Mermaid Mission Flow; if needed run {bin_path} flow-summary --project-root {project_root} --run-id <run-id>.",
             "",
             "7. For shared-fabric hosts, finish with canonical postflight.",
             "   - report [SYNC_OK] only after postflight succeeds.",
@@ -2717,30 +3276,33 @@ def build_startup_prompt(project_root: Path) -> str:
             "Before substantial work:",
             "",
             "1. Read `AGENTS.md`.",
-            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/specs.yaml`, `.agent-os/phase-policy.yaml`, `.agent-os/effect-policy.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
+            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/specs.yaml`, `.agent-os/phase-policy.yaml`, `.agent-os/decision-policy.yaml`, `.agent-os/effect-policy.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
             f"3. Run `{bin_path} doctor --project-root {project_root} --summary` and do not proceed if it fails.",
             f"4. If the user says `create spec`, `align spec`, `对齐spec`, or equivalent, run `{bin_path} create-spec --project-root {project_root} --title \"<title>\"` or `{bin_path} align-spec --project-root {project_root} --task-id <task-id>` before execution.",
-            f"5. Select or confirm one task id from `.agent-os/tasks.yaml`; if the user asks for new work and no ready task fits, run `{bin_path} create-task --project-root {project_root} --title \"<title>\" --type <type> --output <path> --acceptance \"<check>\"`.",
-            f"6. Run `{bin_path} route-task --project-root {project_root} --task-id <task-id>`.",
-            f"7. Run `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id>` before invoking subagents, MCP tools, skills, workflows, or scripts.",
-            f"8. Before planned mutation, run `{bin_path} check-route-write --project-root {project_root} --task-id <task-id> --path <planned-path>`.",
-            f"9. Create run evidence with `{bin_path} run-task --project-root {project_root} --task-id <task-id>`; this writes `spec-snapshot.md` and `context-pack.md`.",
-            f"10. Write/update the execution context with `{bin_path} context-pack --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} plan-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
-            "11. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.",
-            f"12. Record dispatch evidence with `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id> --run-id <run-id>` after the run exists.",
-            f"13. Record public operational progress with `{bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `TRACE_OK` marker.",
-            f"14. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `CHECKPOINT_OK` marker.",
-            f"15. Record MCP, skill, subagent, orchestrator, or important script use with `{bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose \"<purpose>\"`; relay the returned `CAPABILITY_OK` marker.",
-            f"16. Verify real side effects with `{bin_path} artifact-assert --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --path <artifact>`; relay the returned `EFFECT_OK` marker.",
-            f"17. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
-            f"18. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>`, `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`, and `{bin_path} verify-effects --project-root {project_root} --task-id <task-id> --run-id <run-id>`; relay the returned `EFFECT_VERIFY_OK` marker before claiming effect verification success.",
-            f"19. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, capability visibility, effect verification, and required postflight.",
-            "20. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
-            f"21. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
-            f"22. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
-            f"23. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
+            f"5. If the user starts a durable plan/spec conversation, run `{bin_path} thread-plan current --project-root {project_root}` or `{bin_path} thread-plan start --project-root {project_root} --title \"<natural language goal>\"`; append natural-language progress with `{bin_path} thread-plan append --project-root {project_root} --thread-id <thread-id> --kind <kind> --text \"<plain note>\"` when the plan changes or advances, and relay `THREAD_PLAN_OK`.",
+            f"6. Select or confirm one task id from `.agent-os/tasks.yaml`; if the user asks for new work and no ready task fits, run `{bin_path} create-task --project-root {project_root} --title \"<title>\" --type <type> --output <path> --acceptance \"<check>\"`.",
+            f"7. Run `{bin_path} route-task --project-root {project_root} --task-id <task-id>`.",
+            f"8. Run `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id>` before invoking subagents, MCP tools, skills, workflows, or scripts.",
+            f"9. Before planned mutation, run `{bin_path} check-route-write --project-root {project_root} --task-id <task-id> --path <planned-path>`.",
+            f"10. Create run evidence with `{bin_path} run-task --project-root {project_root} --task-id <task-id>`; this writes `spec-snapshot.md` and `context-pack.md`.",
+            f"11. Write/update the execution context with `{bin_path} context-pack --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} plan-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
+            "12. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.",
+            f"13. Record dispatch evidence with `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id> --run-id <run-id>` after the run exists.",
+            f"14. Record public operational progress with `{bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `TRACE_OK` marker.",
+            f"15. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `CHECKPOINT_OK` marker.",
+            f"16. Record MCP, skill, subagent, orchestrator, or important script use with `{bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose \"<purpose>\"`; relay the returned `CAPABILITY_OK` marker.",
+            f"17. Record public decision changes with `{bin_path} decision-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --title \"<title>\" --summary \"<summary>\" --reason \"<reason>\" --evidence \"<evidence>\"`; relay the returned `DECISION_OK` marker when plans branch, change, roll back, or abandon a route.",
+            f"18. Verify real side effects with `{bin_path} artifact-assert --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --path <artifact>`; relay the returned `EFFECT_OK` marker.",
+            f"19. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
+            f"20. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>`, `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`, `{bin_path} verify-effects --project-root {project_root} --task-id <task-id> --run-id <run-id>`, and `{bin_path} verify-decisions --project-root {project_root} --task-id <task-id> --run-id <run-id>`; relay `EFFECT_VERIFY_OK` and `DECISION_VERIFY_OK` before claiming verification success.",
+            f"21. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, capability visibility, effect verification, decision verification, and required postflight.",
+            f"22. For medium, high, or complex tasks, include the returned `FLOW_OK` Mermaid Mission Flow in the final answer; if needed, run `{bin_path} flow-summary --project-root {project_root} --run-id <run-id>`.",
+            "23. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
+            f"24. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
+            f"25. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
+            f"26. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
             "",
-            "Never claim boot, route, dispatch, write safety, spec alignment, context pack, plan, trace, checkpoint, capability, effect, eval, completion, or sync success without command evidence.",
+            "Never claim boot, route, dispatch, write safety, spec alignment, thread plan, context pack, plan, trace, checkpoint, capability, decision, effect, eval, completion, flow, or sync success without command evidence.",
             "",
         ]
     )
@@ -3572,6 +4134,264 @@ def record_trace_step(
     return {"status": "recorded", "trace_marker": "TRACE_OK", "marker": marker, "ledger": str(event_path), "record": record}
 
 
+def effect_assertion_id_exists(run_dir: Path, assertion_id: str, task_id: str, run_id: str) -> bool:
+    return any(
+        assertion.get("assertion_id") == assertion_id
+        and assertion.get("task_id") == task_id
+        and assertion.get("run_id") == run_id
+        and assertion.get("status") == "passed"
+        for assertion in load_effect_assertions(run_dir)
+        if "_invalid_json" not in assertion
+    )
+
+
+def record_decision_event(
+    project_root: Path,
+    task_id: str,
+    run_id: str,
+    *,
+    kind: str,
+    status: str,
+    title: str,
+    summary: str,
+    reason: str,
+    evidence: str,
+    parent_id: str = "",
+    options: list[str] | None = None,
+    chosen: str = "",
+    linked_step: str = "",
+    linked_capability_event_id: str = "",
+    linked_effect_assertion_id: str = "",
+) -> dict[str, Any]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    if kind not in DECISION_EVENT_KINDS:
+        raise ValueError(f"invalid decision kind {kind!r}; expected one of {sorted(DECISION_EVENT_KINDS)}")
+    if status not in DECISION_EVENT_STATUSES:
+        raise ValueError(f"invalid decision status {status!r}; expected one of {sorted(DECISION_EVENT_STATUSES)}")
+    for label, value in [("--title", title), ("--summary", summary), ("--reason", reason), ("--evidence", evidence)]:
+        if not value.strip():
+            raise ValueError(f"{label} is required")
+    if linked_step and linked_step not in OPERATIONAL_TRACE_STEPS:
+        raise ValueError(f"invalid linked step {linked_step!r}; expected one of {OPERATIONAL_TRACE_STEPS}")
+    capability_link = linked_capability_event_id.strip()
+    if capability_link and not capability_event_id_exists(run_dir, capability_link, task_id, run_id):
+        raise ValueError(f"capability event not found for decision: {capability_link}")
+    effect_link = linked_effect_assertion_id.strip()
+    if effect_link and not effect_assertion_id_exists(run_dir, effect_link, task_id, run_id):
+        raise ValueError(f"effect assertion not found for decision: {effect_link}")
+
+    decision_id = (
+        "DEC-"
+        + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        + "-"
+        + safe_slug(f"{kind}-{title.strip()}")[:48]
+    )
+    clean_options = [item.strip() for item in (options or []) if item.strip()]
+    record = {
+        "decision_id": decision_id,
+        "parent_id": parent_id.strip(),
+        "task_id": task_id,
+        "run_id": run_id,
+        "kind": kind,
+        "status": status,
+        "title": title.strip(),
+        "summary": summary.strip(),
+        "reason": reason.strip(),
+        "options": clean_options,
+        "chosen": chosen.strip(),
+        "evidence": evidence.strip(),
+        "linked_step": linked_step.strip(),
+        "linked_capability_event_id": capability_link,
+        "linked_effect_assertion_id": effect_link,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    event_path = decision_events_path(run_dir)
+    with event_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    append_command_event(
+        run_dir,
+        "decision-event",
+        task_id,
+        run_id,
+        decision_id=decision_id,
+        kind=kind,
+        status=status,
+    )
+    marker = f"DECISION_OK kind={kind} status={status} title={short_marker_value(title)}"
+    return {
+        "status": "recorded",
+        "decision_marker": "DECISION_OK",
+        "decision_id": decision_id,
+        "marker": marker,
+        "ledger": str(event_path),
+        "record": record,
+    }
+
+
+def query_decision_events(
+    project_root: Path,
+    *,
+    run_id: str,
+    task_id: str = "",
+    kind: str = "",
+    status: str = "",
+    parent_id: str = "",
+) -> dict[str, Any]:
+    run_dir = resolve_run_dir(project_root, run_id)
+    events = [event for event in load_decision_events(run_dir) if "_invalid_json" not in event]
+    if task_id:
+        events = [event for event in events if event.get("task_id") == task_id]
+    if kind:
+        events = [event for event in events if event.get("kind") == kind]
+    if status:
+        events = [event for event in events if event.get("status") == status]
+    if parent_id:
+        events = [event for event in events if event.get("parent_id") == parent_id]
+    return {
+        "status": "ok",
+        "run_id": run_id,
+        "count": len(events),
+        "events": events,
+        "ledger": str(decision_events_path(run_dir)),
+    }
+
+
+def decision_event_has_command_event(run_dir: Path, event: dict[str, Any], task_id: str, run_id: str) -> bool:
+    return has_command_event(
+        run_dir,
+        "decision-event",
+        task_id,
+        run_id,
+        decision_id=str(event.get("decision_id", "")),
+        kind=str(event.get("kind", "")),
+        status=str(event.get("status", "")),
+    )
+
+
+def build_decision_verify_marker(result: dict[str, Any]) -> str:
+    return (
+        "DECISION_VERIFY_OK "
+        f"status={result.get('status', '')} "
+        f"strictness={result.get('strictness', '')} "
+        f"decisions={len(result.get('events', []))} "
+        f"warnings={len(result.get('warnings', []))} "
+        f"errors={len(result.get('errors', []))}"
+    )
+
+
+def verify_decisions(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
+    policy = parse_decision_policy(project_root)
+    strictness = str(policy.get("strictness", "warn"))
+    if strictness not in DECISION_STRICTNESS_LEVELS:
+        raise ValueError(f"invalid decision strictness: {strictness}")
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    if strictness == "off":
+        reason = str(policy.get("downgrade_reason", "")).strip()
+        if not reason:
+            errors.append({"label": "missing_downgrade_reason", "detail": "strictness=off requires downgrade_reason"})
+        result = {
+            "status": "failed" if errors else "disabled",
+            "task_id": task_id,
+            "run_id": run_id,
+            "strictness": strictness,
+            "downgrade_reason": reason,
+            "events": [],
+            "errors": errors,
+            "warnings": warnings,
+            "ledger": str(decision_events_path(run_dir)),
+        }
+        result["decision_verify_marker"] = "DECISION_VERIFY_OK"
+        result["marker"] = build_decision_verify_marker(result)
+        append_command_event(
+            run_dir,
+            "verify-decisions",
+            task_id,
+            run_id,
+            status=str(result["status"]),
+            strictness=strictness,
+            decision_verify_marker=result["decision_verify_marker"],
+            marker=result["marker"],
+        )
+        return result
+
+    raw_events = load_decision_events(run_dir)
+    valid_events: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    duplicate_ids: set[str] = set()
+    parent_ids: set[str] = set()
+    for event in raw_events:
+        if "_invalid_json" in event:
+            errors.append({"label": "invalid_decision_event", "detail": f"line {event.get('_line')} is not JSON"})
+            continue
+        if event.get("task_id") != task_id or event.get("run_id") != run_id:
+            errors.append({"label": "decision_scope_mismatch", "detail": event})
+            continue
+        decision_id = str(event.get("decision_id", "")).strip()
+        if not decision_id:
+            errors.append({"label": "decision_missing_id", "detail": event.get("title", "")})
+            continue
+        if decision_id in seen_ids:
+            duplicate_ids.add(decision_id)
+        seen_ids.add(decision_id)
+        for field in ["title", "summary", "reason", "evidence"]:
+            if not str(event.get(field, "")).strip():
+                errors.append({"label": f"decision_missing_{field}", "detail": decision_id})
+        kind = str(event.get("kind", ""))
+        status = str(event.get("status", ""))
+        if kind not in DECISION_EVENT_KINDS:
+            errors.append({"label": "invalid_decision_kind", "detail": kind})
+        if status not in DECISION_EVENT_STATUSES:
+            errors.append({"label": "invalid_decision_status", "detail": status})
+        if (kind in DECISION_EXPLANATION_REQUIRED_KINDS or status in {"abandoned", "rolled_back", "superseded"}) and not str(event.get("reason", "")).strip():
+            errors.append({"label": "decision_missing_explanation", "detail": decision_id})
+        if not decision_event_has_command_event(run_dir, event, task_id, run_id):
+            errors.append({"label": "decision_missing_command_event", "detail": decision_id})
+        parent = str(event.get("parent_id", "")).strip()
+        if parent:
+            parent_ids.add(parent)
+        valid_events.append(event)
+    for decision_id in sorted(duplicate_ids):
+        errors.append({"label": "decision_duplicate_id", "detail": decision_id})
+    for parent in sorted(parent_ids):
+        if parent not in seen_ids:
+            errors.append({"label": "decision_orphan_parent", "detail": parent})
+
+    if not valid_events:
+        if strictness == "enforce":
+            errors.append({"label": "no_decision_events", "detail": "decision-policy strictness=enforce requires decision evidence"})
+        else:
+            warnings.append({"label": "no_decision_events", "detail": "no decision graph events were recorded"})
+
+    status = "failed" if errors else ("warning" if warnings else "passed")
+    result = {
+        "status": status,
+        "task_id": task_id,
+        "run_id": run_id,
+        "strictness": strictness,
+        "downgrade_reason": str(policy.get("downgrade_reason", "")).strip(),
+        "events": valid_events,
+        "errors": errors,
+        "warnings": warnings,
+        "ledger": str(decision_events_path(run_dir)),
+    }
+    result["decision_verify_marker"] = "DECISION_VERIFY_OK"
+    result["marker"] = build_decision_verify_marker(result)
+    append_command_event(
+        run_dir,
+        "verify-decisions",
+        task_id,
+        run_id,
+        status=status,
+        strictness=strictness,
+        decision_verify_marker=result["decision_verify_marker"],
+        marker=result["marker"],
+    )
+    return result
+
+
 def get_json_key(data: Any, key_path: str) -> Any:
     current = data
     for part in key_path.split("."):
@@ -4397,8 +5217,14 @@ def audit_project_mount(
     )
     current_governance = fabric.get("governance_root", "")
     current_capability = fabric.get("capability_root") or fabric.get("implementation_root", "")
-    if "Antigravity_Skills" in current_governance:
-        issues.append("legacy_antigravity_governance_root")
+    current_governance_path = Path(current_governance).expanduser() if current_governance else None
+    if (
+        current_governance_path
+        and project_root != root
+        and current_governance_path.name == "global-agent-fabric"
+        and current_governance_path != governance_root
+    ):
+        issues.append("legacy_preos_governance_root")
     if current_governance and Path(current_governance).expanduser() != governance_root and project_root != root:
         issues.append("noncanonical_governance_root")
     if current_capability and Path(current_capability).expanduser() != capability_root and project_root != root:
@@ -4419,7 +5245,7 @@ def audit_project_mount(
         issues.append("missing_archive_write_guard")
 
     should_rewrite_mount = project_root != root and (
-        "legacy_antigravity_governance_root" in issues
+        "legacy_preos_governance_root" in issues
         or "noncanonical_governance_root" in issues
         or "noncanonical_capability_root" in issues
         or "postflight_hook_missing_or_not_executable" in issues
@@ -4637,8 +5463,19 @@ def complete_task(
     effects = verify_effects(project_root, task_id, run_id)
     if effects.get("status") == "failed":
         raise ValueError("effect verification failed: " + json.dumps(effects.get("errors", []), ensure_ascii=False))
+    decisions = verify_decisions(project_root, task_id, run_id)
+    if decisions.get("status") == "failed":
+        raise ValueError("decision verification failed: " + json.dumps(decisions.get("errors", []), ensure_ascii=False))
 
     postflight = run_postflight_gate(project_root, run_dir, summary, allow_pending_postflight)
+    mission_flow: dict[str, Any] | None = None
+    if task.get("complexity", "medium") in MISSION_FLOW_COMPLEXITIES:
+        mission_flow = write_mission_flow_markdown(
+            project_root,
+            task_id,
+            run_id,
+            sync_status=str(postflight.get("sync_status", "")),
+        )
     completed_at = datetime.now(timezone.utc).isoformat()
     receipt_lines = [
         "# Receipt",
@@ -4661,6 +5498,14 @@ def complete_task(
         "",
         f"Effect Verify Marker: {effects.get('marker', '')}",
         "",
+        f"Decision Verification Status: {decisions.get('status')}",
+        "",
+        f"Decision Verify Marker: {decisions.get('marker', '')}",
+        "",
+        f"Mission Flow Marker: {mission_flow.get('marker', '') if mission_flow else 'not required'}",
+        "",
+        f"Mission Flow: {mission_flow.get('source', '') if mission_flow else 'not required for simple task'}",
+        "",
         f"Sync Status: {postflight.get('sync_status')}",
         "",
     ]
@@ -4679,6 +5524,24 @@ def complete_task(
                 "Effect Warnings:",
                 "",
                 json.dumps(effects.get("warnings", []), ensure_ascii=False),
+                "",
+            ]
+        )
+    if decisions.get("strictness") == "off":
+        receipt_lines.extend(
+            [
+                "DECISION_STRICTNESS_DOWNGRADED:",
+                "",
+                str(decisions.get("downgrade_reason", "")),
+                "",
+            ]
+        )
+    if decisions.get("warnings"):
+        receipt_lines.extend(
+            [
+                "Decision Warnings:",
+                "",
+                json.dumps(decisions.get("warnings", []), ensure_ascii=False),
                 "",
             ]
         )
@@ -4726,6 +5589,12 @@ def complete_task(
         "context_contract_status": context_contract.get("status"),
         "effect_status": effects.get("status"),
         "effect_verify_marker": effects.get("marker", ""),
+        "decision_status": decisions.get("status"),
+        "decision_verify_marker": decisions.get("marker", ""),
+        "flow_marker": mission_flow.get("flow_marker", "") if mission_flow else "",
+        "flow_summary_marker": mission_flow.get("marker", "") if mission_flow else "",
+        "flow_mermaid": mission_flow.get("mermaid", "") if mission_flow else "",
+        "flow_source": mission_flow.get("source", "") if mission_flow else "",
         "sync_status": postflight.get("sync_status"),
         "status_marker": postflight.get("status_marker", ""),
         "postflight": postflight.get("postflight", ""),
@@ -4734,9 +5603,10 @@ def complete_task(
     }
 
 
-HTML_REPORT_KINDS = {"receipt", "handoff", "rich-report"}
+HTML_REPORT_KINDS = {"receipt", "handoff", "rich-report", "decision-map", "mission-flow"}
 HTML_DEFAULT_THEME = "knowledgeos-default"
 HTML_SOURCE_TRUTH_NOTICE = "HTML is presentation, not source of truth."
+MISSION_FLOW_COMPLEXITIES = {"medium", "high", "complex"}
 
 
 def sha256_file(path: Path) -> str:
@@ -4915,6 +5785,20 @@ details {{ margin-top: 20px; padding: 14px 16px; border: 1px solid var(--kos-lin
 summary {{ cursor: pointer; font-weight: 800; }}
 .kos-footer {{ margin-top: 28px; color: var(--kos-muted); font-size: 0.9rem; text-align: center; }}
 .kos-notice {{ color: var(--kos-warn); font-weight: 800; }}
+.kos-flow {{ display: grid; gap: 14px; margin: 20px 0; }}
+.kos-flow-card {{
+  border: 1px solid var(--kos-line);
+  border-radius: 18px;
+  padding: 16px 18px;
+  background: #f8fbff;
+}}
+.kos-flow-card h3 {{ margin: 0 0 6px; }}
+.kos-flow-card p {{ margin: 0; }}
+.kos-flow-intent {{ background: #e8f3ff; border-color: #b8d9ff; }}
+.kos-flow-guard {{ background: #fff7df; border-color: #f3d58a; }}
+.kos-flow-work {{ background: #eafbf0; border-color: #b8e7c7; }}
+.kos-flow-proof {{ background: #f3e8ff; border-color: #d8b4fe; }}
+.kos-flow-done {{ background: #dcfce7; border-color: #86efac; }}
 @media (max-width: 860px) {{
   .kos-shell {{ padding: 28px 14px; }}
   .kos-grid {{ grid-template-columns: 1fr; }}
@@ -5099,6 +5983,459 @@ def render_html_sidecar(
         "source": str(source_path),
         "source_sha256": source_sha,
         "run_id": run_id,
+        "html_source_of_truth": False,
+    }
+
+
+def decision_events_to_markdown(run_id: str, events: list[dict[str, Any]]) -> str:
+    lines = [
+        f"# KnowledgeOS Decision Map {run_id}",
+        "",
+        "This sidecar summarizes public Decision Graph events. It is not hidden chain-of-thought.",
+        "",
+        "## Main Path",
+        "",
+    ]
+    main_statuses = {"planned", "active", "selected", "executed"}
+    main_events = [event for event in events if str(event.get("status", "")) in main_statuses]
+    branch_events = [event for event in events if event not in main_events]
+    if not main_events:
+        lines.append("- No selected or executed decision path recorded.")
+    for event in main_events:
+        lines.append(
+            f"- {event.get('decision_id', '')}: {event.get('title', '')} "
+            f"({event.get('kind', '')}, {event.get('status', '')})"
+        )
+        if event.get("summary"):
+            lines.append(f"- Summary: {event.get('summary')}")
+        if event.get("reason"):
+            lines.append(f"- Reason: {event.get('reason')}")
+        if event.get("chosen"):
+            lines.append(f"- Chosen: {event.get('chosen')}")
+    lines.extend(["", "## Abandoned Deferred And Recovery Branches", ""])
+    if not branch_events:
+        lines.append("- No abandoned, deferred, superseded, blocked, or rollback branches recorded.")
+    for event in branch_events:
+        lines.append(
+            f"- {event.get('decision_id', '')}: {event.get('title', '')} "
+            f"({event.get('kind', '')}, {event.get('status', '')})"
+        )
+        if event.get("parent_id"):
+            lines.append(f"- Parent: {event.get('parent_id')}")
+        if event.get("reason"):
+            lines.append(f"- Reason: {event.get('reason')}")
+        if event.get("evidence"):
+            lines.append(f"- Evidence: {event.get('evidence')}")
+    lines.extend(["", "## Full Decision Ledger", ""])
+    for event in events:
+        options = ", ".join(str(item) for item in event.get("options", []) if str(item).strip())
+        lines.append(f"- ID: {event.get('decision_id', '')}")
+        lines.append(f"- Parent: {event.get('parent_id', '') or 'root'}")
+        lines.append(f"- Title: {event.get('title', '')}")
+        lines.append(f"- Kind: {event.get('kind', '')}")
+        lines.append(f"- Status: {event.get('status', '')}")
+        if options:
+            lines.append(f"- Options: {options}")
+        if event.get("linked_capability_event_id"):
+            lines.append(f"- Linked Capability: {event.get('linked_capability_event_id')}")
+        if event.get("linked_effect_assertion_id"):
+            lines.append(f"- Linked Effect: {event.get('linked_effect_assertion_id')}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_decision_map_sidecar(
+    project_root: Path,
+    *,
+    run_id: str,
+    output_path: Path,
+    theme: str = HTML_DEFAULT_THEME,
+) -> dict[str, Any]:
+    run_dir = resolve_run_dir(project_root, run_id)
+    source_path = decision_events_path(run_dir)
+    if not source_path.exists():
+        raise FileNotFoundError(source_path)
+    events = [event for event in load_decision_events(run_dir) if "_invalid_json" not in event]
+    source_sha = sha256_file(source_path)
+    markdown = decision_events_to_markdown(run_id, events)
+    anchor_prefix = safe_slug(f"decision-map-{source_sha[:12]}")
+    body_html, title, sections = markdown_to_html_fragment(markdown, anchor_prefix=anchor_prefix)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    source_rel = project_relative(project_root, source_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fragment_path = output_path.with_suffix(".fragment.html")
+    manifest_path = output_path.with_suffix(".manifest.json")
+    fragment_html = build_html_fragment(
+        kind="decision-map",
+        title=title,
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id=run_id,
+        body_html=body_html,
+        sections=sections,
+        generated_at=generated_at,
+    )
+    write_text(fragment_path, fragment_html)
+    full_html = build_html_document(
+        title=title,
+        kind="decision-map",
+        body=fragment_html,
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id=run_id,
+        generated_at=generated_at,
+        theme=theme,
+    )
+    write_text(output_path, full_html)
+    manifest = {
+        "schema_version": "knowledgeos.html-report.v1",
+        "kind": "decision-map",
+        "title": title,
+        "theme": theme,
+        "run_id": run_id,
+        "source": source_rel,
+        "source_sha256": source_sha,
+        "output": project_relative(project_root, output_path),
+        "fragment": project_relative(project_root, fragment_path),
+        "sections": sections,
+        "decision_count": len(events),
+        "generated_at": generated_at,
+        "html_source_of_truth": False,
+        "notice": HTML_SOURCE_TRUTH_NOTICE,
+    }
+    write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    return {
+        "status": "rendered",
+        "kind": "decision-map",
+        "title": title,
+        "output": str(output_path),
+        "fragment": str(fragment_path),
+        "manifest": str(manifest_path),
+        "source": str(source_path),
+        "source_sha256": source_sha,
+        "run_id": run_id,
+        "decision_count": len(events),
+        "html_source_of_truth": False,
+    }
+
+
+def mermaid_label(value: str, limit: int = 58) -> str:
+    cleaned = " ".join(str(value).split())
+    if len(cleaned) > limit:
+        cleaned = cleaned[: max(0, limit - 3)].rstrip() + "..."
+    return cleaned.replace('"', "'").replace("[", "(").replace("]", ")")
+
+
+def latest_phase_records_by_phase(run_dir: Path) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for record in load_phase_records(run_dir):
+        if "_invalid_json" in record:
+            continue
+        phase = str(record.get("phase", ""))
+        if phase:
+            latest[phase] = record
+    return latest
+
+
+def count_valid_records(records: list[dict[str, Any]], status: str = "") -> int:
+    count = 0
+    for record in records:
+        if "_invalid_json" in record:
+            continue
+        if status and str(record.get("status", "")) != status:
+            continue
+        count += 1
+    return count
+
+
+def mission_flow_stage_summary(project_root: Path, task_id: str, run_id: str, sync_status: str = "") -> dict[str, Any]:
+    task = find_task(project_root, task_id)
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    run_meta = parse_scalar_values(run_dir / "run.yaml", {"route_status", "status", "task_title", "task_type"})
+    phase_latest = latest_phase_records_by_phase(run_dir)
+    phase_done = [phase for phase in EXPECTED_PHASE_KEYS if phase_latest.get(phase, {}).get("status") in {"completed", "skipped"}]
+    capability_count = count_valid_records(load_capability_events(run_dir))
+    effect_count = count_valid_records(load_effect_assertions(run_dir), status="passed")
+    decision_count = count_valid_records(load_decision_events(run_dir))
+    has_plan = (run_dir / "plan.md").exists() and (run_dir / "context-pack.md").exists()
+    eval_ok = eval_has_passed(run_dir / "eval.md")
+    postflight_text = read_text(run_dir / "postflight.md") if (run_dir / "postflight.md").exists() else ""
+    synced = sync_status == "SYNC_OK" or "[SYNC_OK]" in postflight_text
+    task_title = task.get("title") or run_meta.get("task_title") or task_id
+    proof_label = f"{effect_count} real check" + ("" if effect_count == 1 else "s")
+    tool_label = f"{capability_count} tool note" + ("" if capability_count == 1 else "s")
+    decision_label = f"{decision_count} decision" + ("" if decision_count == 1 else "s")
+    checkpoint_label = f"{len(phase_done)}/6 checkpoints"
+    return {
+        "task": task,
+        "run_dir": run_dir,
+        "title": task_title,
+        "complexity": task.get("complexity", "medium"),
+        "stages": [
+            {
+                "id": "A",
+                "name": "Goal",
+                "kind": "intent",
+                "label": f"Goal: {task_title}",
+                "detail": "What the user wanted us to finish.",
+                "status": "set",
+            },
+            {
+                "id": "B",
+                "name": "Health Check",
+                "kind": "guard",
+                "label": "Health check: OK",
+                "detail": "The project control plane was checked before work.",
+                "status": "ok",
+            },
+            {
+                "id": "C",
+                "name": "Task & Plan",
+                "kind": "intent",
+                "label": "Task and plan: ready" if has_plan else "Task and plan: missing",
+                "detail": "The run has a context pack and a short working plan." if has_plan else "The run is missing plan/context files.",
+                "status": "ok" if has_plan else "attention",
+            },
+            {
+                "id": "D",
+                "name": "Safe Writes",
+                "kind": "guard",
+                "label": "Safe writes: routed" if run_meta.get("route_status") == "routed" else "Safe writes: review needed",
+                "detail": "Planned file changes stayed inside the task route.",
+                "status": "ok" if run_meta.get("route_status") == "routed" else "attention",
+            },
+            {
+                "id": "E",
+                "name": "Work Done",
+                "kind": "work",
+                "label": "Work done: recorded" if "execute" in phase_done else "Work done: not recorded",
+                "detail": "Implementation or analysis steps were recorded as public checkpoints.",
+                "status": "ok" if "execute" in phase_done else "attention",
+            },
+            {
+                "id": "F",
+                "name": "Tools Used",
+                "kind": "work",
+                "label": f"Tools used: {tool_label}",
+                "detail": "Important shell, script, subagent, MCP, or skill use was made visible.",
+                "status": "ok" if capability_count else "quiet",
+            },
+            {
+                "id": "G",
+                "name": "Proof",
+                "kind": "proof",
+                "label": f"Proof: {proof_label}",
+                "detail": "Real artifacts were checked after the work landed.",
+                "status": "ok" if effect_count else "quiet",
+            },
+            {
+                "id": "H",
+                "name": "Decisions",
+                "kind": "proof",
+                "label": f"Decisions: {decision_label}",
+                "detail": "Route changes or important choices were summarized for humans.",
+                "status": "ok" if decision_count else "quiet",
+            },
+            {
+                "id": "I",
+                "name": "Finish",
+                "kind": "done",
+                "label": "Finish: synced" if synced else ("Finish: checked" if eval_ok else "Finish: pending"),
+                "detail": f"Review status: {'passed' if eval_ok else 'pending'}; {checkpoint_label}.",
+                "status": "ok" if synced or eval_ok else "attention",
+            },
+        ],
+        "counts": {
+            "capability_events": capability_count,
+            "effect_assertions": effect_count,
+            "decision_events": decision_count,
+            "phases_recorded": len(phase_done),
+        },
+        "synced": synced,
+        "eval_passed": eval_ok,
+    }
+
+
+def build_mission_flow_mermaid(summary: dict[str, Any]) -> str:
+    stages = summary["stages"]
+    lines = ["flowchart LR"]
+    for stage in stages:
+        lines.append(f'  {stage["id"]}["{mermaid_label(stage["label"])}"]')
+    for left, right in zip(stages, stages[1:]):
+        lines.append(f'  {left["id"]} --> {right["id"]}')
+    lines.extend(
+        [
+            "",
+            "  classDef intent fill:#E8F3FF,stroke:#2B6CB0,color:#102A43;",
+            "  classDef guard fill:#FFF4D6,stroke:#B7791F,color:#3D2B00;",
+            "  classDef work fill:#E9FBEF,stroke:#2F855A,color:#123524;",
+            "  classDef proof fill:#F3E8FF,stroke:#6B46C1,color:#2D174D;",
+            "  classDef done fill:#DCFCE7,stroke:#15803D,color:#052E16;",
+        ]
+    )
+    by_kind: dict[str, list[str]] = {"intent": [], "guard": [], "work": [], "proof": [], "done": []}
+    for stage in stages:
+        by_kind.setdefault(stage["kind"], []).append(stage["id"])
+    for kind, ids in by_kind.items():
+        if ids:
+            lines.append(f"  class {','.join(ids)} {kind};")
+    return "\n".join(lines)
+
+
+def build_mission_flow_markdown(project_root: Path, task_id: str, run_id: str, sync_status: str = "") -> dict[str, Any]:
+    summary = mission_flow_stage_summary(project_root, task_id, run_id, sync_status=sync_status)
+    mermaid = build_mission_flow_mermaid(summary)
+    lines = [
+        f"# Mission Flow {run_id}",
+        "",
+        "FLOW_OK",
+        "",
+        "A human-readable map of how this task moved from request to finish.",
+        "",
+        "## Flow",
+        "",
+        "```mermaid",
+        mermaid,
+        "```",
+        "",
+        "## Plain Summary",
+        "",
+    ]
+    for stage in summary["stages"]:
+        lines.append(f"- {stage['name']}: {stage['label']}. {stage['detail']}")
+    lines.extend(
+        [
+            "",
+            "## Counts",
+            "",
+            f"- Tools made visible: {summary['counts']['capability_events']}",
+            f"- Artifact checks: {summary['counts']['effect_assertions']}",
+            f"- Decision notes: {summary['counts']['decision_events']}",
+            f"- Checkpoints recorded: {summary['counts']['phases_recorded']}/6",
+            "",
+            "HTML is presentation, not source of truth.",
+        ]
+    )
+    return {
+        "status": "generated",
+        "flow_marker": "FLOW_OK",
+        "marker": f"FLOW_OK run={run_id} stages={len(summary['stages'])} synced={'yes' if summary['synced'] else 'no'}",
+        "task_id": task_id,
+        "run_id": run_id,
+        "complexity": summary["complexity"],
+        "mermaid": mermaid,
+        "markdown": "\n".join(lines).rstrip() + "\n",
+        "counts": summary["counts"],
+        "stages": summary["stages"],
+    }
+
+
+def write_mission_flow_markdown(project_root: Path, task_id: str, run_id: str, sync_status: str = "") -> dict[str, Any]:
+    result = build_mission_flow_markdown(project_root, task_id, run_id, sync_status=sync_status)
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    source_path = run_dir / "mission-flow.md"
+    write_text(source_path, result["markdown"])
+    result["source"] = str(source_path)
+    return result
+
+
+def mission_flow_cards_html(stages: list[dict[str, Any]]) -> str:
+    cards = []
+    for stage in stages:
+        cards.append(
+            '<section class="kos-flow-card kos-flow-{kind}">'
+            "<h3>{name}</h3>"
+            "<p><strong>{label}</strong></p>"
+            "<p>{detail}</p>"
+            "</section>".format(
+                kind=html_escape(stage["kind"]),
+                name=html_escape(stage["name"]),
+                label=html_escape(stage["label"]),
+                detail=html_escape(stage["detail"]),
+            )
+        )
+    return '<div class="kos-flow">' + "\n".join(cards) + "</div>"
+
+
+def render_mission_flow_sidecar(
+    project_root: Path,
+    *,
+    task_id: str,
+    run_id: str,
+    output_path: Path,
+    theme: str = HTML_DEFAULT_THEME,
+) -> dict[str, Any]:
+    flow = write_mission_flow_markdown(project_root, task_id, run_id)
+    source_path = Path(flow["source"])
+    source_sha = sha256_file(source_path)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    source_rel = project_relative(project_root, source_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fragment_path = output_path.with_suffix(".fragment.html")
+    manifest_path = output_path.with_suffix(".manifest.json")
+    body_html = "\n".join(
+        [
+            f"<h1>Mission Flow {html_escape(run_id)}</h1>",
+            "<p>A friendly map of how the task moved from request to finish.</p>",
+            mission_flow_cards_html(flow["stages"]),
+            "<details><summary>Mermaid source</summary>",
+            f"<pre><code>{html_escape(flow['mermaid'])}</code></pre>",
+            "</details>",
+        ]
+    )
+    sections = [{"id": "mission-flow", "title": "Mission Flow", "level": 1}]
+    fragment_html = build_html_fragment(
+        kind="mission-flow",
+        title=f"Mission Flow {run_id}",
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id=run_id,
+        body_html=body_html,
+        sections=sections,
+        generated_at=generated_at,
+    )
+    write_text(fragment_path, fragment_html)
+    full_html = build_html_document(
+        title=f"Mission Flow {run_id}",
+        kind="mission-flow",
+        body=fragment_html,
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id=run_id,
+        generated_at=generated_at,
+        theme=theme,
+    )
+    write_text(output_path, full_html)
+    manifest = {
+        "schema_version": "knowledgeos.html-report.v1",
+        "kind": "mission-flow",
+        "title": f"Mission Flow {run_id}",
+        "theme": theme,
+        "run_id": run_id,
+        "task_id": task_id,
+        "source": source_rel,
+        "source_sha256": source_sha,
+        "output": project_relative(project_root, output_path),
+        "fragment": project_relative(project_root, fragment_path),
+        "sections": sections,
+        "generated_at": generated_at,
+        "flow_marker": "FLOW_OK",
+        "html_source_of_truth": False,
+        "notice": HTML_SOURCE_TRUTH_NOTICE,
+    }
+    write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    return {
+        "status": "rendered",
+        "kind": "mission-flow",
+        "title": f"Mission Flow {run_id}",
+        "output": str(output_path),
+        "fragment": str(fragment_path),
+        "manifest": str(manifest_path),
+        "source": str(source_path),
+        "source_sha256": source_sha,
+        "run_id": run_id,
+        "task_id": task_id,
+        "flow_marker": "FLOW_OK",
         "html_source_of_truth": False,
     }
 
@@ -5352,6 +6689,7 @@ def build_task_route(project_root: Path, task_id: str | None, task_type: str | N
         "route_order": profile.get("route_order", []),
         "eval_profile": profile.get("eval_profile", ""),
         "human_gate": profile.get("human_gate", ""),
+        "allow_external_controlled": profile.get("allow_external_controlled", ""),
         "allowed_outputs": profile.get("allowed_outputs", []),
         "notes": profile.get("notes", []),
     }
@@ -5650,6 +6988,55 @@ def cmd_trace_step(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_decision_event(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = record_decision_event(
+            project_root,
+            args.task_id,
+            args.run_id,
+            kind=args.kind,
+            status=args.status,
+            title=args.title,
+            summary=args.summary,
+            reason=args.reason,
+            evidence=args.evidence,
+            parent_id=args.parent_id or "",
+            options=args.option or [],
+            chosen=args.chosen or "",
+            linked_step=args.linked_step or "",
+            linked_capability_event_id=args.linked_capability_event_id or "",
+            linked_effect_assertion_id=args.linked_effect_assertion_id or "",
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
+    return 0
+
+
+def cmd_decision_query(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = query_decision_events(
+            project_root,
+            run_id=args.run_id,
+            task_id=args.task_id or "",
+            kind=args.kind or "",
+            status=args.status or "",
+            parent_id=args.parent_id or "",
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0
+
+
 def cmd_artifact_assert(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
@@ -5723,6 +7110,25 @@ def cmd_verify_effects(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
         result = verify_effects(project_root, args.task_id, args.run_id)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
+        if result.get("warnings"):
+            print(f"warnings: {len(result['warnings'])}")
+        if result.get("errors"):
+            print(f"errors: {len(result['errors'])}")
+    return 2 if result.get("status") == "failed" else 0
+
+
+def cmd_verify_decisions(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = verify_decisions(project_root, args.task_id, args.run_id)
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -5837,6 +7243,32 @@ def cmd_render_html(args: argparse.Namespace) -> int:
                 run_id=args.run_id,
                 theme=args.theme,
             )
+        elif args.kind == "decision-map":
+            if not args.run_id:
+                raise ValueError("render-html --kind decision-map requires --run-id")
+            run_dir = resolve_run_dir(project_root, args.run_id)
+            output_path = resolve_project_artifact(project_root, args.output) if args.output else run_dir / "decision-map.html"
+            result = render_decision_map_sidecar(
+                project_root,
+                run_id=args.run_id,
+                output_path=output_path,
+                theme=args.theme,
+            )
+        elif args.kind == "mission-flow":
+            if not args.run_id:
+                raise ValueError("render-html --kind mission-flow requires --run-id")
+            run_dir = resolve_run_dir(project_root, args.run_id)
+            task_id = args.task_id or parse_scalar_values(run_dir / "run.yaml", {"task_id"}).get("task_id", "")
+            if not task_id:
+                raise ValueError("could not resolve task id for mission-flow")
+            output_path = resolve_project_artifact(project_root, args.output) if args.output else run_dir / "mission-flow.html"
+            result = render_mission_flow_sidecar(
+                project_root,
+                task_id=task_id,
+                run_id=args.run_id,
+                output_path=output_path,
+                theme=args.theme,
+            )
         elif args.kind == "rich-report":
             if not args.input:
                 raise ValueError("render-html --kind rich-report requires --input")
@@ -5855,6 +7287,120 @@ def cmd_render_html(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     emit(result, args.json)
+    return 0
+
+
+def cmd_flow_summary(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        run_dir = resolve_run_dir(project_root, args.run_id)
+        task_id = args.task_id or parse_scalar_values(run_dir / "run.yaml", {"task_id"}).get("task_id", "")
+        if not task_id:
+            raise ValueError("could not resolve task id for flow-summary")
+        result = write_mission_flow_markdown(project_root, task_id, args.run_id)
+        append_command_event(
+            run_dir,
+            "flow-summary",
+            task_id,
+            args.run_id,
+            status="generated",
+            source=project_relative(project_root, Path(result["source"])),
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        if args.format == "markdown":
+            print(result["markdown"])
+        else:
+            print("```mermaid")
+            print(result["mermaid"])
+            print("```")
+            print(f"source: {result['source']}")
+    return 0
+
+
+def cmd_thread_plan(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        if args.thread_action == "start":
+            result = start_thread_plan(project_root, title=args.title, spec_id=args.spec_id or "")
+        elif args.thread_action == "current":
+            current = load_current_thread(project_root)
+            result = {
+                "status": "ok",
+                "thread_plan_marker": THREAD_PLAN_MARKER,
+                "marker": f"{THREAD_PLAN_MARKER} action=current thread={current['thread_id']}",
+                "current": current,
+            }
+        elif args.thread_action == "append":
+            result = append_thread_plan_event(
+                project_root,
+                thread_id=args.thread_id,
+                kind=args.kind,
+                text=args.text,
+                linked_spec_id=args.spec_id or "",
+                linked_task_id=args.task_id or "",
+                linked_run_id=args.run_id or "",
+                parent_event_id=args.parent_event_id or "",
+            )
+        elif args.thread_action == "link-run":
+            ensure_run_belongs_to_task(project_root, args.task_id, args.run_id)
+            text = args.text or f"已关联执行记录：任务 {args.task_id} / 运行 {args.run_id}。"
+            result = append_thread_plan_event(
+                project_root,
+                thread_id=args.thread_id,
+                kind="progress",
+                text=text,
+                linked_task_id=args.task_id,
+                linked_run_id=args.run_id,
+                event_type="thread-plan link-run",
+            )
+            result["status"] = "linked"
+            result["marker"] = f"{THREAD_PLAN_MARKER} action=link-run thread={args.thread_id} run={args.run_id}"
+        elif args.thread_action == "render":
+            if args.format == "markdown":
+                result = render_thread_plan_markdown(project_root, args.thread_id)
+            elif args.format == "html":
+                result = render_thread_plan_html(project_root, args.thread_id)
+            elif args.format == "mermaid":
+                mermaid = render_thread_plan_mermaid(project_root, args.thread_id)
+                result = {
+                    "status": "rendered",
+                    "thread_plan_marker": THREAD_PLAN_MARKER,
+                    "marker": f"{THREAD_PLAN_MARKER} action=render thread={args.thread_id} format=mermaid",
+                    "thread_id": args.thread_id,
+                    "format": "mermaid",
+                    "mermaid": mermaid,
+                }
+            else:
+                raise ValueError(f"unsupported thread-plan render format: {args.format}")
+            append_thread_command_event(project_root, args.thread_id, "thread-plan render", format=args.format)
+        else:
+            raise ValueError(f"unsupported thread-plan action: {args.thread_action}")
+    except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result.get("marker", f"{THREAD_PLAN_MARKER} action={args.thread_action}"))
+        if args.thread_action == "current":
+            current = result.get("current", {})
+            print(f"thread_id: {current.get('thread_id', '')}")
+            print(f"title: {current.get('title', '')}")
+            print(f"spec_id: {current.get('spec_id', '')}")
+        elif args.thread_action == "render" and args.format == "mermaid":
+            print("```mermaid")
+            print(result["mermaid"])
+            print("```")
+        elif result.get("output"):
+            print(f"output: {result['output']}")
+        elif result.get("ledger"):
+            print(f"ledger: {result['ledger']}")
     return 0
 
 
@@ -6218,6 +7764,35 @@ def build_parser() -> argparse.ArgumentParser:
     trace_step_parser.add_argument("--json", action="store_true")
     trace_step_parser.set_defaults(func=cmd_trace_step)
 
+    decision_event_parser = sub.add_parser("decision-event", help="record a public Decision Graph event for a run")
+    decision_event_parser.add_argument("--project-root", required=True)
+    decision_event_parser.add_argument("--task-id", required=True)
+    decision_event_parser.add_argument("--run-id", required=True)
+    decision_event_parser.add_argument("--kind", required=True, choices=sorted(DECISION_EVENT_KINDS))
+    decision_event_parser.add_argument("--status", default="active", choices=sorted(DECISION_EVENT_STATUSES))
+    decision_event_parser.add_argument("--title", required=True)
+    decision_event_parser.add_argument("--summary", default="")
+    decision_event_parser.add_argument("--reason", default="", help="public decision rationale; do not include hidden chain-of-thought")
+    decision_event_parser.add_argument("--evidence", default="", help="command, file, or user confirmation evidence")
+    decision_event_parser.add_argument("--parent-id", default="")
+    decision_event_parser.add_argument("--option", action="append", default=[])
+    decision_event_parser.add_argument("--chosen", default="")
+    decision_event_parser.add_argument("--linked-step", default="", choices=["", *OPERATIONAL_TRACE_STEPS])
+    decision_event_parser.add_argument("--linked-capability-event-id", default="")
+    decision_event_parser.add_argument("--linked-effect-assertion-id", default="")
+    decision_event_parser.add_argument("--json", action="store_true")
+    decision_event_parser.set_defaults(func=cmd_decision_event)
+
+    decision_query_parser = sub.add_parser("decision-query", help="query public Decision Graph events for a run")
+    decision_query_parser.add_argument("--project-root", required=True)
+    decision_query_parser.add_argument("--run-id", required=True)
+    decision_query_parser.add_argument("--task-id", default="")
+    decision_query_parser.add_argument("--kind", default="", choices=["", *sorted(DECISION_EVENT_KINDS)])
+    decision_query_parser.add_argument("--status", default="", choices=["", *sorted(DECISION_EVENT_STATUSES)])
+    decision_query_parser.add_argument("--parent-id", default="")
+    decision_query_parser.add_argument("--json", action="store_true")
+    decision_query_parser.set_defaults(func=cmd_decision_query)
+
     artifact_assert_parser = sub.add_parser("artifact-assert", help="verify a real side effect before recording EFFECT_OK evidence")
     artifact_assert_parser.add_argument("--project-root", required=True)
     artifact_assert_parser.add_argument("--task-id", required=True)
@@ -6268,6 +7843,13 @@ def build_parser() -> argparse.ArgumentParser:
     verify_effects_parser.add_argument("--json", action="store_true")
     verify_effects_parser.set_defaults(func=cmd_verify_effects)
 
+    verify_decisions_parser = sub.add_parser("verify-decisions", help="verify Decision Graph events and command evidence for a run")
+    verify_decisions_parser.add_argument("--project-root", required=True)
+    verify_decisions_parser.add_argument("--task-id", required=True)
+    verify_decisions_parser.add_argument("--run-id", required=True)
+    verify_decisions_parser.add_argument("--json", action="store_true")
+    verify_decisions_parser.set_defaults(func=cmd_verify_decisions)
+
     complete = sub.add_parser("complete-task", help="complete a task only after eval, lifecycle, outputs, and required postflight pass")
     complete.add_argument("--project-root", required=True)
     complete.add_argument("--task-id", required=True)
@@ -6304,16 +7886,67 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--json", action="store_true")
     dispatch.set_defaults(func=cmd_dispatch_task)
 
-    render_html = sub.add_parser("render-html", help="render Markdown evidence into composable static HTML sidecars")
+    render_html = sub.add_parser("render-html", help="render Markdown, flow, and Decision Graph evidence into composable static HTML sidecars")
     render_html.add_argument("--project-root", required=True)
-    render_html.add_argument("--kind", choices=sorted(HTML_REPORT_KINDS), help="receipt, handoff, or rich-report")
-    render_html.add_argument("--run-id", help="run id for receipt or handoff rendering")
+    render_html.add_argument("--kind", choices=sorted(HTML_REPORT_KINDS), help="receipt, handoff, rich-report, decision-map, or mission-flow")
+    render_html.add_argument("--run-id", help="run id for receipt, handoff, decision-map, or mission-flow rendering")
+    render_html.add_argument("--task-id", help="optional task id for mission-flow; defaults from run.yaml")
     render_html.add_argument("--input", help="Markdown source for rich-report")
     render_html.add_argument("--output", help="HTML output path; defaults beside the source")
     render_html.add_argument("--compose", help="compose report manifests into one HTML page")
     render_html.add_argument("--theme", default=HTML_DEFAULT_THEME)
     render_html.add_argument("--json", action="store_true")
     render_html.set_defaults(func=cmd_render_html)
+
+    flow_summary = sub.add_parser("flow-summary", help="print a friendly layered Mermaid mission flow for a run")
+    flow_summary.add_argument("--project-root", required=True)
+    flow_summary.add_argument("--run-id", required=True)
+    flow_summary.add_argument("--task-id", help="optional task id; defaults from run.yaml")
+    flow_summary.add_argument("--format", choices=["mermaid", "markdown"], default="mermaid")
+    flow_summary.add_argument("--json", action="store_true")
+    flow_summary.set_defaults(func=cmd_flow_summary)
+
+    thread_plan = sub.add_parser("thread-plan", help="manage chat-level append-only natural-language plan ledgers")
+    thread_sub = thread_plan.add_subparsers(dest="thread_action", required=True)
+    thread_start = thread_sub.add_parser("start", help="start a chat-level Thread Plan Ledger")
+    thread_start.add_argument("--project-root", required=True)
+    thread_start.add_argument("--title", required=True)
+    thread_start.add_argument("--spec-id", default="")
+    thread_start.add_argument("--json", action="store_true")
+    thread_start.set_defaults(func=cmd_thread_plan)
+
+    thread_current = thread_sub.add_parser("current", help="show the current active Thread Plan Ledger")
+    thread_current.add_argument("--project-root", required=True)
+    thread_current.add_argument("--json", action="store_true")
+    thread_current.set_defaults(func=cmd_thread_plan)
+
+    thread_append = thread_sub.add_parser("append", help="append a natural-language plan note")
+    thread_append.add_argument("--project-root", required=True)
+    thread_append.add_argument("--thread-id", required=True)
+    thread_append.add_argument("--kind", required=True, choices=sorted(THREAD_PLAN_EVENT_KINDS))
+    thread_append.add_argument("--text", required=True)
+    thread_append.add_argument("--spec-id", default="")
+    thread_append.add_argument("--task-id", default="")
+    thread_append.add_argument("--run-id", default="")
+    thread_append.add_argument("--parent-event-id", default="")
+    thread_append.add_argument("--json", action="store_true")
+    thread_append.set_defaults(func=cmd_thread_plan)
+
+    thread_link = thread_sub.add_parser("link-run", help="link a task run to the current chat-level plan")
+    thread_link.add_argument("--project-root", required=True)
+    thread_link.add_argument("--thread-id", required=True)
+    thread_link.add_argument("--task-id", required=True)
+    thread_link.add_argument("--run-id", required=True)
+    thread_link.add_argument("--text", default="")
+    thread_link.add_argument("--json", action="store_true")
+    thread_link.set_defaults(func=cmd_thread_plan)
+
+    thread_render = thread_sub.add_parser("render", help="render a thread plan as Markdown, Mermaid, or HTML")
+    thread_render.add_argument("--project-root", required=True)
+    thread_render.add_argument("--thread-id", required=True)
+    thread_render.add_argument("--format", choices=["markdown", "html", "mermaid"], default="markdown")
+    thread_render.add_argument("--json", action="store_true")
+    thread_render.set_defaults(func=cmd_thread_plan)
 
     receipt = sub.add_parser("receipt", help="write a local project receipt")
     receipt.add_argument("--project-root", required=True)

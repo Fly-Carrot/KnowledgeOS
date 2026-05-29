@@ -163,7 +163,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
             tmp_root = Path(tmp)
             project = tmp_root / "LegacyProject"
             project.mkdir()
-            old_governance = tmp_root / "Antigravity_Skills" / "global-agent-fabric"
+            old_governance = tmp_root / "Legacy_PreOS_Root" / "global-agent-fabric"
             desired_governance = tmp_root / "KnowledgeOS" / "global-agent-fabric"
             desired_capability = tmp_root / "KnowledgeOS" / "capability-layer"
             self.run_cli(
@@ -212,7 +212,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
             issues = dry_payload["projects"][0]["issues"]
             desired_governance = desired_governance.resolve()
             desired_capability = desired_capability.resolve()
-            self.assertIn("legacy_antigravity_governance_root", issues)
+            self.assertIn("legacy_preos_governance_root", issues)
             self.assertIn("postflight_hook_missing_or_not_executable", issues)
             self.assertIn("missing_control_file:.agent-os/specs.yaml", issues)
             self.assertIn("workflow_router_lifecycle_drift", issues)
@@ -817,6 +817,138 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 guarded_payload = json.loads(guarded.stdout)
                 self.assertEqual(guarded_payload["decision"], "human_gate_required")
 
+    def test_check_route_write_denies_external_paths_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+
+            external_target = str(Path.home() / ".local" / "bin" / "agy")
+            blocked = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                external_target,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(blocked.returncode, 2)
+            payload = json.loads(blocked.stdout)
+            self.assertEqual(payload["decision"], "deny")
+            self.assertFalse(payload["inside_project"])
+
+    def test_check_route_write_allows_external_paths_only_with_local_overlay_and_route_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+
+            tasks_path = project / ".agent-os" / "tasks.yaml"
+            tasks_path.write_text(
+                tasks_path.read_text(encoding="utf-8").replace("type: initialization", "type: migration_task", 1),
+                encoding="utf-8",
+            )
+
+            router_path = project / ".agent-os" / "workflows" / "router.yaml"
+            router_path.write_text(
+                router_path.read_text(encoding="utf-8")
+                + "\n"
+                + "  migration_task:\n"
+                + "    route_order:\n"
+                + "      - doctor --project-root .\n"
+                + "      - route-task --project-root . --task-id <task-id>\n"
+                + "      - check-route-write --project-root . --task-id <task-id> --path <planned-path>\n"
+                + "    eval_profile: migration_task\n"
+                + "    human_gate: explicit_approval\n"
+                + "    allow_external_controlled: true\n"
+                + "    allowed_outputs:\n"
+                + "      - .knowledgeos-local/\n",
+                encoding="utf-8",
+            )
+
+            local_policy = project / ".knowledgeos-local" / "write-policy.local.yaml"
+            local_policy.parent.mkdir(parents=True, exist_ok=True)
+            external_target = str(Path.home() / ".local" / "bin" / "agy")
+            local_policy.write_text(
+                "external_controlled:\n"
+                f"  - {external_target}\n"
+                "external_require_receipt_for:\n"
+                f"  - {external_target}\n",
+                encoding="utf-8",
+            )
+
+            allowed = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                external_target,
+                "--json",
+            )
+            payload = json.loads(allowed.stdout)
+            self.assertEqual(payload["decision"], "allow")
+            self.assertEqual(payload["route_status"], "allowed_by_external_route")
+            self.assertFalse(payload["inside_project"])
+            self.assertTrue(payload["receipt_required"])
+
+    def test_check_route_write_blocks_external_paths_when_route_lacks_external_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+
+            tasks_path = project / ".agent-os" / "tasks.yaml"
+            tasks_path.write_text(
+                tasks_path.read_text(encoding="utf-8").replace("type: initialization", "type: migration_task", 1),
+                encoding="utf-8",
+            )
+
+            router_path = project / ".agent-os" / "workflows" / "router.yaml"
+            router_path.write_text(
+                router_path.read_text(encoding="utf-8")
+                + "\n"
+                + "  migration_task:\n"
+                + "    route_order:\n"
+                + "      - doctor --project-root .\n"
+                + "      - route-task --project-root . --task-id <task-id>\n"
+                + "      - check-route-write --project-root . --task-id <task-id> --path <planned-path>\n"
+                + "    eval_profile: migration_task\n"
+                + "    human_gate: explicit_approval\n"
+                + "    allowed_outputs:\n"
+                + "      - .knowledgeos-local/\n",
+                encoding="utf-8",
+            )
+
+            local_policy = project / ".knowledgeos-local" / "write-policy.local.yaml"
+            local_policy.parent.mkdir(parents=True, exist_ok=True)
+            external_target = str(Path.home() / ".local" / "bin" / "agy")
+            local_policy.write_text(
+                "external_controlled:\n"
+                f"  - {external_target}\n",
+                encoding="utf-8",
+            )
+
+            blocked = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                external_target,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(blocked.returncode, 2)
+            payload = json.loads(blocked.stdout)
+            self.assertEqual(payload["decision"], "route_output_denied")
+            self.assertIn("does not allow external controlled writes", payload["reason"])
+
     def test_archive_management_route_allows_archive_root_check(self):
         result = self.run_cli(
             "check-route-write",
@@ -1209,9 +1341,14 @@ class KnowledgeOSCliTests(unittest.TestCase):
             payload = json.loads(completed.stdout)
             self.assertEqual(payload["status"], "completed")
             self.assertEqual(payload["sync_status"], "PENDING")
+            self.assertEqual(payload["flow_marker"], "FLOW_OK")
+            self.assertIn("Goal:", payload["flow_mermaid"])
+            self.assertIn("Health check:", payload["flow_mermaid"])
+            self.assertTrue((run_dir / "mission-flow.md").exists())
             self.assertIn("status: completed", (run_dir / "run.yaml").read_text(encoding="utf-8"))
             self.assertIn("status: completed", (project / ".agent-os" / "tasks.yaml").read_text(encoding="utf-8"))
             self.assertIn("Guarded task complete", (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8"))
+            self.assertIn("Mission Flow Marker: FLOW_OK", (run_dir / "receipt.md").read_text(encoding="utf-8"))
 
     def test_complete_task_requires_lifecycle_phases(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1688,6 +1825,409 @@ class KnowledgeOSCliTests(unittest.TestCase):
             payload = json.loads(as_json.stdout)
             self.assertEqual(payload["trace_marker"], "TRACE_OK")
             self.assertIn("TRACE_OK step=route_guard", payload["marker"])
+
+    def test_decision_event_records_queryable_public_decision_tree_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+
+            root = self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "branch_opened",
+                "--status",
+                "planned",
+                "--title",
+                "Compare analysis paths",
+                "--summary",
+                "Open alternative analysis routes before execution.",
+                "--reason",
+                "Research tasks can branch before a stable plan is chosen.",
+                "--option",
+                "full rerun",
+                "--option",
+                "targeted rerun",
+                "--evidence",
+                "user request",
+                "--json",
+            )
+            root_payload = json.loads(root.stdout)
+            self.assertEqual(root_payload["decision_marker"], "DECISION_OK")
+            self.assertTrue(root_payload["decision_id"].startswith("DEC-"))
+
+            child = self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--parent-id",
+                root_payload["decision_id"],
+                "--kind",
+                "branch_selected",
+                "--status",
+                "selected",
+                "--title",
+                "Use targeted rerun",
+                "--summary",
+                "Select the smaller rerun path for faster validation.",
+                "--reason",
+                "The targeted path proves the changed artifact without repeating expensive work.",
+                "--chosen",
+                "targeted rerun",
+                "--evidence",
+                "plan review",
+                "--json",
+            )
+            child_payload = json.loads(child.stdout)
+            self.assertEqual(child_payload["record"]["parent_id"], root_payload["decision_id"])
+
+            queried = self.run_cli(
+                "decision-query",
+                "--project-root",
+                str(project),
+                "--run-id",
+                run_id,
+                "--parent-id",
+                root_payload["decision_id"],
+                "--json",
+            )
+            query_payload = json.loads(queried.stdout)
+            self.assertEqual(query_payload["count"], 1)
+            self.assertEqual(query_payload["events"][0]["decision_id"], child_payload["decision_id"])
+
+            run_dir = project / ".agent-os" / "runs" / run_id
+            self.assertIn('"event_type": "decision-event"', (run_dir / "command-events.ndjson").read_text(encoding="utf-8"))
+            self.assertIn('"kind": "branch_selected"', (run_dir / "decision-events.ndjson").read_text(encoding="utf-8"))
+
+    def test_thread_plan_ledger_is_chat_level_append_only_and_readable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+
+            started = self.run_cli(
+                "thread-plan",
+                "start",
+                "--project-root",
+                str(project),
+                "--title",
+                "长期维护鸟类声景基金申请计划",
+                "--spec-id",
+                "SPEC-TEST",
+                "--json",
+            )
+            start_payload = json.loads(started.stdout)
+            self.assertEqual(start_payload["thread_plan_marker"], "THREAD_PLAN_OK")
+            thread_id = start_payload["thread_id"]
+            thread_dir = project / ".agent-os" / "threads" / thread_id
+            ledger = thread_dir / "thread-plan.ndjson"
+            current = json.loads((project / ".agent-os" / "threads" / "current.json").read_text(encoding="utf-8"))
+            self.assertEqual(current["thread_id"], thread_id)
+            first_lines = ledger.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(first_lines), 1)
+            self.assertIn("总体计划", first_lines[0])
+
+            self.run_cli(
+                "thread-plan",
+                "append",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--kind",
+                "branch",
+                "--text",
+                "Plan A：先稳定 OS 计划记录，再做可视化；Plan B：直接做复杂 dashboard，暂缓。",
+            )
+            self.run_cli(
+                "thread-plan",
+                "append",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--kind",
+                "phase",
+                "--text",
+                "Phase A：把聊天级计划记录清楚；Phase B：再把多个任务串起来。",
+            )
+            after_lines = ledger.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(after_lines[0], first_lines[0])
+            self.assertEqual(len(after_lines), 3)
+
+            run = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(run.stdout)["run_id"]
+            linked = self.run_cli(
+                "thread-plan",
+                "link-run",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+            )
+            self.assertEqual(json.loads(linked.stdout)["status"], "linked")
+
+            current_result = self.run_cli("thread-plan", "current", "--project-root", str(project), "--json")
+            self.assertEqual(json.loads(current_result.stdout)["current"]["thread_id"], thread_id)
+
+            markdown = self.run_cli(
+                "thread-plan",
+                "render",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--format",
+                "markdown",
+                "--json",
+            )
+            md_payload = json.loads(markdown.stdout)
+            md_text = Path(md_payload["output"]).read_text(encoding="utf-8")
+            self.assertIn("Plan A / Plan B", md_text)
+            self.assertIn("Phase A / Phase B", md_text)
+            self.assertIn("当前工作线", md_text)
+            self.assertIn(run_id, md_text)
+
+            mermaid = self.run_cli(
+                "thread-plan",
+                "render",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--format",
+                "mermaid",
+            )
+            self.assertIn("THREAD_PLAN_OK action=render", mermaid.stdout)
+            self.assertIn("flowchart LR", mermaid.stdout)
+            self.assertIn("Plan A", mermaid.stdout)
+
+            html = self.run_cli(
+                "thread-plan",
+                "render",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--format",
+                "html",
+                "--json",
+            )
+            html_payload = json.loads(html.stdout)
+            html_text = Path(html_payload["output"]).read_text(encoding="utf-8")
+            manifest = json.loads(Path(html_payload["manifest"]).read_text(encoding="utf-8"))
+            source_sha = hashlib.sha256(ledger.read_bytes()).hexdigest()
+            self.assertEqual(manifest["kind"], "thread-plan")
+            self.assertEqual(manifest["source_sha256"], source_sha)
+            self.assertIn(source_sha, html_text)
+            self.assertIn("HTML is presentation, not source of truth.", html_text)
+            self.assertEqual(html_text.lower().count("<h1"), 2)
+            self.assertNotIn("<script", html_text.lower())
+            self.assertNotIn("https://", html_text)
+
+            old_lines = ledger.read_text(encoding="utf-8").splitlines()
+            second = self.run_cli(
+                "thread-plan",
+                "start",
+                "--project-root",
+                str(project),
+                "--title",
+                "另一个聊天计划",
+                "--json",
+            )
+            second_thread_id = json.loads(second.stdout)["thread_id"]
+            self.assertNotEqual(second_thread_id, thread_id)
+            self.assertEqual(ledger.read_text(encoding="utf-8").splitlines(), old_lines)
+            second_current = json.loads((project / ".agent-os" / "threads" / "current.json").read_text(encoding="utf-8"))
+            self.assertEqual(second_current["thread_id"], second_thread_id)
+
+    def test_verify_decisions_detects_orphans_and_requires_explanations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+
+            invalid = self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "branch_abandoned",
+                "--status",
+                "abandoned",
+                "--title",
+                "Abandon unexplained path",
+                "--summary",
+                "This should fail because reason is required.",
+                "--evidence",
+                "test",
+                check=False,
+            )
+            self.assertEqual(invalid.returncode, 1)
+            self.assertIn("--reason is required", invalid.stderr)
+
+            valid = self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "final_decision",
+                "--status",
+                "executed",
+                "--title",
+                "Finish linear path",
+                "--summary",
+                "Record a simple final decision.",
+                "--reason",
+                "No branch was needed.",
+                "--evidence",
+                "test",
+                "--json",
+            )
+            self.assertIn("DECISION_OK", json.loads(valid.stdout)["marker"])
+            passed = self.run_cli("verify-decisions", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            self.assertEqual(json.loads(passed.stdout)["status"], "passed")
+
+            run_dir = project / ".agent-os" / "runs" / run_id
+            forged = {
+                "decision_id": "DEC-ORPHAN",
+                "parent_id": "DEC-MISSING",
+                "task_id": "T001",
+                "run_id": run_id,
+                "kind": "branch_selected",
+                "status": "selected",
+                "title": "Forged orphan",
+                "summary": "This node has no parent.",
+                "reason": "test",
+                "options": [],
+                "chosen": "",
+                "evidence": "manual write",
+                "timestamp": "2026-05-29T00:00:00+00:00",
+            }
+            with (run_dir / "decision-events.ndjson").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(forged, ensure_ascii=False, sort_keys=True) + "\n")
+
+            failed = self.run_cli("verify-decisions", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json", check=False)
+            self.assertEqual(failed.returncode, 2)
+            self.assertIn("decision_orphan_parent", failed.stdout)
+
+    def test_complete_task_enforces_decision_verification_when_policy_enforces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            created = self.run_cli(
+                "create-task",
+                "--project-root",
+                str(project),
+                "--title",
+                "Decision gated completion",
+                "--type",
+                "report_task",
+                "--output",
+                "docs/report.md",
+                "--acceptance",
+                "report exists",
+                "--json",
+            )
+            task_id = json.loads(created.stdout)["task_id"]
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", task_id, "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.log_required_phases(project, task_id, run_id)
+            self.write_plan_context(project, task_id, run_id)
+            report = project / "docs" / "report.md"
+            report.parent.mkdir()
+            report.write_text("report\n", encoding="utf-8")
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id)
+            self.run_cli("artifact-assert", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id, "--kind", "file_exists", "--path", "docs/report.md")
+            (project / ".agent-os" / "decision-policy.yaml").write_text(
+                "decision_policy:\n  strictness: enforce\n",
+                encoding="utf-8",
+            )
+
+            blocked = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--summary",
+                "Should fail before decision proof.",
+                "--allow-pending-postflight",
+                "temporary project",
+                check=False,
+            )
+            self.assertEqual(blocked.returncode, 1)
+            self.assertIn("decision verification failed", blocked.stderr)
+
+            self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--kind",
+                "final_decision",
+                "--status",
+                "executed",
+                "--title",
+                "Complete simple report",
+                "--summary",
+                "No branch was needed for this deterministic report task.",
+                "--reason",
+                "The task had a single declared output.",
+                "--evidence",
+                "docs/report.md",
+            )
+            completed = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--summary",
+                "Completed after decision proof.",
+                "--allow-pending-postflight",
+                "temporary project",
+                "--json",
+            )
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["decision_status"], "passed")
+            receipt = (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("Decision Verification Status: passed", receipt)
 
     def test_artifact_assert_records_effect_marker_for_real_file_checks(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2474,6 +3014,147 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertTrue(Path(handoff_payload["manifest"]).exists())
             self.assertIn("status: ready", (project / ".agent-os" / "tasks.yaml").read_text(encoding="utf-8"))
 
+    def test_render_html_decision_map_sidecar_from_decision_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            root = self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "branch_opened",
+                "--status",
+                "planned",
+                "--title",
+                "Open model strategy",
+                "--summary",
+                "Compare model paths.",
+                "--reason",
+                "Research modeling can require alternatives.",
+                "--option",
+                "fast model",
+                "--option",
+                "full model",
+                "--evidence",
+                "plan",
+                "--json",
+            )
+            root_id = json.loads(root.stdout)["decision_id"]
+            self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--parent-id",
+                root_id,
+                "--kind",
+                "branch_abandoned",
+                "--status",
+                "abandoned",
+                "--title",
+                "Skip full model",
+                "--summary",
+                "Full model is deferred for this run.",
+                "--reason",
+                "The quick validation branch is enough for the current task.",
+                "--evidence",
+                "runtime budget",
+            )
+
+            rendered = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--run-id",
+                run_id,
+                "--kind",
+                "decision-map",
+                "--json",
+            )
+            payload = json.loads(rendered.stdout)
+            html = Path(payload["output"]).read_text(encoding="utf-8")
+            manifest = json.loads(Path(payload["manifest"]).read_text(encoding="utf-8"))
+            source_sha = hashlib.sha256((project / ".agent-os" / "runs" / run_id / "decision-events.ndjson").read_bytes()).hexdigest()
+            self.assertIn(source_sha, html)
+            self.assertIn("Open model strategy", html)
+            self.assertIn("Skip full model", html)
+            self.assertIn("HTML is presentation, not source of truth.", html)
+            self.assertEqual(manifest["kind"], "decision-map")
+            self.assertEqual(manifest["source_sha256"], source_sha)
+
+    def test_flow_summary_and_mission_flow_html_are_readable_sidecars(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.write_plan_context(project, "T001", run_id)
+            self.log_required_phases(project, "T001", run_id)
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "shell",
+                "--id",
+                "unit-test",
+                "--purpose",
+                "Validate mission flow readability.",
+            )
+
+            plain = self.run_cli("flow-summary", "--project-root", str(project), "--run-id", run_id)
+            self.assertIn("FLOW_OK run=", plain.stdout)
+            self.assertIn("```mermaid", plain.stdout)
+            self.assertIn("Goal:", plain.stdout)
+            self.assertIn("Health check:", plain.stdout)
+            self.assertIn("Safe writes:", plain.stdout)
+            self.assertNotIn("lifecycle_status", plain.stdout)
+
+            as_json = self.run_cli("flow-summary", "--project-root", str(project), "--run-id", run_id, "--json")
+            payload = json.loads(as_json.stdout)
+            self.assertEqual(payload["flow_marker"], "FLOW_OK")
+            self.assertIn("Task and plan:", payload["mermaid"])
+            source = project / ".agent-os" / "runs" / run_id / "mission-flow.md"
+            self.assertTrue(source.exists())
+
+            rendered = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--run-id",
+                run_id,
+                "--kind",
+                "mission-flow",
+                "--json",
+            )
+            html_payload = json.loads(rendered.stdout)
+            html = Path(html_payload["output"]).read_text(encoding="utf-8")
+            manifest = json.loads(Path(html_payload["manifest"]).read_text(encoding="utf-8"))
+            source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+            self.assertEqual(html_payload["flow_marker"], "FLOW_OK")
+            self.assertEqual(manifest["kind"], "mission-flow")
+            self.assertEqual(manifest["source_sha256"], source_sha)
+            self.assertIn(source_sha, html)
+            self.assertIn("Mission Flow", html)
+            self.assertIn("Safe Writes", html)
+            self.assertIn("HTML is presentation, not source of truth.", html)
+
     def test_render_html_rich_report_is_self_contained_composable_and_stale_detectable(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
@@ -2608,7 +3289,46 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertTrue(any(item["label"] == "phase_keys" for item in payload))
             self.assertTrue(any(item["label"] == "workflow_router" for item in payload))
             self.assertTrue(any(item["label"] == "tool_registry" for item in payload))
+            self.assertTrue(any(item["label"] == "decision_policy" for item in payload))
             self.assertTrue(any(item["label"] == "effect_policy" for item in payload))
+
+    def test_decision_policy_defaults_to_warn_and_requires_reason_when_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            runtime = Path(tmp) / "KnowledgeOSRuntime"
+            self.run_cli("init-os", "--root", str(ROOT), "--os-root", str(runtime), "--json")
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Example",
+                "--global-root",
+                str(runtime / "global-agent-fabric"),
+                "--capability-root",
+                str(runtime / "capability-layer"),
+            )
+            policy = project / ".agent-os" / "decision-policy.yaml"
+            self.assertTrue(policy.exists())
+            policy.unlink()
+            missing = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
+            self.assertIn("status: ok", missing.stdout)
+
+            policy.write_text("decision_policy:\n  strictness: off\n  downgrade_reason:\n", encoding="utf-8")
+            disabled = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary", check=False)
+            self.assertEqual(disabled.returncode, 1)
+            self.assertIn("decision_policy", disabled.stdout)
+            self.assertIn("strictness=off requires downgrade_reason", disabled.stdout)
+
+            policy.write_text(
+                "decision_policy:\n  strictness: off\n  downgrade_reason: temporary exploration mode\n",
+                encoding="utf-8",
+            )
+            reasoned = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
+            self.assertIn("status: ok", reasoned.stdout)
 
     def test_effect_policy_defaults_to_observe_and_requires_reason_when_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2959,6 +3679,8 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("check-route-write", result.stdout)
             self.assertIn("create-spec", result.stdout)
             self.assertIn("align-spec", result.stdout)
+            self.assertIn("thread-plan", result.stdout)
+            self.assertIn("THREAD_PLAN_OK", result.stdout)
             self.assertIn("context-pack", result.stdout)
             self.assertIn("plan-task", result.stdout)
             self.assertIn("verify-context", result.stdout)
@@ -2968,12 +3690,20 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("CHECKPOINT_OK", result.stdout)
             self.assertIn("capability-event", result.stdout)
             self.assertIn("CAPABILITY_OK", result.stdout)
+            self.assertIn("decision-event", result.stdout)
+            self.assertIn("DECISION_OK", result.stdout)
+            self.assertIn("verify-decisions", result.stdout)
+            self.assertIn("DECISION_VERIFY_OK", result.stdout)
             self.assertIn("artifact-assert", result.stdout)
             self.assertIn("EFFECT_OK", result.stdout)
             self.assertIn("verify-lifecycle", result.stdout)
             self.assertIn("verify-effects", result.stdout)
             self.assertIn("EFFECT_VERIFY_OK", result.stdout)
             self.assertIn("complete-task", result.stdout)
+            self.assertIn("flow-summary", result.stdout)
+            self.assertIn("FLOW_OK", result.stdout)
+            self.assertIn("thread-plan", result.stdout)
+            self.assertIn("THREAD_PLAN_OK", result.stdout)
             self.assertIn("archive-legacy-project", result.stdout)
 
     def test_startup_prompt_outputs_trace_step_contract(self):
@@ -2992,6 +3722,8 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("EFFECT_OK", result.stdout)
             self.assertIn("verify-effects", result.stdout)
             self.assertIn("EFFECT_VERIFY_OK", result.stdout)
+            self.assertIn("flow-summary", result.stdout)
+            self.assertIn("FLOW_OK", result.stdout)
 
     def test_dispatch_task_prioritizes_branch_builder_and_consultation(self):
         result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")

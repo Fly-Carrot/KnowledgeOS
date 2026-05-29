@@ -8,6 +8,16 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ### Added
 
+- Decision Graph module for public, auditable decision summaries without expanding the kernel.
+- `decision-event` records plan branches, route selections, inserted steps, abandoned branches, rollbacks, deferred work, human decisions, risk tradeoffs, and final decisions into `decision-events.ndjson`, returning `DECISION_OK`.
+- `decision-query` and `verify-decisions` make decision trees queryable and command-evidence checked.
+- `render-html --kind decision-map` generates a presentation sidecar from the decision ledger while keeping NDJSON as the source of truth.
+- `.agent-os/decision-policy.yaml` lets projects choose decision-graph strictness: `warn`, `enforce`, or `off` with a downgrade reason.
+- `flow-summary` emits a readable, layered Mermaid Mission Flow with `FLOW_OK` for medium-or-larger task completion reports.
+- `render-html --kind mission-flow` generates a self-contained Mission Flow HTML sidecar.
+- `complete-task` now prepares `mission-flow.md` and returns `flow_mermaid` for medium, high, or complex tasks so agents can include a clear end-of-task flow diagram.
+- Thread Plan Ledger module for chat-window-level, append-only natural-language planning across multiple tasks and runs.
+- `thread-plan start/current/append/link-run/render` creates readable `Plan A / Plan B` and `Phase A / Phase B` planning maps, returning `THREAD_PLAN_OK`.
 - `render-html` for HTML presentation sidecars without replacing Markdown, YAML, or NDJSON as canonical evidence.
 - Composable HTML report manifests and fragments for receipt, handoff, rich-report, and stitched report outputs.
 - `.agent-os/effect-policy.yaml` for project-level capability effect verification strictness.
@@ -25,6 +35,8 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ### Fixed
 
+- `thread-plan render --format html` no longer duplicates the Thread Plan heading inside the report body; the HTML shell keeps the page title and the Markdown fragment keeps the plan title.
+- `complete-task` now runs decision verification and blocks forged or structurally invalid decision evidence when project policy is enforced.
 - `artifact-assert` now rejects nonexistent `capability_event_id` links instead of allowing forged capability-to-effect evidence.
 - `verify-effects` now rejects existing effect assertions that reference missing capability events.
 - `run-task` now allocates suffixed run ids when the same task is run more than once within the same second.
