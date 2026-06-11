@@ -1480,3 +1480,93 @@ tasks:
       - "thread-plan and lifecycle tests pass"
       - "public diff leak scan passes before push"
       - "changes are pushed to GitHub branch"
+  - id: KOS-T081
+    title: "Loosen HTML sidecar presentation constraints"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "report_contract_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/executable-control-plane.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "docs/LIVE-REPORT.md"
+    acceptance:
+      - "render-html supports default minimal bare and fragment presentation modes"
+      - "all presentation modes preserve required source metadata and source-of-truth notice"
+      - "default mode remains backward compatible while minimal and bare avoid forced hero/sidebar layout"
+      - "tests and doctor pass"
+  - id: KOS-T082
+    title: "Add explicit agent dispatch reporting"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "report_contract_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/executable-control-plane.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "docs/LIVE-REPORT.md"
+    acceptance:
+      - "dispatch-task exposes AGENT_DISPATCH_PLAN in text and JSON output"
+      - "dispatch-report summarizes actual capability events with AGENT_DISPATCH_OK"
+      - "complete-task returns and receipts agent dispatch summary"
+      - "targeted tests, doctor, and diff checks pass"
+  - id: KOS-T083
+    title: "Make agent dispatch reporting mandatory in prompts"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "prompt_contract_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "templates/project-control-plane/AGENTS.md"
+      - "docs/agent-guide.md"
+      - ".agent-os/startup-prompt.md"
+      - "docs/LIVE-REPORT.md"
+      - "tests/test_knowledgeos_cli.py"
+    acceptance:
+      - "startup prompt and project template require AGENT_DISPATCH_PLAN and AGENT_DISPATCH_OK reporting"
+      - "agent guide documents dispatch-report as final visible marker"
+      - "tests cover the prompt contract"
+  - id: KOS-T084
+    title: "Upgrade dispatch report to full capability decision report"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "prompt_contract_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "templates/project-control-plane/AGENTS.md"
+      - ".agent-os/startup-prompt.md"
+      - "docs/agent-guide.md"
+      - "docs/LIVE-REPORT.md"
+      - "tests/test_knowledgeos_cli.py"
+    acceptance:
+      - "dispatch-report summarizes all capability kinds, skipped agents, evidence, and gaps"
+      - "startup and template prompts require every conversation to run KnowledgeOS judgment before success claims"
+      - "tests verify full capability report wording and global prompt contract"
+  - id: KOS-T085
+    title: "Publish latest KnowledgeOS update to GitHub"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "release"
+    outputs:
+      - ".gitignore"
+      - "CHANGELOG.md"
+      - "docs/LIVE-REPORT.md"
+      - "knowledgeos/cli.py"
+      - "templates/project-control-plane/AGENTS.md"
+      - ".agent-os/startup-prompt.md"
+      - "docs/agent-guide.md"
+      - "docs/executable-control-plane.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "tests/test_knowledgeos_cli.py"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "local-only files are ignored before staging"
+      - "security and secret scans pass before commit"
+      - "latest changes are committed and pushed to GitHub"

@@ -48,6 +48,7 @@ Current and planned modules include:
 - `capability`: dispatch policy, tool registry, and capability events;
 - `decision-graph`: public decision summaries, plan branches, abandoned routes, rollbacks, and decision-map HTML;
 - `mission-flow`: readable completion flow summaries and HTML sidecars for medium or larger tasks;
+- `html-sidecar`: presentation-only report rendering where provenance and safety are enforced but visual layout is project-selectable;
 - `archive`: cold storage for old or superseded project content;
 - `migration`: old-project reorganization plans;
 - `harness`: cross-project audit and repair;
@@ -140,6 +141,18 @@ This lane records visible use of:
 
 Required dispatch stages must be recorded or explicitly skipped with a public reason.
 
+### Agent Dispatch Report
+
+```text
+File: .agent-os/runs/<RUN_ID>/dispatch-report.md
+Command: dispatch-report
+Markers: AGENT_DISPATCH_PLAN / AGENT_DISPATCH_OK
+```
+
+`dispatch-task` exposes the planned agent, subagent, orchestrator, and capability routing with `AGENT_DISPATCH_PLAN`.
+
+`dispatch-report` summarizes the actual `capability-event` ledger with `AGENT_DISPATCH_OK` as a Full Capability Dispatch Report. It covers all mounted or external capabilities, including agents invoked/skipped, MCP, skills, plugins/apps, browser/Chrome/GitHub/security connectors, scripts, shell, file reads, evidence files, and gaps. It is a visibility report, not a replacement for the capability ledger.
+
 ### Decision Graph
 
 ```text
@@ -189,6 +202,26 @@ HTML: render-html --kind mission-flow
 This presentation lane gives humans a readable, layered flow at the end of medium, high, or complex tasks. It uses plain labels such as `Goal`, `Health Check`, `Task & Plan`, `Safe Writes`, `Work Done`, `Tools Used`, `Proof`, `Decisions`, and `Finish`.
 
 Mission Flow is not kernel evidence. It summarizes existing evidence lanes and should remain visually clear instead of exposing raw internal terminology.
+
+### HTML Sidecars
+
+```text
+Command: render-html
+Modes: default / minimal / bare / fragment
+```
+
+HTML sidecars are presentation artifacts. The source of truth remains Markdown, YAML, and NDJSON.
+
+KnowledgeOS enforces only the evidence metadata contract:
+
+- source path;
+- source SHA-256;
+- generated time;
+- kind and run/thread/spec association when available;
+- `HTML is presentation, not source of truth.`;
+- no remote scripts, remote fonts, or CDN dependencies by default.
+
+KnowledgeOS does not enforce a single visual language. Projects and apps may choose the `default`, `minimal`, `bare`, or `fragment` presentation mode as long as the evidence metadata contract remains intact.
 
 ## Full Task Chain
 

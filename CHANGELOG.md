@@ -8,6 +8,11 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ### Added
 
+- Full Capability Dispatch Report: `dispatch-report` now treats `AGENT_DISPATCH_OK` as a complete mounted-capability report, not only a subagent summary.
+- `capability-event` can record plugin/app, browser, Chrome, GitHub, security connector, MCP, skill, subagent, orchestrator, script, shell, and file-read capability use.
+- `KOS_DECISION` prompt contract: every conversation should begin with a visible KnowledgeOS routing judgment covering project state, work class, required flow, and reason.
+- `dispatch-report.md` now includes used/skipped counts by capability kind, skipped/not-needed reasons, dispatch plan evidence, evidence file paths, and gaps.
+- HTML sidecar presentation modes: `default`, `minimal`, `bare`, and `fragment`, keeping evidence metadata mandatory while making visual layout project-selectable.
 - Decision Graph module for public, auditable decision summaries without expanding the kernel.
 - `decision-event` records plan branches, route selections, inserted steps, abandoned branches, rollbacks, deferred work, human decisions, risk tradeoffs, and final decisions into `decision-events.ndjson`, returning `DECISION_OK`.
 - `decision-query` and `verify-decisions` make decision trees queryable and command-evidence checked.
@@ -35,6 +40,8 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ### Fixed
 
+- Prompt templates and generated startup prompts now require `AGENT_DISPATCH_PLAN`, `AGENT_DISPATCH_OK`, and full capability summaries for substantial work.
+- `dispatch-report` now reports `agents=0` with explicit skipped-agent reasons instead of making no-subagent runs look empty.
 - `thread-plan render --format html` no longer duplicates the Thread Plan heading inside the report body; the HTML shell keeps the page title and the Markdown fragment keeps the plan title.
 - `complete-task` now runs decision verification and blocks forged or structurally invalid decision evidence when project policy is enforced.
 - `artifact-assert` now rejects nonexistent `capability_event_id` links instead of allowing forged capability-to-effect evidence.

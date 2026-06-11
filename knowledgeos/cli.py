@@ -153,7 +153,23 @@ READ_POLICY_SECTIONS = {
 
 EXPECTED_PHASE_KEYS = ["route", "plan", "review", "dispatch", "execute", "report"]
 PHASE_STATUSES = {"completed", "skipped"}
-CAPABILITY_EVENT_KINDS = {"mcp", "skill", "subagent", "orchestrator", "script", "shell", "file_read"}
+CAPABILITY_EVENT_KINDS = {
+    "app",
+    "browser",
+    "chrome",
+    "file_read",
+    "github",
+    "mcp",
+    "plugin",
+    "script",
+    "security",
+    "shell",
+    "skill",
+    "subagent",
+    "orchestrator",
+}
+AGENT_CAPABILITY_KINDS = {"orchestrator", "subagent"}
+SKIPPED_CAPABILITY_STATUSES = {"skipped", "skip", "not_needed", "not-needed"}
 EFFECT_STRICTNESS_LEVELS = {"observe", "warn", "enforce", "off"}
 DECISION_STRICTNESS_LEVELS = {"warn", "enforce", "off"}
 DECISION_EVENT_KINDS = {
@@ -897,6 +913,39 @@ def tool_summary(entry: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def summarize_dispatch_plan(dispatch: dict[str, Any]) -> dict[str, Any]:
+    steps = dispatch.get("steps", [])
+    planned_tools: list[dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        stage = str(step.get("stage", ""))
+        for tool in step.get("tools", []) or []:
+            if not isinstance(tool, dict):
+                continue
+            planned_tools.append({**tool, "stage": stage, "required": bool(step.get("required"))})
+    planned_agents = [
+        item
+        for item in planned_tools
+        if str(item.get("kind", "")) in AGENT_CAPABILITY_KINDS or str(item.get("stage", "")) in {"branch_builder", "orchestrator", "subagent"}
+    ]
+    required_stages = [str(step.get("stage", "")) for step in steps if isinstance(step, dict) and step.get("required")]
+    marker = (
+        f"AGENT_DISPATCH_PLAN agents={len(planned_agents)} "
+        f"capabilities={len(planned_tools)} required={len(required_stages)}"
+    )
+    return {
+        "dispatch_marker": "AGENT_DISPATCH_PLAN",
+        "marker": marker,
+        "dispatch_summary": {
+            "planned_agents": len(planned_agents),
+            "planned_capabilities": len(planned_tools),
+            "required_stages": required_stages,
+            "planned_agent_ids": [str(item.get("id", "")) for item in planned_agents if item.get("id")],
+        },
+    }
+
+
 def build_dispatch_plan(project_root: Path, task_id: str) -> dict[str, Any]:
     task = find_task(project_root, task_id)
     route = build_task_route(project_root, task_id, None)
@@ -961,7 +1010,7 @@ def build_dispatch_plan(project_root: Path, task_id: str) -> dict[str, Any]:
             consult.append(item)
     consult = sorted(set(consult))
 
-    return {
+    result = {
         "status": "dispatch_ready",
         "task": task,
         "route": route,
@@ -973,6 +1022,8 @@ def build_dispatch_plan(project_root: Path, task_id: str) -> dict[str, Any]:
         "agent_opinion_required": True,
         "agent_opinion_prompt": "Pause before execution, state your recommended next move, name the tradeoff, and ask the human whether to proceed.",
     }
+    result.update(summarize_dispatch_plan(result))
+    return result
 
 
 def path_for_policy(project_root: Path, target: str) -> tuple[Path, str, bool]:
@@ -3191,6 +3242,11 @@ def build_agent_guide(project_root: Path) -> str:
             "",
             "Use this checklist before substantial work.",
             "",
+            "0. Start every conversation with a visible KnowledgeOS routing judgment.",
+            "   - Relay KOS_DECISION with project state, work class, required flow, and reason.",
+            "   - Use answer-only for simple non-mutating replies, but still state the decision.",
+            "   - Use task, spec, thread-plan, or full lifecycle when work is substantial.",
+            "",
             "1. Read the entry contract.",
             "   - AGENTS.md",
             "",
@@ -3217,7 +3273,7 @@ def build_agent_guide(project_root: Path) -> str:
             f"   - {bin_path} thread-plan start --project-root {project_root} --title <natural-language-goal>  # when a long-lived plan/spec starts; relay THREAD_PLAN_OK",
             f"   - {bin_path} create-task --project-root {project_root} --title <title> --type <type> --output <path> --acceptance <check>",
             f"   - {bin_path} route-task --project-root {project_root} --task-id <task-id>",
-            f"   - {bin_path} dispatch-task --project-root {project_root} --task-id <task-id>",
+            f"   - {bin_path} dispatch-task --project-root {project_root} --task-id <task-id>; echo or relay AGENT_DISPATCH_PLAN",
             f"   - {bin_path} check-route-write --project-root {project_root} --task-id <task-id> --path <planned-path>",
             "",
             "4. Start work through a run envelope.",
@@ -3235,7 +3291,8 @@ def build_agent_guide(project_root: Path) -> str:
             f"   - {bin_path} dispatch-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
             f"   - {bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note <public-trace> --evidence <evidence>; echo or relay TRACE_OK;",
             f"   - {bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>; echo or relay CHECKPOINT_OK;",
-            f"   - {bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose <purpose> before/after MCP, skill, subagent, orchestrator, or important script use; echo or relay CAPABILITY_OK;",
+            f"   - {bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose <purpose> before/after MCP, skill, plugin/app, browser/Chrome/GitHub/security connector, subagent, orchestrator, shell, file_read, or important script use; echo or relay CAPABILITY_OK;",
+            f"   - {bin_path} dispatch-report --project-root {project_root} --task-id <task-id> --run-id <run-id>; echo or relay AGENT_DISPATCH_OK as the full capability dispatch report, not only subagent usage;",
             f"   - {bin_path} decision-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --title <title> --summary <summary> --reason <reason> --evidence <evidence>; echo or relay DECISION_OK when the plan branches, changes, rolls back, or abandons a route;",
             f"   - {bin_path} thread-plan append --project-root {project_root} --thread-id <thread-id> --kind <plan|phase|branch|decision|progress|change|summary> --text <natural-language-note> when the chat-level plan changes or advances; relay THREAD_PLAN_OK;",
             f"   - {bin_path} thread-plan link-run --project-root {project_root} --thread-id <thread-id> --task-id <task-id> --run-id <run-id> to connect a run to the long-lived plan;",
@@ -3275,6 +3332,7 @@ def build_startup_prompt(project_root: Path) -> str:
             "",
             "Before substantial work:",
             "",
+            "0. At the start of every conversation, make a visible KnowledgeOS judgment and relay `KOS_DECISION` with project state (`managed` or `unmanaged`), work class (`simple`, `substantial`, or `blocked`), required flow (`answer-only`, `task`, `spec`, `thread-plan`, or `full lifecycle`), and reason. This is a public routing decision, not hidden reasoning.",
             "1. Read `AGENTS.md`.",
             "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/specs.yaml`, `.agent-os/phase-policy.yaml`, `.agent-os/decision-policy.yaml`, `.agent-os/effect-policy.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
             f"3. Run `{bin_path} doctor --project-root {project_root} --summary` and do not proceed if it fails.",
@@ -3282,7 +3340,7 @@ def build_startup_prompt(project_root: Path) -> str:
             f"5. If the user starts a durable plan/spec conversation, run `{bin_path} thread-plan current --project-root {project_root}` or `{bin_path} thread-plan start --project-root {project_root} --title \"<natural language goal>\"`; append natural-language progress with `{bin_path} thread-plan append --project-root {project_root} --thread-id <thread-id> --kind <kind> --text \"<plain note>\"` when the plan changes or advances, and relay `THREAD_PLAN_OK`.",
             f"6. Select or confirm one task id from `.agent-os/tasks.yaml`; if the user asks for new work and no ready task fits, run `{bin_path} create-task --project-root {project_root} --title \"<title>\" --type <type> --output <path> --acceptance \"<check>\"`.",
             f"7. Run `{bin_path} route-task --project-root {project_root} --task-id <task-id>`.",
-            f"8. Run `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id>` before invoking subagents, MCP tools, skills, workflows, or scripts.",
+            f"8. Run `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id>` before invoking subagents, MCP tools, skills, workflows, or scripts; relay `AGENT_DISPATCH_PLAN`.",
             f"9. Before planned mutation, run `{bin_path} check-route-write --project-root {project_root} --task-id <task-id> --path <planned-path>`.",
             f"10. Create run evidence with `{bin_path} run-task --project-root {project_root} --task-id <task-id>`; this writes `spec-snapshot.md` and `context-pack.md`.",
             f"11. Write/update the execution context with `{bin_path} context-pack --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} plan-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
@@ -3290,19 +3348,20 @@ def build_startup_prompt(project_root: Path) -> str:
             f"13. Record dispatch evidence with `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id> --run-id <run-id>` after the run exists.",
             f"14. Record public operational progress with `{bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `TRACE_OK` marker.",
             f"15. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `CHECKPOINT_OK` marker.",
-            f"16. Record MCP, skill, subagent, orchestrator, or important script use with `{bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose \"<purpose>\"`; relay the returned `CAPABILITY_OK` marker.",
-            f"17. Record public decision changes with `{bin_path} decision-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --title \"<title>\" --summary \"<summary>\" --reason \"<reason>\" --evidence \"<evidence>\"`; relay the returned `DECISION_OK` marker when plans branch, change, roll back, or abandon a route.",
-            f"18. Verify real side effects with `{bin_path} artifact-assert --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --path <artifact>`; relay the returned `EFFECT_OK` marker.",
-            f"19. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
-            f"20. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>`, `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`, `{bin_path} verify-effects --project-root {project_root} --task-id <task-id> --run-id <run-id>`, and `{bin_path} verify-decisions --project-root {project_root} --task-id <task-id> --run-id <run-id>`; relay `EFFECT_VERIFY_OK` and `DECISION_VERIFY_OK` before claiming verification success.",
-            f"21. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, capability visibility, effect verification, decision verification, and required postflight.",
-            f"22. For medium, high, or complex tasks, include the returned `FLOW_OK` Mermaid Mission Flow in the final answer; if needed, run `{bin_path} flow-summary --project-root {project_root} --run-id <run-id>`.",
-            "23. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
-            f"24. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
-            f"25. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
-            f"26. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
+            f"16. Record MCP, skill, plugin/app, browser/Chrome/GitHub/security connector, subagent, orchestrator, shell, file_read, or important script use with `{bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose \"<purpose>\"`; relay the returned `CAPABILITY_OK` marker.",
+            f"17. Summarize actual capability dispatch with `{bin_path} dispatch-report --project-root {project_root} --task-id <task-id> --run-id <run-id>`; relay `AGENT_DISPATCH_OK`. Treat it as a full capability report: agents invoked/skipped, MCP, skills, plugins/apps, browser/Chrome/GitHub/security connectors, scripts, shell, file reads, evidence files, and gaps. If no subagent was used, still report `agents=0` and explain why.",
+            f"18. Record public decision changes with `{bin_path} decision-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --title \"<title>\" --summary \"<summary>\" --reason \"<reason>\" --evidence \"<evidence>\"`; relay the returned `DECISION_OK` marker when plans branch, change, roll back, or abandon a route.",
+            f"19. Verify real side effects with `{bin_path} artifact-assert --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --path <artifact>`; relay the returned `EFFECT_OK` marker.",
+            f"20. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
+            f"21. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>`, `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`, `{bin_path} verify-effects --project-root {project_root} --task-id <task-id> --run-id <run-id>`, and `{bin_path} verify-decisions --project-root {project_root} --task-id <task-id> --run-id <run-id>`; relay `EFFECT_VERIFY_OK` and `DECISION_VERIFY_OK` before claiming verification success.",
+            f"22. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, capability visibility, effect verification, decision verification, visible dispatch reporting, and required postflight.",
+            f"23. For medium, high, or complex tasks, include the returned `FLOW_OK` Mermaid Mission Flow in the final answer; if needed, run `{bin_path} flow-summary --project-root {project_root} --run-id <run-id>`.",
+            "24. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
+            f"25. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
+            f"26. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
+            f"27. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
             "",
-            "Never claim boot, route, dispatch, write safety, spec alignment, thread plan, context pack, plan, trace, checkpoint, capability, decision, effect, eval, completion, flow, or sync success without command evidence.",
+            "Never skip the initial `KOS_DECISION`. Never claim boot, route, dispatch, write safety, spec alignment, thread plan, context pack, plan, trace, checkpoint, capability, agent dispatch, decision, effect, eval, completion, flow, or sync success without command evidence.",
             "",
         ]
     )
@@ -4032,6 +4091,19 @@ def record_task_phase(
 def record_dispatch_event(project_root: Path, task_id: str, run_id: str, dispatch: dict[str, Any]) -> dict[str, Any]:
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     required_stages = [step.get("stage", "") for step in dispatch.get("steps", []) if step.get("required")]
+    planned_tools: list[dict[str, str]] = []
+    for step in dispatch.get("steps", []):
+        stage = str(step.get("stage", ""))
+        for tool in step.get("tools", []) or []:
+            if isinstance(tool, dict):
+                planned_tools.append(
+                    {
+                        "stage": stage,
+                        "kind": str(tool.get("kind", "")),
+                        "id": str(tool.get("id", "")),
+                        "required": str(bool(step.get("required"))).lower(),
+                    }
+                )
     append_command_event(
         run_dir,
         "dispatch-task",
@@ -4039,6 +4111,7 @@ def record_dispatch_event(project_root: Path, task_id: str, run_id: str, dispatc
         run_id,
         status=str(dispatch.get("status", "")),
         required_stages=required_stages,
+        planned_tools=planned_tools,
     )
     return {"run_id": run_id, "required_stages": required_stages, "command_events": str(command_events_path(run_dir))}
 
@@ -4099,6 +4172,196 @@ def record_capability_event(
         "marker": marker,
         "ledger": str(event_path),
         "record": record,
+    }
+
+
+def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    events = [event for event in load_capability_events(run_dir) if "_invalid_json" not in event]
+    invoked_events = [
+        event
+        for event in events
+        if str(event.get("status", "completed")).strip().lower() not in SKIPPED_CAPABILITY_STATUSES
+    ]
+    skipped_events = [
+        event
+        for event in events
+        if str(event.get("status", "completed")).strip().lower() in SKIPPED_CAPABILITY_STATUSES
+    ]
+    agent_events = [event for event in invoked_events if str(event.get("kind", "")) in AGENT_CAPABILITY_KINDS]
+    counts_by_kind: dict[str, int] = {kind: 0 for kind in sorted(CAPABILITY_EVENT_KINDS)}
+    for event in invoked_events:
+        kind = str(event.get("kind", "unknown")) or "unknown"
+        counts_by_kind[kind] = counts_by_kind.get(kind, 0) + 1
+    skipped_by_kind: dict[str, int] = {kind: 0 for kind in sorted(CAPABILITY_EVENT_KINDS)}
+    for event in skipped_events:
+        kind = str(event.get("kind", "unknown")) or "unknown"
+        skipped_by_kind[kind] = skipped_by_kind.get(kind, 0) + 1
+    command_events = load_command_events(run_dir)
+    dispatch_events = [
+        event
+        for event in command_events
+        if event.get("generated_by") == "knowledgeos"
+        and event.get("event_type") == "dispatch-task"
+        and event.get("task_id") == task_id
+        and event.get("run_id") == run_id
+    ]
+    latest_dispatch_event = dispatch_events[-1] if dispatch_events else {}
+    required_stages = [str(item) for item in latest_dispatch_event.get("required_stages", []) or []]
+    planned_tools = latest_dispatch_event.get("planned_tools", []) or []
+    def normalized_token(value: str) -> str:
+        return value.strip().lower().replace("_", "-")
+
+    recorded_stage_tokens = {
+        normalized_token(str(event.get("kind", "")))
+        for event in events
+    } | {
+        normalized_token(str(event.get("id", "")))
+        for event in events
+    }
+    planned_tools_by_stage: dict[str, list[dict[str, Any]]] = {}
+    for item in planned_tools:
+        if isinstance(item, dict):
+            planned_tools_by_stage.setdefault(str(item.get("stage", "")), []).append(item)
+    def required_stage_has_record(stage: str) -> bool:
+        normalized_stage = normalized_token(stage)
+        if normalized_stage in recorded_stage_tokens:
+            return True
+        for item in planned_tools_by_stage.get(stage, []):
+            if normalized_token(str(item.get("kind", ""))) in recorded_stage_tokens:
+                return True
+            if normalized_token(str(item.get("id", ""))) in recorded_stage_tokens:
+                return True
+        return any(normalized_stage in normalized_token(str(event.get("purpose", ""))) for event in events)
+
+    required_without_record = [
+        stage
+        for stage in required_stages
+        if stage and not required_stage_has_record(stage)
+    ]
+    gaps: list[str] = []
+    if not events:
+        gaps.append("no capability-event records were written; report no external capability use with an explicit reason")
+    if required_without_record:
+        gaps.append("required dispatch stages without capability-event or skip reason: " + ", ".join(required_without_record))
+    if not gaps:
+        gaps.append("none")
+    marker = f"AGENT_DISPATCH_OK agents={len(agent_events)} capabilities={len(invoked_events)} run={run_id}"
+    report_path = run_dir / "dispatch-report.md"
+    lines = [
+        "# Full Capability Dispatch Report",
+        "",
+        f"Run: {run_id}",
+        "",
+        f"Task: {task_id}",
+        "",
+        f"Marker: {marker}",
+        "",
+        "Meaning: AGENT_DISPATCH_OK summarizes all recorded external and mounted capabilities, not only subagents.",
+        "",
+        f"Agents Invoked: {len(agent_events)}",
+        "",
+        f"Capabilities Invoked: {len(invoked_events)}",
+        "",
+        f"Capabilities Skipped: {len(skipped_events)}",
+        "",
+        f"Evidence: `{project_relative(project_root, capability_events_path(run_dir))}`, `{project_relative(project_root, command_events_path(run_dir))}`",
+        "",
+        "## By Kind",
+        "",
+    ]
+    for kind, count in sorted(counts_by_kind.items()):
+        skipped = skipped_by_kind.get(kind, 0)
+        lines.append(f"- {kind}: used={count}, skipped={skipped}")
+    lines.extend(["", "## Used Capabilities", ""])
+    if invoked_events:
+        for event in invoked_events:
+            kind = str(event.get("kind", "unknown"))
+            capability_id = str(event.get("id", ""))
+            purpose = str(event.get("purpose", ""))
+            status = str(event.get("status", "completed"))
+            lines.append(f"- {kind}: {capability_id} ({status}) - {purpose}")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Skipped Or Not Needed", ""])
+    if skipped_events:
+        for event in skipped_events:
+            kind = str(event.get("kind", "unknown"))
+            capability_id = str(event.get("id", ""))
+            purpose = str(event.get("purpose", ""))
+            evidence = str(event.get("evidence", ""))
+            suffix = f" Evidence: {evidence}" if evidence else ""
+            lines.append(f"- {kind}: {capability_id} - {purpose}.{suffix}")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Dispatch Plan Evidence", ""])
+    if planned_tools:
+        for item in planned_tools:
+            if isinstance(item, dict):
+                lines.append(f"- {item.get('stage', '')}: {item.get('kind', '')}/{item.get('id', '')} required={item.get('required', '')}")
+    else:
+        lines.append("- no run-bound dispatch plan was recorded")
+    lines.extend(["", "## Gaps", ""])
+    for gap in gaps:
+        lines.append(f"- {gap}")
+    write_text(report_path, "\n".join(lines) + "\n")
+    append_command_event(
+        run_dir,
+        "dispatch-report",
+        task_id,
+        run_id,
+        status="reported",
+        agent_count=len(agent_events),
+        capability_count=len(invoked_events),
+        skipped_count=len(skipped_events),
+    )
+    return {
+        "status": "reported",
+        "dispatch_report_marker": "AGENT_DISPATCH_OK",
+        "marker": marker,
+        "full_capability_report": True,
+        "agent_count": len(agent_events),
+        "capability_count": len(invoked_events),
+        "skipped_count": len(skipped_events),
+        "counts_by_kind": counts_by_kind,
+        "skipped_by_kind": skipped_by_kind,
+        "required_stages": required_stages,
+        "required_without_record": required_without_record,
+        "gaps": gaps,
+        "evidence": {
+            "capability_events": str(capability_events_path(run_dir)),
+            "command_events": str(command_events_path(run_dir)),
+            "dispatch_report": str(report_path),
+        },
+        "agents": [
+            {
+                "kind": str(event.get("kind", "")),
+                "id": str(event.get("id", "")),
+                "purpose": str(event.get("purpose", "")),
+                "status": str(event.get("status", "completed")),
+            }
+            for event in agent_events
+        ],
+        "events": [
+            {
+                "kind": str(event.get("kind", "")),
+                "id": str(event.get("id", "")),
+                "purpose": str(event.get("purpose", "")),
+                "status": str(event.get("status", "completed")),
+            }
+            for event in invoked_events
+        ],
+        "skipped": [
+            {
+                "kind": str(event.get("kind", "")),
+                "id": str(event.get("id", "")),
+                "purpose": str(event.get("purpose", "")),
+                "status": str(event.get("status", "skipped")),
+                "evidence": str(event.get("evidence", "")),
+            }
+            for event in skipped_events
+        ],
+        "report": str(report_path),
     }
 
 
@@ -5467,6 +5730,7 @@ def complete_task(
     if decisions.get("status") == "failed":
         raise ValueError("decision verification failed: " + json.dumps(decisions.get("errors", []), ensure_ascii=False))
 
+    dispatch_report = build_dispatch_report(project_root, task_id, run_id)
     postflight = run_postflight_gate(project_root, run_dir, summary, allow_pending_postflight)
     mission_flow: dict[str, Any] | None = None
     if task.get("complexity", "medium") in MISSION_FLOW_COMPLEXITIES:
@@ -5501,6 +5765,16 @@ def complete_task(
         f"Decision Verification Status: {decisions.get('status')}",
         "",
         f"Decision Verify Marker: {decisions.get('marker', '')}",
+        "",
+        f"Agent Dispatch Status: {dispatch_report.get('dispatch_report_marker', '')}",
+        "",
+        f"Agent Dispatch Marker: {dispatch_report.get('marker', '')}",
+        "",
+        f"Agents Invoked: {dispatch_report.get('agent_count', 0)}",
+        "",
+        f"Capabilities Invoked: {dispatch_report.get('capability_count', 0)}",
+        "",
+        f"Agent Dispatch Report: {dispatch_report.get('report', '')}",
         "",
         f"Mission Flow Marker: {mission_flow.get('marker', '') if mission_flow else 'not required'}",
         "",
@@ -5591,6 +5865,11 @@ def complete_task(
         "effect_verify_marker": effects.get("marker", ""),
         "decision_status": decisions.get("status"),
         "decision_verify_marker": decisions.get("marker", ""),
+        "agent_dispatch_status": dispatch_report.get("dispatch_report_marker", ""),
+        "agent_dispatch_marker": dispatch_report.get("marker", ""),
+        "agents_invoked": dispatch_report.get("agent_count", 0),
+        "capabilities_invoked": dispatch_report.get("capability_count", 0),
+        "dispatch_report": dispatch_report.get("report", ""),
         "flow_marker": mission_flow.get("flow_marker", "") if mission_flow else "",
         "flow_summary_marker": mission_flow.get("marker", "") if mission_flow else "",
         "flow_mermaid": mission_flow.get("mermaid", "") if mission_flow else "",
@@ -5605,6 +5884,8 @@ def complete_task(
 
 HTML_REPORT_KINDS = {"receipt", "handoff", "rich-report", "decision-map", "mission-flow"}
 HTML_DEFAULT_THEME = "knowledgeos-default"
+HTML_PRESENTATION_MODES = {"default", "minimal", "bare", "fragment"}
+HTML_DEFAULT_PRESENTATION = "default"
 HTML_SOURCE_TRUTH_NOTICE = "HTML is presentation, not source of truth."
 MISSION_FLOW_COMPLEXITIES = {"medium", "high", "complex"}
 
@@ -5634,6 +5915,42 @@ def resolve_project_artifact(project_root: Path, value: str) -> Path:
 
 def html_escape(text: Any) -> str:
     return html_lib.escape(str(text), quote=True)
+
+
+def parse_reporting_policy(project_root: Path) -> dict[str, Any]:
+    project_yaml = project_root / ".agent-os" / "project.yaml"
+    if not project_yaml.exists():
+        return {
+            "html_sidecars": True,
+            "html_source_of_truth": False,
+            "html_presentation_default": HTML_DEFAULT_PRESENTATION,
+            "html_required_metadata": True,
+        }
+    scalars = parse_scalar_values(
+        project_yaml,
+        {
+            "html_sidecars",
+            "html_source_of_truth",
+            "html_presentation_default",
+            "html_required_metadata",
+        },
+    )
+    presentation = (scalars.get("html_presentation_default") or HTML_DEFAULT_PRESENTATION).lower()
+    return {
+        "html_sidecars": scalars.get("html_sidecars", "true").lower() != "false",
+        "html_source_of_truth": scalars.get("html_source_of_truth", "false").lower() == "true",
+        "html_presentation_default": presentation,
+        "html_required_metadata": scalars.get("html_required_metadata", "true").lower() != "false",
+    }
+
+
+def resolve_html_presentation(project_root: Path, requested: str = "") -> str:
+    presentation = (requested or "").strip().lower()
+    if not presentation:
+        presentation = str(parse_reporting_policy(project_root).get("html_presentation_default") or HTML_DEFAULT_PRESENTATION)
+    if presentation not in HTML_PRESENTATION_MODES:
+        raise ValueError(f"unsupported HTML presentation mode: {presentation}")
+    return presentation
 
 
 def markdown_heading_anchor(title: str, used: set[str]) -> str:
@@ -5819,6 +6136,7 @@ def build_html_fragment(
     body_html: str,
     sections: list[dict[str, Any]],
     generated_at: str,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
 ) -> str:
     section_items = "\n".join(
         f'<li><a href="#{html_escape(item["id"])}">{html_escape(item["title"])}</a></li>' for item in sections[:12]
@@ -5834,6 +6152,20 @@ def build_html_fragment(
     meta_html = "\n".join(
         f"<div><dt>{html_escape(label)}</dt><dd>{html_escape(value)}</dd></div>" for label, value in metadata
     )
+    if presentation != "default":
+        return f"""
+<section class="kos-fragment kos-fragment-{html_escape(presentation)}" data-kos-fragment="true" data-kind="{html_escape(kind)}" data-source-sha256="{html_escape(source_sha)}">
+  {body_html}
+  <footer class="kos-evidence-footer">
+    <details open>
+      <summary>Evidence metadata</summary>
+      <dl class="kos-meta">{meta_html}</dl>
+      <p class="kos-notice">{HTML_SOURCE_TRUTH_NOTICE}</p>
+      <nav class="kos-nav" aria-label="Report sections">{section_nav}</nav>
+    </details>
+  </footer>
+</section>
+""".strip()
     return f"""
 <article class="kos-report-fragment" data-kos-fragment="true" data-kind="{html_escape(kind)}" data-source-sha256="{html_escape(source_sha)}">
   <div class="kos-eyebrow">{html_escape(kind)}</div>
@@ -5858,7 +6190,30 @@ def build_html_document(
     run_id: str,
     generated_at: str,
     theme: str,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
 ) -> str:
+    if presentation == "minimal":
+        return build_minimal_html_document(
+            title=title,
+            kind=kind,
+            body=body,
+            source_rel=source_rel,
+            source_sha=source_sha,
+            run_id=run_id,
+            generated_at=generated_at,
+            theme=theme,
+        )
+    if presentation == "bare":
+        return build_bare_html_document(
+            title=title,
+            kind=kind,
+            body=body,
+            source_rel=source_rel,
+            source_sha=source_sha,
+            run_id=run_id,
+            generated_at=generated_at,
+            theme=theme,
+        )
     nav_hint = "Composable sidecar report"
     subtitle = (
         "A self-contained KnowledgeOS HTML sidecar generated from canonical Markdown, YAML, or NDJSON evidence. "
@@ -5907,6 +6262,107 @@ def build_html_document(
 """
 
 
+def build_minimal_html_document(
+    *,
+    title: str,
+    kind: str,
+    body: str,
+    source_rel: str,
+    source_sha: str,
+    run_id: str,
+    generated_at: str,
+    theme: str,
+) -> str:
+    meta_rows = [
+        ("Kind", kind),
+        ("Run ID", run_id or "not run-bound"),
+        ("Source", source_rel),
+        ("Source SHA-256", source_sha),
+        ("Generated", generated_at),
+        ("Theme", theme),
+        ("Presentation", "minimal"),
+    ]
+    meta_html = "\n".join(
+        f"<div><dt>{html_escape(label)}</dt><dd>{html_escape(value)}</dd></div>" for label, value in meta_rows
+    )
+    css = """
+* { box-sizing: border-box; }
+body { margin: 0; color: #172033; background: #fbfcfe; font-family: Georgia, "Times New Roman", serif; line-height: 1.68; }
+main { max-width: 880px; margin: 0 auto; padding: 42px 22px; }
+h1, h2, h3 { line-height: 1.18; color: #101827; }
+a { color: #155eef; }
+pre { overflow: auto; padding: 14px; border: 1px solid #d8dee9; border-radius: 10px; background: #f3f6fb; }
+blockquote { margin: 18px 0; padding: 12px 16px; border-left: 4px solid #94a3b8; background: #f8fafc; }
+.kos-evidence-footer, .kos-page-evidence { margin-top: 34px; padding-top: 18px; border-top: 1px solid #d8dee9; font-size: 0.92rem; }
+.kos-meta { display: grid; gap: 8px; margin: 0; }
+.kos-meta div { overflow-wrap: anywhere; }
+.kos-meta dt { color: #64748b; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.kos-meta dd { margin: 2px 0 0; font-weight: 700; }
+.kos-notice { color: #92400e; font-weight: 700; }
+""".strip()
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="knowledgeos-source-sha256" content="{html_escape(source_sha)}">
+  <meta name="knowledgeos-source-path" content="{html_escape(source_rel)}">
+  <meta name="knowledgeos-presentation" content="minimal">
+  <title>{html_escape(title)}</title>
+  <style>{css}</style>
+</head>
+<body>
+  <main>
+    {body}
+    <footer class="kos-page-evidence">
+      <h2>Evidence Metadata</h2>
+      <dl class="kos-meta">{meta_html}</dl>
+      <p class="kos-notice">{HTML_SOURCE_TRUTH_NOTICE}</p>
+    </footer>
+  </main>
+</body>
+</html>
+"""
+
+
+def build_bare_html_document(
+    *,
+    title: str,
+    kind: str,
+    body: str,
+    source_rel: str,
+    source_sha: str,
+    run_id: str,
+    generated_at: str,
+    theme: str,
+) -> str:
+    metadata = (
+        f"kind={html_escape(kind)} | run={html_escape(run_id or 'not run-bound')} | "
+        f"source={html_escape(source_rel)} | sha256={html_escape(source_sha)} | "
+        f"generated={html_escape(generated_at)} | theme={html_escape(theme)} | presentation=bare"
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="knowledgeos-source-sha256" content="{html_escape(source_sha)}">
+  <meta name="knowledgeos-source-path" content="{html_escape(source_rel)}">
+  <meta name="knowledgeos-presentation" content="bare">
+  <title>{html_escape(title)}</title>
+  <style>body{{margin:2rem auto;max-width:76ch;padding:0 1rem;line-height:1.6;font-family:serif}}pre{{overflow:auto}}.kos-evidence-footer,.kos-page-evidence{{border-top:1px solid #ccc;margin-top:2rem;padding-top:1rem;font-size:.9rem}}.kos-notice{{font-weight:700}}</style>
+</head>
+<body>
+  {body}
+  <footer class="kos-page-evidence">
+    <p>{metadata}</p>
+    <p class="kos-notice">{HTML_SOURCE_TRUTH_NOTICE}</p>
+  </footer>
+</body>
+</html>
+"""
+
+
 def render_html_sidecar(
     project_root: Path,
     *,
@@ -5915,6 +6371,7 @@ def render_html_sidecar(
     output_path: Path,
     run_id: str = "",
     theme: str = HTML_DEFAULT_THEME,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
 ) -> dict[str, Any]:
     if kind not in HTML_REPORT_KINDS:
         raise ValueError(f"unsupported render kind: {kind}")
@@ -5944,32 +6401,40 @@ def render_html_sidecar(
         body_html=body_html,
         sections=sections,
         generated_at=generated_at,
+        presentation=presentation,
     )
     write_text(fragment_path, fragment_html)
-    full_html = build_html_document(
-        title=title,
-        kind=kind,
-        body=fragment_html,
-        source_rel=source_rel,
-        source_sha=source_sha,
-        run_id=run_id,
-        generated_at=generated_at,
-        theme=theme,
-    )
-    write_text(output_path, full_html)
+    if presentation == "fragment":
+        output_rel = ""
+    else:
+        full_html = build_html_document(
+            title=title,
+            kind=kind,
+            body=fragment_html,
+            source_rel=source_rel,
+            source_sha=source_sha,
+            run_id=run_id,
+            generated_at=generated_at,
+            theme=theme,
+            presentation=presentation,
+        )
+        write_text(output_path, full_html)
+        output_rel = project_relative(project_root, output_path)
     manifest = {
         "schema_version": "knowledgeos.html-report.v1",
         "kind": kind,
         "title": title,
         "theme": theme,
+        "presentation": presentation,
         "run_id": run_id,
         "source": source_rel,
         "source_sha256": source_sha,
-        "output": project_relative(project_root, output_path),
+        "output": output_rel,
         "fragment": project_relative(project_root, fragment_path),
         "sections": sections,
         "generated_at": generated_at,
         "html_source_of_truth": False,
+        "html_required_metadata": True,
         "notice": HTML_SOURCE_TRUTH_NOTICE,
     }
     write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
@@ -5977,12 +6442,13 @@ def render_html_sidecar(
         "status": "rendered",
         "kind": kind,
         "title": title,
-        "output": str(output_path),
+        "output": str(output_path) if presentation != "fragment" else "",
         "fragment": str(fragment_path),
         "manifest": str(manifest_path),
         "source": str(source_path),
         "source_sha256": source_sha,
         "run_id": run_id,
+        "presentation": presentation,
         "html_source_of_truth": False,
     }
 
@@ -6050,6 +6516,7 @@ def render_decision_map_sidecar(
     run_id: str,
     output_path: Path,
     theme: str = HTML_DEFAULT_THEME,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
 ) -> dict[str, Any]:
     run_dir = resolve_run_dir(project_root, run_id)
     source_path = decision_events_path(run_dir)
@@ -6074,33 +6541,41 @@ def render_decision_map_sidecar(
         body_html=body_html,
         sections=sections,
         generated_at=generated_at,
+        presentation=presentation,
     )
     write_text(fragment_path, fragment_html)
-    full_html = build_html_document(
-        title=title,
-        kind="decision-map",
-        body=fragment_html,
-        source_rel=source_rel,
-        source_sha=source_sha,
-        run_id=run_id,
-        generated_at=generated_at,
-        theme=theme,
-    )
-    write_text(output_path, full_html)
+    if presentation == "fragment":
+        output_rel = ""
+    else:
+        full_html = build_html_document(
+            title=title,
+            kind="decision-map",
+            body=fragment_html,
+            source_rel=source_rel,
+            source_sha=source_sha,
+            run_id=run_id,
+            generated_at=generated_at,
+            theme=theme,
+            presentation=presentation,
+        )
+        write_text(output_path, full_html)
+        output_rel = project_relative(project_root, output_path)
     manifest = {
         "schema_version": "knowledgeos.html-report.v1",
         "kind": "decision-map",
         "title": title,
         "theme": theme,
+        "presentation": presentation,
         "run_id": run_id,
         "source": source_rel,
         "source_sha256": source_sha,
-        "output": project_relative(project_root, output_path),
+        "output": output_rel,
         "fragment": project_relative(project_root, fragment_path),
         "sections": sections,
         "decision_count": len(events),
         "generated_at": generated_at,
         "html_source_of_truth": False,
+        "html_required_metadata": True,
         "notice": HTML_SOURCE_TRUTH_NOTICE,
     }
     write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
@@ -6108,13 +6583,14 @@ def render_decision_map_sidecar(
         "status": "rendered",
         "kind": "decision-map",
         "title": title,
-        "output": str(output_path),
+        "output": str(output_path) if presentation != "fragment" else "",
         "fragment": str(fragment_path),
         "manifest": str(manifest_path),
         "source": str(source_path),
         "source_sha256": source_sha,
         "run_id": run_id,
         "decision_count": len(events),
+        "presentation": presentation,
         "html_source_of_truth": False,
     }
 
@@ -6364,6 +6840,7 @@ def render_mission_flow_sidecar(
     run_id: str,
     output_path: Path,
     theme: str = HTML_DEFAULT_THEME,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
 ) -> dict[str, Any]:
     flow = write_mission_flow_markdown(project_root, task_id, run_id)
     source_path = Path(flow["source"])
@@ -6393,34 +6870,42 @@ def render_mission_flow_sidecar(
         body_html=body_html,
         sections=sections,
         generated_at=generated_at,
+        presentation=presentation,
     )
     write_text(fragment_path, fragment_html)
-    full_html = build_html_document(
-        title=f"Mission Flow {run_id}",
-        kind="mission-flow",
-        body=fragment_html,
-        source_rel=source_rel,
-        source_sha=source_sha,
-        run_id=run_id,
-        generated_at=generated_at,
-        theme=theme,
-    )
-    write_text(output_path, full_html)
+    if presentation == "fragment":
+        output_rel = ""
+    else:
+        full_html = build_html_document(
+            title=f"Mission Flow {run_id}",
+            kind="mission-flow",
+            body=fragment_html,
+            source_rel=source_rel,
+            source_sha=source_sha,
+            run_id=run_id,
+            generated_at=generated_at,
+            theme=theme,
+            presentation=presentation,
+        )
+        write_text(output_path, full_html)
+        output_rel = project_relative(project_root, output_path)
     manifest = {
         "schema_version": "knowledgeos.html-report.v1",
         "kind": "mission-flow",
         "title": f"Mission Flow {run_id}",
         "theme": theme,
+        "presentation": presentation,
         "run_id": run_id,
         "task_id": task_id,
         "source": source_rel,
         "source_sha256": source_sha,
-        "output": project_relative(project_root, output_path),
+        "output": output_rel,
         "fragment": project_relative(project_root, fragment_path),
         "sections": sections,
         "generated_at": generated_at,
         "flow_marker": "FLOW_OK",
         "html_source_of_truth": False,
+        "html_required_metadata": True,
         "notice": HTML_SOURCE_TRUTH_NOTICE,
     }
     write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
@@ -6428,7 +6913,7 @@ def render_mission_flow_sidecar(
         "status": "rendered",
         "kind": "mission-flow",
         "title": f"Mission Flow {run_id}",
-        "output": str(output_path),
+        "output": str(output_path) if presentation != "fragment" else "",
         "fragment": str(fragment_path),
         "manifest": str(manifest_path),
         "source": str(source_path),
@@ -6436,6 +6921,7 @@ def render_mission_flow_sidecar(
         "run_id": run_id,
         "task_id": task_id,
         "flow_marker": "FLOW_OK",
+        "presentation": presentation,
         "html_source_of_truth": False,
     }
 
@@ -6456,7 +6942,10 @@ def compose_html_reports(
     compose_manifest_path: Path,
     output_path: Path,
     theme: str = HTML_DEFAULT_THEME,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
 ) -> dict[str, Any]:
+    if presentation == "fragment":
+        raise ValueError("render-html --compose does not support fragment presentation")
     if not compose_manifest_path.exists():
         raise FileNotFoundError(compose_manifest_path)
     compose_manifest = json.loads(read_text(compose_manifest_path))
@@ -6503,6 +6992,7 @@ def compose_html_reports(
         run_id=str(compose_manifest.get("run_id") or ""),
         generated_at=generated_at,
         theme=str(compose_manifest.get("theme") or theme),
+        presentation=presentation,
     )
     write_text(output_path, full_html)
     manifest_path = output_path.with_suffix(".manifest.json")
@@ -6510,6 +7000,7 @@ def compose_html_reports(
         "schema_version": "knowledgeos.html-composition.v1",
         "title": title,
         "theme": str(compose_manifest.get("theme") or theme),
+        "presentation": presentation,
         "source": project_relative(project_root, compose_manifest_path),
         "source_sha256": compose_source_sha,
         "output": project_relative(project_root, output_path),
@@ -6517,6 +7008,7 @@ def compose_html_reports(
         "reports": child_manifests,
         "generated_at": generated_at,
         "html_source_of_truth": False,
+        "html_required_metadata": True,
         "notice": HTML_SOURCE_TRUTH_NOTICE,
     }
     write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
@@ -6527,6 +7019,7 @@ def compose_html_reports(
         "report_count": len(child_manifests),
         "source": str(compose_manifest_path),
         "source_sha256": compose_source_sha,
+        "presentation": presentation,
         "html_source_of_truth": False,
     }
 
@@ -7208,13 +7701,59 @@ def cmd_dispatch_task(args: argparse.Namespace) -> int:
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    emit(result, args.json)
+    if args.json:
+        emit(result, True)
+    else:
+        if result.get("dispatch_marker"):
+            summary = result.get("dispatch_summary", {})
+            print(result.get("marker", ""))
+            print(f"planned_agents: {summary.get('planned_agents', 0)}")
+            print(f"planned_capabilities: {summary.get('planned_capabilities', 0)}")
+            if summary.get("planned_agent_ids"):
+                print("planned_agent_ids: " + ", ".join(summary.get("planned_agent_ids", [])))
+        emit(result, False)
     return 0 if result.get("status") == "dispatch_ready" or args.allow_unrouted else 2
+
+
+def cmd_dispatch_report(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = build_dispatch_report(project_root, args.task_id, args.run_id)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print("Full Capability Dispatch Report")
+        print(f"agents: {result['agent_count']}")
+        print(f"capabilities: {result['capability_count']}")
+        print(f"skipped: {result.get('skipped_count', 0)}")
+        print("by_kind:")
+        for kind, count in sorted(result.get("counts_by_kind", {}).items()):
+            skipped = result.get("skipped_by_kind", {}).get(kind, 0)
+            print(f"- {kind}: used={count}, skipped={skipped}")
+        if result.get("events"):
+            print("used_capabilities:")
+            for event in result["events"]:
+                print(f"- {event['kind']}: {event['id']} ({event['status']}) - {event['purpose']}")
+        if result.get("skipped"):
+            print("skipped_or_not_needed:")
+            for event in result["skipped"]:
+                print(f"- {event['kind']}: {event['id']} ({event['status']}) - {event['purpose']}")
+        if result.get("gaps"):
+            print("gaps:")
+            for gap in result["gaps"]:
+                print(f"- {gap}")
+        print(f"report: {result['report']}")
+    return 0
 
 
 def cmd_render_html(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
+        presentation = resolve_html_presentation(project_root, args.presentation)
         if args.compose:
             if not args.output:
                 raise ValueError("render-html --compose requires --output")
@@ -7223,6 +7762,7 @@ def cmd_render_html(args: argparse.Namespace) -> int:
                 compose_manifest_path=resolve_project_artifact(project_root, args.compose),
                 output_path=resolve_project_artifact(project_root, args.output),
                 theme=args.theme,
+                presentation=presentation,
             )
             emit(result, args.json)
             return 0
@@ -7242,6 +7782,7 @@ def cmd_render_html(args: argparse.Namespace) -> int:
                 output_path=output_path,
                 run_id=args.run_id,
                 theme=args.theme,
+                presentation=presentation,
             )
         elif args.kind == "decision-map":
             if not args.run_id:
@@ -7253,6 +7794,7 @@ def cmd_render_html(args: argparse.Namespace) -> int:
                 run_id=args.run_id,
                 output_path=output_path,
                 theme=args.theme,
+                presentation=presentation,
             )
         elif args.kind == "mission-flow":
             if not args.run_id:
@@ -7268,6 +7810,7 @@ def cmd_render_html(args: argparse.Namespace) -> int:
                 run_id=args.run_id,
                 output_path=output_path,
                 theme=args.theme,
+                presentation=presentation,
             )
         elif args.kind == "rich-report":
             if not args.input:
@@ -7280,6 +7823,7 @@ def cmd_render_html(args: argparse.Namespace) -> int:
                 source_path=source_path,
                 output_path=output_path,
                 theme=args.theme,
+                presentation=presentation,
             )
         else:
             raise ValueError(f"unsupported render kind: {args.kind}")
@@ -7741,7 +8285,7 @@ def build_parser() -> argparse.ArgumentParser:
     phase_task_parser.add_argument("--json", action="store_true")
     phase_task_parser.set_defaults(func=cmd_phase_task)
 
-    capability_event_parser = sub.add_parser("capability-event", help="record an observable MCP, skill, subagent, or script capability call")
+    capability_event_parser = sub.add_parser("capability-event", help="record an observable mounted capability call")
     capability_event_parser.add_argument("--project-root", required=True)
     capability_event_parser.add_argument("--task-id", required=True)
     capability_event_parser.add_argument("--run-id", required=True)
@@ -7886,6 +8430,13 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--json", action="store_true")
     dispatch.set_defaults(func=cmd_dispatch_task)
 
+    dispatch_report = sub.add_parser("dispatch-report", help="summarize all actual mounted capability events for a run")
+    dispatch_report.add_argument("--project-root", required=True)
+    dispatch_report.add_argument("--task-id", required=True)
+    dispatch_report.add_argument("--run-id", required=True)
+    dispatch_report.add_argument("--json", action="store_true")
+    dispatch_report.set_defaults(func=cmd_dispatch_report)
+
     render_html = sub.add_parser("render-html", help="render Markdown, flow, and Decision Graph evidence into composable static HTML sidecars")
     render_html.add_argument("--project-root", required=True)
     render_html.add_argument("--kind", choices=sorted(HTML_REPORT_KINDS), help="receipt, handoff, rich-report, decision-map, or mission-flow")
@@ -7895,6 +8446,11 @@ def build_parser() -> argparse.ArgumentParser:
     render_html.add_argument("--output", help="HTML output path; defaults beside the source")
     render_html.add_argument("--compose", help="compose report manifests into one HTML page")
     render_html.add_argument("--theme", default=HTML_DEFAULT_THEME)
+    render_html.add_argument(
+        "--presentation",
+        choices=sorted(HTML_PRESENTATION_MODES),
+        help="presentation shell: default, minimal, bare, or fragment; project reporting policy is used when omitted",
+    )
     render_html.add_argument("--json", action="store_true")
     render_html.set_defaults(func=cmd_render_html)
 

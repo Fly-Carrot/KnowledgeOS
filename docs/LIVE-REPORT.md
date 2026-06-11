@@ -753,3 +753,90 @@ Validation:
 - Reproduced the issue in a temporary project before the fix: `h1_count=3`.
 - Re-ran the same reproduction after the fix: `h1_count=2`.
 - Added a regression assertion to the Thread Plan Ledger test.
+
+## 2026-06-08 - HTML Sidecar Presentation Modes
+
+Status: implemented locally as a lighter presentation contract.
+
+Product gap reproduced:
+
+- `render-html --presentation minimal` failed with `unrecognized arguments`, so projects had no supported way to keep KnowledgeOS evidence metadata while opting out of the default hero/sidebar/card layout.
+- The original HTML sidecar contract mixed two concerns: required provenance metadata and optional visual styling.
+
+Fix:
+
+- Added `render-html --presentation default|minimal|bare|fragment`.
+- Kept `default` backward compatible with the existing `knowledgeos-default` card layout.
+- Added `minimal` and `bare` shells that preserve source path, source SHA-256, generated time, kind/run metadata, and the source-of-truth notice without forcing hero/sidebar layout.
+- Added `fragment` mode for composable report pieces that write only `.fragment.html` and `.manifest.json`.
+- Updated manifests with `presentation` and `html_required_metadata`.
+- Documented that KnowledgeOS enforces provenance, traceability, and safety, not visual design.
+
+Validation:
+
+- Reproduced the missing CLI option before implementation.
+- Added a targeted regression test for all four presentation modes.
+- Verified `python3 -B -m py_compile knowledgeos/cli.py`.
+
+## 2026-06-09 - Explicit Agent Dispatch Reporting
+
+Status: implemented locally as a visible dispatch summary layer.
+
+Product gap reproduced:
+
+- `dispatch-task` returned a structured plan but did not emit an obvious `AGENT_DISPATCH_PLAN` marker for user-facing summaries.
+- `capability-event` recorded individual MCP, skill, subagent, orchestrator, script, shell, and file-read events, but there was no single run-level report like `[SYNC_OK]`.
+- `complete-task` could finish without returning a visible agent/subagent dispatch summary.
+
+Fix:
+
+- Added `AGENT_DISPATCH_PLAN` fields to `dispatch-task` JSON and plain output.
+- Added `dispatch-report`, which reads `capability-events.ndjson`, writes `dispatch-report.md`, and emits `AGENT_DISPATCH_OK`.
+- Updated `complete-task` receipts and JSON output with agent count, capability count, dispatch marker, and report path.
+
+Validation:
+
+- Added targeted tests for dispatch plan markers, dispatch-report output, and complete-task dispatch summaries.
+- Reproduced all three missing behaviors before implementation.
+- Verified the targeted tests pass after implementation.
+
+## 2026-06-09 - Dispatch Reporting Prompt Contract Sync
+
+Status: fixed locally as a prompt/template propagation patch.
+
+Bug reproduced:
+
+- A downstream agent completed a KnowledgeOS task and reported `[SYNC_OK]`, but did not show `AGENT_DISPATCH_PLAN` or `AGENT_DISPATCH_OK` in the final visible summary.
+- Runtime support already existed in `dispatch-task`, `dispatch-report`, and `complete-task`.
+- Root cause: project template and guide text did not consistently require agents to relay the dispatch markers, so stale project prompts could silently omit them.
+
+Fix:
+
+- Updated the project `AGENTS.md` template to require `AGENT_DISPATCH_PLAN`, `dispatch-report`, and final `AGENT_DISPATCH_OK` reporting.
+- Updated the live startup prompt and agent guide with the same visible dispatch contract.
+- Added a static prompt-contract regression test so future template drift is caught.
+
+Validation:
+
+- Targeted prompt contract tests cover generated prompts and static template/docs/startup files.
+
+## 2026-06-11 - Full Capability Dispatch Report And KOS Decision Contract
+
+Status: implemented locally as a stricter visible reporting contract.
+
+Product gap reproduced:
+
+- `AGENT_DISPATCH_OK` was too subagent-centric, so runs with `agents=0` could look empty even when shell, file reads, GitHub, browser, security, MCP, skills, or scripts were used.
+- Project prompts required dispatch reporting for substantial work but did not require every conversation to start with an explicit KnowledgeOS routing decision.
+
+Fix:
+
+- Upgraded `dispatch-report` into a Full Capability Dispatch Report.
+- Added used/skipped counts by capability kind, skipped/not-needed records, dispatch plan evidence, evidence file paths, and gaps.
+- Extended `capability-event` kinds to cover plugin/app, browser, Chrome, GitHub, and security connectors.
+- Updated startup prompt, project template, generated guide, and agent guide to require `KOS_DECISION` at conversation start.
+- Clarified that `AGENT_DISPATCH_OK` must summarize all mounted/external capabilities, not only subagents.
+
+Validation:
+
+- Added regression coverage for GitHub/browser capability reporting, skipped required subagent reporting, full capability wording, and `KOS_DECISION` prompt contract.

@@ -2,6 +2,11 @@
 
 Use this checklist before substantial work in a KnowledgeOS-controlled project.
 
+0. Start every conversation with a visible KnowledgeOS routing judgment.
+   - Relay `KOS_DECISION` with project state, work class, required flow, and reason.
+   - Use `answer-only` for simple non-mutating replies, but still state the decision.
+   - Use `task`, `spec`, `thread-plan`, or `full lifecycle` when work is substantial.
+
 1. Read the project entry contract.
    - `AGENTS.md`
 
@@ -31,7 +36,7 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
 
 4. Start work through a run envelope.
    - `knowledgeos route-task --project-root . --task-id <task-id>`
-   - `knowledgeos dispatch-task --project-root . --task-id <task-id>`
+   - `knowledgeos dispatch-task --project-root . --task-id <task-id>` and relay `AGENT_DISPATCH_PLAN`
    - `knowledgeos run-task --project-root . --task-id <task-id>`
    - `knowledgeos dispatch-task --project-root . --task-id <task-id> --run-id <run-id>`
    - `knowledgeos context-pack --project-root . --task-id <task-id> --run-id <run-id>`
@@ -49,8 +54,11 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
    - Relay the returned `TRACE_OK` marker to the user.
    - Use `knowledgeos phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note "<public note>" --evidence "<command or file evidence>"`.
    - Relay the returned `CHECKPOINT_OK` marker to the user.
-   - Use `knowledgeos capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"` for MCP, skill, subagent, orchestrator, or important script calls.
+   - Use `knowledgeos capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"` for MCP, skill, plugin/app, browser/Chrome/GitHub/security connector, subagent, orchestrator, shell, file_read, or important script calls.
    - Relay the returned `CAPABILITY_OK` marker to the user.
+   - Use `knowledgeos dispatch-report --project-root . --task-id <task-id> --run-id <run-id>` to summarize actual capability dispatch.
+   - Relay the returned `AGENT_DISPATCH_OK` marker to the user and include the full capability summary in the final answer for substantial work.
+   - Treat `AGENT_DISPATCH_OK` as the complete capability report: agents invoked/skipped, MCP, skills, plugins/apps, browser/Chrome/GitHub/security connectors, scripts, shell, file reads, evidence files, and gaps.
    - Use `knowledgeos decision-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --title "<title>" --summary "<summary>" --reason "<reason>" --evidence "<evidence>"` when a plan branches, changes, rolls back, abandons a route, or records a major human decision.
    - Relay the returned `DECISION_OK` marker to the user.
    - Use `knowledgeos thread-plan append --project-root . --thread-id <thread-id> --kind <plan|phase|branch|decision|progress|change|summary> --text "<plain note>"` when the chat-level plan changes or advances.
@@ -63,10 +71,11 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
    - Use `knowledgeos verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>`.
    - Use `knowledgeos verify-effects --project-root . --task-id <task-id> --run-id <run-id>` and relay the returned `EFFECT_VERIFY_OK` marker before claiming effect verification success.
    - Use `knowledgeos verify-decisions --project-root . --task-id <task-id> --run-id <run-id>` and relay the returned `DECISION_VERIFY_OK` marker before claiming decision verification success.
-   - Use `knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`.
+   - Use `knowledgeos complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"`; it also returns visible dispatch reporting fields when capability events exist.
    - For medium, high, or complex tasks, include the `FLOW_OK` Mermaid Mission Flow returned by `complete-task`; if needed, run `knowledgeos flow-summary --project-root . --run-id <run-id>` and relay `FLOW_OK`.
    - Keep the Mission Flow user-facing and readable: prefer labels like `Goal`, `Health Check`, `Task & Plan`, `Safe Writes`, `Work Done`, `Tools Used`, `Proof`, `Decisions`, and `Finish`.
    - Do not directly edit `.agent-os/specs.yaml`, `.agent-os/specs/**`, `.agent-os/threads/**`, `.agent-os/runs/RUN-*/context-pack.md`, `.agent-os/runs/RUN-*/spec-snapshot.md`, `.agent-os/runs/RUN-*/plan.md`, `.agent-os/runs/RUN-*/eval.md`, `.agent-os/runs/RUN-*/phases.ndjson`, `.agent-os/runs/RUN-*/step-events.ndjson`, `.agent-os/runs/RUN-*/capability-events.ndjson`, `.agent-os/runs/RUN-*/decision-events.ndjson`, `.agent-os/runs/RUN-*/effect-assertions.ndjson`, `.agent-os/runs/RUN-*/command-events.ndjson`, or `.agent-os/runs/RUN-*/receipt.md`.
 
 7. Finish with the configured sync contract when a shared-fabric kernel module is active.
+   - Report `AGENT_DISPATCH_OK` only after `dispatch-report` or `complete-task` returns it.
    - Report `SYNC_OK` only after the postflight command succeeds.

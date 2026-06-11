@@ -3262,6 +3262,138 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("status: ok", doctor.stdout)
             self.assertIn("status: ready", (project / ".agent-os" / "tasks.yaml").read_text(encoding="utf-8"))
 
+    def test_render_html_presentation_modes_keep_metadata_but_loosen_layout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            drafts = project / "reports" / "drafts"
+            drafts.mkdir(parents=True)
+            report = drafts / "layout.md"
+            report.write_text("# Layout Report\n\n## Finding\n\n- Evidence over template lock-in.\n", encoding="utf-8")
+            source_sha = hashlib.sha256(report.read_bytes()).hexdigest()
+
+            default_render = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/layout.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/default.html",
+                "--json",
+            )
+            default_payload = json.loads(default_render.stdout)
+            default_html = Path(default_payload["output"]).read_text(encoding="utf-8")
+            default_manifest = json.loads(Path(default_payload["manifest"]).read_text(encoding="utf-8"))
+            self.assertEqual(default_payload["presentation"], "default")
+            self.assertEqual(default_manifest["presentation"], "default")
+            self.assertIn("kos-hero", default_html)
+            self.assertIn("kos-panel", default_html)
+            self.assertIn(source_sha, default_html)
+
+            minimal_render = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/layout.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/minimal.html",
+                "--presentation",
+                "minimal",
+                "--json",
+            )
+            minimal_payload = json.loads(minimal_render.stdout)
+            minimal_html = Path(minimal_payload["output"]).read_text(encoding="utf-8")
+            minimal_manifest = json.loads(Path(minimal_payload["manifest"]).read_text(encoding="utf-8"))
+            self.assertEqual(minimal_payload["presentation"], "minimal")
+            self.assertEqual(minimal_manifest["presentation"], "minimal")
+            self.assertTrue(minimal_manifest["html_required_metadata"])
+            self.assertIn(source_sha, minimal_html)
+            self.assertIn("HTML is presentation, not source of truth.", minimal_html)
+            self.assertNotIn("kos-hero", minimal_html)
+            self.assertNotIn("kos-panel", minimal_html)
+            self.assertNotIn("<script", minimal_html.lower())
+            self.assertNotIn("<link", minimal_html.lower())
+            self.assertNotIn('src="http', minimal_html.lower())
+            self.assertNotIn('href="http', minimal_html.lower())
+
+            bare_render = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/layout.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/bare.html",
+                "--presentation",
+                "bare",
+                "--json",
+            )
+            bare_payload = json.loads(bare_render.stdout)
+            bare_html = Path(bare_payload["output"]).read_text(encoding="utf-8")
+            self.assertEqual(bare_payload["presentation"], "bare")
+            self.assertIn("<!doctype html>", bare_html.lower())
+            self.assertIn(source_sha, bare_html)
+            self.assertIn("presentation=bare", bare_html)
+            self.assertNotIn("kos-hero", bare_html)
+            self.assertNotIn("kos-panel", bare_html)
+
+            fragment_render = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/layout.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/fragment.html",
+                "--presentation",
+                "fragment",
+                "--json",
+            )
+            fragment_payload = json.loads(fragment_render.stdout)
+            fragment_html = Path(fragment_payload["fragment"]).read_text(encoding="utf-8")
+            fragment_manifest = json.loads(Path(fragment_payload["manifest"]).read_text(encoding="utf-8"))
+            self.assertEqual(fragment_payload["presentation"], "fragment")
+            self.assertEqual(fragment_payload["output"], "")
+            self.assertFalse((project / "reports" / "drafts" / "fragment.html").exists())
+            self.assertEqual(fragment_manifest["presentation"], "fragment")
+            self.assertEqual(fragment_manifest["output"], "")
+            self.assertIn(source_sha, fragment_html)
+            self.assertIn("HTML is presentation, not source of truth.", fragment_html)
+
+            project_yaml = project / ".agent-os" / "project.yaml"
+            project_yaml.write_text(
+                project_yaml.read_text(encoding="utf-8")
+                + "\nreporting:\n  html_sidecars: true\n  html_source_of_truth: false\n  html_presentation_default: minimal\n  html_required_metadata: true\n",
+                encoding="utf-8",
+            )
+            policy_render = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/layout.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/policy-default.html",
+                "--json",
+            )
+            policy_payload = json.loads(policy_render.stdout)
+            policy_html = Path(policy_payload["output"]).read_text(encoding="utf-8")
+            self.assertEqual(policy_payload["presentation"], "minimal")
+            self.assertNotIn("kos-hero", policy_html)
+
     def test_doctor_passes_initialized_project(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
@@ -3633,6 +3765,9 @@ class KnowledgeOSCliTests(unittest.TestCase):
         result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")
         payload = json.loads(result.stdout)
         self.assertEqual(payload["status"], "dispatch_ready")
+        self.assertEqual(payload["dispatch_marker"], "AGENT_DISPATCH_PLAN")
+        self.assertIn("AGENT_DISPATCH_PLAN", payload["marker"])
+        self.assertGreaterEqual(payload["dispatch_summary"]["planned_agents"], 1)
         stages = {step["stage"]: step for step in payload["steps"]}
         self.assertIn("subagent", stages)
         subagent_ids = {tool["id"] for tool in stages["subagent"]["tools"]}
@@ -3642,6 +3777,183 @@ class KnowledgeOSCliTests(unittest.TestCase):
         orchestrator_ids = {tool["id"] for tool in stages["orchestrator"]["tools"]}
         self.assertIn("maestro", orchestrator_ids)
         self.assertNotIn("agent-orchestrator", orchestrator_ids)
+
+    def test_dispatch_task_plain_output_shows_agent_dispatch_plan(self):
+        result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009")
+        self.assertIn("AGENT_DISPATCH_PLAN", result.stdout)
+        self.assertIn("planned_agents:", result.stdout)
+        self.assertIn("maestro", result.stdout)
+
+    def test_dispatch_report_summarizes_actual_capability_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "orchestrator",
+                "--id",
+                "maestro",
+                "--purpose",
+                "Coordinate explicit dispatch reporting test.",
+            )
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "shell",
+                "--id",
+                "unit-test",
+                "--purpose",
+                "Run targeted dispatch report test.",
+            )
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "github",
+                "--id",
+                "github-connector",
+                "--purpose",
+                "Inspect mounted GitHub capability reporting.",
+            )
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "browser",
+                "--id",
+                "browser-plugin",
+                "--purpose",
+                "Browser capability was considered but not needed for this CLI test.",
+                "--status",
+                "skipped",
+                "--evidence",
+                "no UI target",
+            )
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "subagent",
+                "--id",
+                "branch-builder",
+                "--purpose",
+                "Required branch planning was skipped because this test has a single deterministic path.",
+                "--status",
+                "skipped",
+                "--evidence",
+                "single-path test",
+            )
+
+            plain = self.run_cli("dispatch-report", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id)
+            self.assertIn("AGENT_DISPATCH_OK agents=1 capabilities=3", plain.stdout)
+            self.assertIn("Full Capability Dispatch Report", plain.stdout)
+            self.assertIn("orchestrator: maestro", plain.stdout)
+            self.assertIn("github: github-connector", plain.stdout)
+            self.assertIn("browser: used=0, skipped=1", plain.stdout)
+            self.assertIn("skipped_or_not_needed:", plain.stdout)
+            self.assertIn("gaps:", plain.stdout)
+
+            as_json = self.run_cli("dispatch-report", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            payload = json.loads(as_json.stdout)
+            self.assertEqual(payload["dispatch_report_marker"], "AGENT_DISPATCH_OK")
+            self.assertTrue(payload["full_capability_report"])
+            self.assertEqual(payload["agent_count"], 1)
+            self.assertEqual(payload["capability_count"], 3)
+            self.assertEqual(payload["skipped_count"], 2)
+            self.assertEqual(payload["counts_by_kind"]["github"], 1)
+            self.assertEqual(payload["counts_by_kind"]["browser"], 0)
+            self.assertEqual(payload["skipped_by_kind"]["browser"], 1)
+            self.assertEqual(payload["skipped_by_kind"]["subagent"], 1)
+            self.assertIn("capability_events", payload["evidence"])
+            self.assertIn("command_events", payload["evidence"])
+            self.assertEqual(payload["gaps"], ["none"])
+            self.assertTrue(Path(payload["report"]).exists())
+            report = Path(payload["report"]).read_text(encoding="utf-8")
+            self.assertIn("# Full Capability Dispatch Report", report)
+            self.assertIn("Meaning: AGENT_DISPATCH_OK summarizes all recorded external and mounted capabilities", report)
+            self.assertIn("## Skipped Or Not Needed", report)
+
+    def test_complete_task_returns_agent_dispatch_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.write_plan_context(project, "T001", run_id)
+            self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "orchestrator",
+                "--id",
+                "maestro",
+                "--purpose",
+                "Coordinate completion dispatch summary test.",
+            )
+            self.log_required_phases(project, "T001", run_id)
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id)
+
+            completed = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Completed with explicit agent dispatch summary.",
+                "--allow-pending-postflight",
+                "temp project has no executable shared-fabric hook",
+                "--json",
+            )
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["agent_dispatch_status"], "AGENT_DISPATCH_OK")
+            self.assertIn("AGENT_DISPATCH_OK", payload["agent_dispatch_marker"])
+            self.assertGreaterEqual(payload["agents_invoked"], 1)
+            self.assertTrue(Path(payload["dispatch_report"]).exists())
+            receipt = (project / ".agent-os" / "runs" / run_id / "receipt.md").read_text(encoding="utf-8")
+            self.assertIn("Agent Dispatch Marker:", receipt)
+            self.assertIn("AGENT_DISPATCH_OK", receipt)
 
     def test_tool_registry_rejects_inline_secret_markers(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -3681,15 +3993,21 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("align-spec", result.stdout)
             self.assertIn("thread-plan", result.stdout)
             self.assertIn("THREAD_PLAN_OK", result.stdout)
+            self.assertIn("KOS_DECISION", result.stdout)
+            self.assertIn("full capability dispatch report", result.stdout)
             self.assertIn("context-pack", result.stdout)
             self.assertIn("plan-task", result.stdout)
+            self.assertIn("AGENT_DISPATCH_PLAN", result.stdout)
             self.assertIn("verify-context", result.stdout)
             self.assertIn("trace-step", result.stdout)
+            self.assertIn("KOS_DECISION", result.stdout)
             self.assertIn("TRACE_OK", result.stdout)
             self.assertIn("phase-task", result.stdout)
             self.assertIn("CHECKPOINT_OK", result.stdout)
             self.assertIn("capability-event", result.stdout)
             self.assertIn("CAPABILITY_OK", result.stdout)
+            self.assertIn("dispatch-report", result.stdout)
+            self.assertIn("AGENT_DISPATCH_OK", result.stdout)
             self.assertIn("decision-event", result.stdout)
             self.assertIn("DECISION_OK", result.stdout)
             self.assertIn("verify-decisions", result.stdout)
@@ -3716,14 +4034,29 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("TRACE_OK", result.stdout)
             self.assertIn("phase-task", result.stdout)
             self.assertIn("CHECKPOINT_OK", result.stdout)
+            self.assertIn("AGENT_DISPATCH_PLAN", result.stdout)
             self.assertIn("capability-event", result.stdout)
             self.assertIn("CAPABILITY_OK", result.stdout)
+            self.assertIn("dispatch-report", result.stdout)
+            self.assertIn("AGENT_DISPATCH_OK", result.stdout)
             self.assertIn("artifact-assert", result.stdout)
             self.assertIn("EFFECT_OK", result.stdout)
             self.assertIn("verify-effects", result.stdout)
             self.assertIn("EFFECT_VERIFY_OK", result.stdout)
             self.assertIn("flow-summary", result.stdout)
             self.assertIn("FLOW_OK", result.stdout)
+
+    def test_static_prompt_contracts_require_dispatch_report_markers(self):
+        template = (ROOT / "templates" / "project-control-plane" / "AGENTS.md").read_text(encoding="utf-8")
+        guide = (ROOT / "docs" / "agent-guide.md").read_text(encoding="utf-8")
+        startup = (ROOT / ".agent-os" / "startup-prompt.md").read_text(encoding="utf-8")
+        for content in (template, guide, startup):
+            self.assertIn("KOS_DECISION", content)
+            self.assertIn("AGENT_DISPATCH_PLAN", content)
+            self.assertIn("dispatch-report", content)
+            self.assertIn("AGENT_DISPATCH_OK", content)
+            self.assertIn("full capability", content.lower())
+            self.assertIn("complete-task", content)
 
     def test_dispatch_task_prioritizes_branch_builder_and_consultation(self):
         result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")

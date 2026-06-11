@@ -364,7 +364,7 @@ Record an observable capability call without executing it.
   --purpose "Coordinate specialist review before execution."
 ```
 
-Allowed kinds are `mcp`, `skill`, `subagent`, `orchestrator`, `script`, `shell`, and `file_read`.
+Allowed kinds are `app`, `browser`, `chrome`, `file_read`, `github`, `mcp`, `plugin`, `script`, `security`, `shell`, `skill`, `subagent`, and `orchestrator`.
 
 The command writes `.agent-os/runs/<RUN_ID>/capability-events.ndjson` and matching command evidence. Successful plain-text output begins with:
 
@@ -566,7 +566,40 @@ Before postflight, `complete-task` runs `verify-effects` and `verify-decisions`.
 
 For medium, high, or complex tasks, `complete-task` also prepares a readable Mission Flow summary and returns `FLOW_OK` fields. Agents should include that Mermaid flow in the final user-facing answer unless the user explicitly asks for a terse response.
 
+`complete-task` also writes a dispatch report from the recorded `capability-event` ledger and returns `AGENT_DISPATCH_OK` fields. This makes all mounted capabilities visible in the final response without trusting hidden runtime claims, including agents invoked or skipped, MCP, skills, plugins/apps, browser/Chrome/GitHub/security connectors, scripts, shell, and file reads.
+
 If `.agent-os/fabric-link.yaml` sets `postflight_required: true`, `complete-task` runs the configured shared-fabric `after-task.sh` and only reports `sync_status: SYNC_OK` when the hook emits `[SYNC_OK]`. Use `--allow-pending-postflight "<reason>"` only as an explicit, receipt-recorded escape hatch.
+
+### `dispatch-report`
+
+Summarize actual capability events recorded for a run:
+
+```bash
+./bin/knowledgeos dispatch-report \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-...
+```
+
+The command writes:
+
+```text
+.agent-os/runs/<RUN_ID>/dispatch-report.md
+```
+
+It emits `AGENT_DISPATCH_OK agents=<n> capabilities=<n> run=<RUN_ID>`.
+
+The generated report is a **Full Capability Dispatch Report**. It includes:
+
+- used and skipped counts by capability kind;
+- agents invoked and agents skipped;
+- MCP, skills, plugins/apps, browser/Chrome/GitHub/security connectors, scripts, shell, and file reads;
+- skipped/not-needed reasons;
+- dispatch plan evidence;
+- capability and command ledger paths;
+- gaps, such as required stages without a capability event or skip reason.
+
+Use `dispatch-task` for the planned route (`AGENT_DISPATCH_PLAN`) and `dispatch-report` for what was actually registered through `capability-event`.
 
 ### `render-html`
 
@@ -587,7 +620,8 @@ Render canonical Markdown evidence into static, composable HTML sidecars for hum
   --project-root /path/to/project \
   --input reports/drafts/x.md \
   --kind rich-report \
-  --output reports/drafts/x.html
+  --output reports/drafts/x.html \
+  --presentation minimal
 
 ./bin/knowledgeos render-html \
   --project-root /path/to/project \
@@ -602,6 +636,23 @@ Render canonical Markdown evidence into static, composable HTML sidecars for hum
 
 HTML is presentation only. Markdown, YAML, and NDJSON remain the source of truth. Generated pages include source path, source SHA-256, generated time, run id when available, and the notice `HTML is presentation, not source of truth.`
 
+The OS only enforces the evidence metadata contract. It does not require a single visual layout. Presentation modes:
+
+- `default`: the original KnowledgeOS card layout with hero, panel, and colored report shell;
+- `minimal`: readable document body with evidence metadata footer, without hero/sidebar layout;
+- `bare`: very small HTML shell and metadata footer for project-owned styling;
+- `fragment`: reusable fragment plus manifest only, without writing a full document shell.
+
+Projects may set an optional default:
+
+```yaml
+reporting:
+  html_sidecars: true
+  html_source_of_truth: false
+  html_presentation_default: minimal
+  html_required_metadata: true
+```
+
 Each render writes:
 
 ```text
@@ -609,6 +660,8 @@ Each render writes:
 <output>.fragment.html
 <output>.manifest.json
 ```
+
+When `--presentation fragment` is used, only `<output>.fragment.html` and `<output>.manifest.json` are written. The manifest records an empty `output` field because no full HTML document was generated.
 
 Use the fragment and manifest for composition:
 
