@@ -2,6 +2,35 @@
 
 This file is the real-time construction log for the local KnowledgeOS build.
 
+## 2026-07-08 - Milestone Update: Runtime Subagents And Maestro Adapter
+
+Status: implemented in current branch
+
+Problem:
+
+- `dispatch-task` could recommend Maestro specialist roles, but those roles were mostly registry declarations rather than runtime-callable adapter packages.
+- New project templates did not expose the three basic Codex runtime subagents.
+- Old projects could keep stale registries with no `codex-default`, `codex-explorer`, or `codex-worker`.
+- Large Maestro catalogs could make dispatch plans noisy by listing too many candidates.
+
+Changes:
+
+- Added global and template registry entries for `codex-default`, `codex-explorer`, and `codex-worker`.
+- Converted visible `maestro-*` subagents into adapter-backed entries with `runtime_tool: multi_agent_v1.spawn_agent`.
+- Added `capability-layer/subagents/maestro/` role specs and manifest.
+- Added `subagent-adapter`, which emits `SUBAGENT_ADAPTER_OK` and returns the runtime call package without spawning from the shell.
+- Updated `dispatch-task` to include runtime-callable agent metadata and to limit subagent recommendations to a small ranked candidate set.
+- Updated `runtime-adapters` to report registered Codex runtime subagents.
+- Extended `dispatch-report` so runtime subagent statuses such as `timed_out`, `blocked`, and `close_failed` become explicit `runtime_gaps` instead of being counted as successful agents.
+- Updated `harness-audit --apply` to repair old project registries missing native Codex runtime subagents.
+- Updated startup and agent docs to require actual host-runtime subagent calls to be followed by `capability-event --kind subagent` and `dispatch-report`.
+
+Verification:
+
+- Targeted unit tests cover registry visibility, dispatch candidate limiting, `subagent-adapter`, runtime adapter reporting, template initialization, and harness repair.
+- A regression test covers the Dewey-style timeout path: spawned subagent evidence can be recorded as `timed_out`, then surfaced through `AGENT_DISPATCH_OK` runtime gaps.
+- Full validation is recorded in the active KnowledgeOS run for `KOS-T086`.
+
 ## 2026-05-09 - Milestone: Safe Skeleton
 
 Status: in progress

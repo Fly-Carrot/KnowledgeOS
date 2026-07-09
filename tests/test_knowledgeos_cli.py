@@ -193,6 +193,11 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 "\n".join(line for line in write_policy.read_text(encoding="utf-8").splitlines() if "archive/**" not in line) + "\n",
                 encoding="utf-8",
             )
+            registry_path = project / ".agent-os" / "tool-registry.yaml"
+            registry_text = registry_path.read_text(encoding="utf-8")
+            for subagent_id in ["codex-default", "codex-explorer", "codex-worker"]:
+                registry_text = re.sub(rf"\n  - id: {subagent_id}\n(?:    .*\n)*", "\n", registry_text)
+            registry_path.write_text(registry_text, encoding="utf-8")
 
             dry_run = self.run_cli(
                 "harness-audit",
@@ -217,6 +222,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("missing_control_file:.agent-os/specs.yaml", issues)
             self.assertIn("workflow_router_lifecycle_drift", issues)
             self.assertIn("missing_archive_write_guard", issues)
+            self.assertIn("missing_runtime_native_subagents", issues)
             self.assertFalse((desired_governance / "hooks" / "after-task.sh").exists())
             self.assertFalse((project / ".agent-os" / "specs.yaml").exists())
 
@@ -250,6 +256,10 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("verify-lifecycle --project-root .", upgraded_router)
             self.assertIn("verify-effects --project-root .", upgraded_router)
             self.assertIn("archive/**", write_policy.read_text(encoding="utf-8"))
+            registry_text = (project / ".agent-os" / "tool-registry.yaml").read_text(encoding="utf-8")
+            self.assertIn("id: codex-default", registry_text)
+            self.assertIn("id: codex-explorer", registry_text)
+            self.assertIn("id: codex-worker", registry_text)
             doctor = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
             self.assertIn("status: ok", doctor.stdout)
 
@@ -528,12 +538,42 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertEqual(adapters["mock"]["execution"], "not_started")
         self.assertIn("gemini-cli", adapters)
         self.assertIn("codex-cli", adapters)
+        runtime_subagents = {item["id"]: item for item in payload["runtime_subagents"]}
+        self.assertIn("codex-default", runtime_subagents)
+        self.assertIn("codex-explorer", runtime_subagents)
+        self.assertIn("codex-worker", runtime_subagents)
+        self.assertEqual(runtime_subagents["maestro-architect"]["runtime_tool"], "multi_agent_v1.spawn_agent")
+        self.assertEqual(runtime_subagents["maestro-architect"]["runtime_agent_type"], "explorer")
         self.assertNotIn(str(ROOT), result.stdout)
         self.assertNotRegex(result.stdout, r"/usr/|/opt/|/Users/")
 
         plain = self.run_cli("runtime-adapters", "--project-root", str(ROOT))
         self.assertIn("default_runtime: mock", plain.stdout)
         self.assertIn("real_cli_execution: disabled_until_adapter_phase", plain.stdout)
+        self.assertIn("runtime_subagents:", plain.stdout)
+
+    def test_subagent_adapter_resolves_maestro_role_prompt(self):
+        result = self.run_cli("subagent-adapter", "--project-root", str(ROOT), "--id", "maestro-architect", "--json")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["subagent_adapter_marker"], "SUBAGENT_ADAPTER_OK")
+        self.assertEqual(payload["runtime_tool"], "multi_agent_v1.spawn_agent")
+        self.assertEqual(payload["runtime_agent_type"], "explorer")
+        self.assertIn("Maestro Architect", payload["role_prompt"])
+        self.assertIn("--kind subagent --id maestro-architect", payload["capability_event_suggestion"])
+        self.assertIn("SUBAGENT_ADAPTER_OK", payload["marker"])
+
+    def test_init_project_includes_runtime_native_and_maestro_adapters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            result = self.run_cli("tool-registry", "--project-root", str(project), "--json")
+            payload = json.loads(result.stdout)
+            entries = {item["id"]: item for item in payload["entries"]}
+            for subagent_id in ["codex-default", "codex-explorer", "codex-worker", "maestro-architect"]:
+                self.assertIn(subagent_id, entries)
+                self.assertEqual(entries[subagent_id]["runtime_tool"], "multi_agent_v1.spawn_agent")
+                self.assertEqual(entries[subagent_id]["execution_mode"], "ask")
 
     def test_init_project_preserves_existing_agents_md(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -3753,7 +3793,10 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertGreaterEqual(payload["counts"].get("mcp", 0), 1)
         self.assertGreaterEqual(payload["counts"].get("skill", 0), 1)
         self.assertGreaterEqual(payload["counts"].get("orchestrator", 0), 1)
-        self.assertGreaterEqual(payload["counts"].get("subagent", 0), 40)
+        self.assertGreaterEqual(payload["counts"].get("subagent", 0), 43)
+        self.assertIn("codex-default", result.stdout)
+        self.assertIn("codex-explorer", result.stdout)
+        self.assertIn("codex-worker", result.stdout)
         self.assertIn("maestro-mcp", result.stdout)
         self.assertIn("maestro-architect", result.stdout)
         self.assertIn("maestro-coder", result.stdout)
@@ -3768,12 +3811,17 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertEqual(payload["dispatch_marker"], "AGENT_DISPATCH_PLAN")
         self.assertIn("AGENT_DISPATCH_PLAN", payload["marker"])
         self.assertGreaterEqual(payload["dispatch_summary"]["planned_agents"], 1)
+        self.assertGreaterEqual(payload["dispatch_summary"]["runtime_callable_agents"], 1)
         stages = {step["stage"]: step for step in payload["steps"]}
         self.assertIn("subagent", stages)
+        self.assertLessEqual(len(stages["subagent"]["tools"]), 3)
         subagent_ids = {tool["id"] for tool in stages["subagent"]["tools"]}
+        self.assertIn("codex-default", subagent_ids)
         self.assertIn("maestro-architect", subagent_ids)
         self.assertIn("maestro-coder", subagent_ids)
-        self.assertIn("maestro-security-engineer", subagent_ids)
+        for tool in stages["subagent"]["tools"]:
+            self.assertEqual(tool.get("runtime_tool"), "multi_agent_v1.spawn_agent")
+            self.assertTrue(tool.get("runtime_callable"))
         orchestrator_ids = {tool["id"] for tool in stages["orchestrator"]["tools"]}
         self.assertIn("maestro", orchestrator_ids)
         self.assertNotIn("agent-orchestrator", orchestrator_ids)
@@ -3904,6 +3952,56 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("# Full Capability Dispatch Report", report)
             self.assertIn("Meaning: AGENT_DISPATCH_OK summarizes all recorded external and mounted capabilities", report)
             self.assertIn("## Skipped Or Not Needed", report)
+
+    def test_dispatch_report_records_runtime_subagent_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "orchestrator",
+                "--id",
+                "maestro",
+                "--purpose",
+                "Satisfy required orchestrator dispatch stage.",
+            )
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "subagent",
+                "--id",
+                "codex-explorer",
+                "--purpose",
+                "Live runtime smoke did not return before timeout.",
+                "--status",
+                "timed_out",
+                "--evidence",
+                "spawn_agent returned an id; wait_agent timed out; close_agent was aborted",
+            )
+            result = self.run_cli("dispatch-report", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["agent_count"], 1)
+            self.assertEqual(payload["skipped_agent_count"], 1)
+            self.assertEqual(payload["runtime_gap_count"], 1)
+            self.assertEqual(payload["runtime_gaps"][0]["id"], "codex-explorer")
+            self.assertIn("runtime subagent gaps: codex-explorer=timed_out", payload["gaps"])
 
     def test_complete_task_returns_agent_dispatch_summary(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -46,3 +46,711 @@ tools:
     task_fit: "*"
     capability_fit: process_memory,postflight_memory
     human_gate: false
+
+  - id: codex-default
+    kind: subagent
+    status: recommended
+    scope: codex-native-subagent
+    invocation: via_codex_runtime_spawn_agent
+    task_fit: capability_orchestration,knowledge_structuring,report_task,documentation_task
+    capability_fit: codex_native,default_agent,general_execution
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: default
+    human_gate: true
+    execution_mode: ask
+    source_path: codex-runtime:multi_agent_v1.spawn_agent
+    notes: Codex native runtime subagent. Dispatch plan generates intent; actual spawn happens through Codex runtime.
+
+  - id: codex-explorer
+    kind: subagent
+    status: recommended
+    scope: codex-native-subagent
+    invocation: via_codex_runtime_spawn_agent
+    task_fit: research_task,documentation_task,analysis_task,security_audit,architecture_design
+    capability_fit: codex_native,exploration,read_only,research
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    human_gate: true
+    execution_mode: ask
+    source_path: codex-runtime:multi_agent_v1.spawn_agent
+    notes: Codex native runtime subagent. Dispatch plan generates intent; actual spawn happens through Codex runtime.
+
+  - id: codex-worker
+    kind: subagent
+    status: recommended
+    scope: codex-native-subagent
+    invocation: via_codex_runtime_spawn_agent
+    task_fit: engineering_change,route_bound_execution_guard,executable_control_plane,workflow_routing,tool_registry
+    capability_fit: codex_native,implementation,read_write,tests
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    human_gate: true
+    execution_mode: ask
+    source_path: codex-runtime:multi_agent_v1.spawn_agent
+    notes: Codex native runtime subagent. Dispatch plan generates intent; actual spawn happens through Codex runtime.
+
+  - id: maestro-accessibility-specialist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,accessibility_specialist,read_shell
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-accessibility-specialist
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-accessibility-specialist.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-analytics-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,analytics_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-analytics-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-analytics-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-api-designer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,api_designer,read_only
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-api-designer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-api-designer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-architect
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,architect,read_only
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-architect
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-architect.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-cloud-architect
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,cloud_architect,read_only
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-cloud-architect
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-cloud-architect.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-cobol-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,cobol_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-cobol-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-cobol-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-code-reviewer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task,code_review
+    capability_fit: maestro_specialist,code_reviewer,read_only
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-code-reviewer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-code-reviewer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-coder
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,coder,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-coder
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-coder.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-compliance-reviewer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task,security_audit,code_review
+    capability_fit: maestro_specialist,compliance_reviewer,read_only
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-compliance-reviewer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-compliance-reviewer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-content-strategist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,content_strategist,read_only
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-content-strategist
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-content-strategist.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-copywriter
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,copywriter,read_write
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-copywriter
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-copywriter.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-data-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,data_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-data-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-data-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-database-administrator
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,database_administrator,read_shell
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-database-administrator
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-database-administrator.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-db2-dba
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,db2_dba,read_shell
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-db2-dba
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-db2-dba.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-debugger
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,debugger,read_shell
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-debugger
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-debugger.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-design-system-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,design_system_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-design-system-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-design-system-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-devops-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,devops_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-devops-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-devops-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-hlasm-assembler-specialist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,hlasm_assembler_specialist,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-hlasm-assembler-specialist
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-hlasm-assembler-specialist.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-i18n-specialist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,i18n_specialist,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-i18n-specialist
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-i18n-specialist.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-ibm-i-specialist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,ibm_i_specialist,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-ibm-i-specialist
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-ibm-i-specialist.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-integration-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,integration_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-integration-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-integration-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-ml-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,ml_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-ml-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-ml-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-mlops-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,mlops_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-mlops-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-mlops-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-mobile-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,mobile_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-mobile-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-mobile-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-observability-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,observability_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-observability-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-observability-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-performance-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,performance_engineer,read_shell
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-performance-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-performance-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-platform-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,platform_engineer,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-platform-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-platform-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-product-manager
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,product_manager,read_write
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-product-manager
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-product-manager.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-prompt-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,prompt_engineer,read_write
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-prompt-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-prompt-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-refactor
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,refactor,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-refactor
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-refactor.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-release-manager
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,release_manager,read_write
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-release-manager
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-release-manager.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-security-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task,security_audit
+    capability_fit: maestro_specialist,security_engineer,read_shell
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-security-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-security-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-seo-specialist
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,seo_specialist,read_shell
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-seo-specialist
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-seo-specialist.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-site-reliability-engineer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,site_reliability_engineer,read_shell
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-site-reliability-engineer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-site-reliability-engineer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-solutions-architect
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,solutions_architect,read_only
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-solutions-architect
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-solutions-architect.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-technical-writer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,technical_writer,read_write
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-technical-writer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-technical-writer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-tester
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task,testing_task
+    capability_fit: maestro_specialist,tester,full
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-tester
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-tester.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-ux-designer
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,ux_designer,read_write
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: worker
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-ux-designer
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-ux-designer.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.
+
+  - id: maestro-zos-sysprog
+    kind: subagent
+    status: recommended
+    scope: maestro-specialist-agent
+    invocation: via_codex_runtime_spawn_agent_with_maestro_role
+    task_fit: capability_orchestration,executable_control_plane,engineering_change,architecture_design,documentation_task,release_task
+    capability_fit: maestro_specialist,zos_sysprog,read_shell
+    runtime: codex
+    runtime_tool: multi_agent_v1.spawn_agent
+    runtime_agent_type: explorer
+    adapter: maestro-codex-runtime
+    adapter_role: maestro-zos-sysprog
+    human_gate: true
+    execution_mode: ask
+    source_path: capability-layer/subagents/maestro/maestro-zos-sysprog.yaml
+    notes: Maestro role adapter backed by Codex runtime spawn_agent; KnowledgeOS registers intent and evidence, Codex performs actual dispatch.

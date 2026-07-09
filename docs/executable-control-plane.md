@@ -445,6 +445,29 @@ Failed assertions return non-zero and do not write a passing effect record. Asse
   --run-id RUN-...
 ```
 
+Successful dispatch output includes `AGENT_DISPATCH_PLAN`. The dispatch summary now reports declared agents and runtime-callable agents separately, so a plan can distinguish "registered" from "actually callable through Codex runtime".
+
+### `subagent-adapter`
+
+Resolve a registered subagent into a Codex runtime call package.
+
+```bash
+./bin/knowledgeos subagent-adapter \
+  --project-root /path/to/project \
+  --id maestro-architect \
+  --task-id T001 \
+  --run-id RUN-... \
+  --purpose "Review architecture risks."
+```
+
+The command emits:
+
+```text
+SUBAGENT_ADAPTER_OK id=maestro-architect runtime_agent_type=explorer
+```
+
+It returns `runtime_tool: multi_agent_v1.spawn_agent`, the runtime agent type, the role prompt, and a suggested `capability-event`. It does not execute the subagent itself; actual delegation belongs to the host Codex runtime. After delegation, record the real use with `capability-event --kind subagent`.
+
 ### `verify-lifecycle`
 
 Verify that a run has all phases required by `.agent-os/phase-policy.yaml`.

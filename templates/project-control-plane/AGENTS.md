@@ -32,6 +32,9 @@ During substantial work:
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN tool-registry --project-root .` before relying on registered capabilities.
 - Use `.agent-os/dispatch-policy.yaml` to choose capabilities in a visible order.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN dispatch-task --project-root . --task-id <task-id>` before invoking subagents, MCP tools, or skills, and relay the returned `AGENT_DISPATCH_PLAN` marker.
+- If `dispatch-task` selects `codex-*` or `maestro-*`, use `CHANGE_ME_KNOWLEDGEOS_BIN subagent-adapter --project-root . --id <subagent-id>` to resolve the Codex runtime call package before actual delegation.
+- Actual `codex-*` and `maestro-*` delegation is performed by the host Codex runtime subagent tool, not by the KnowledgeOS CLI. After delegation, record `CHANGE_ME_KNOWLEDGEOS_BIN capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind subagent --id <subagent-id> --purpose "<purpose>"`.
+- If a planned subagent is skipped, times out, blocks, or cannot be closed, record `capability-event --kind subagent --id <subagent-id> --status skipped|timed_out|blocked|close_failed --purpose "<public reason>"` before `dispatch-report`.
 - At consultation checkpoints, pause, state your recommendation, explain the tradeoff, and ask the human whether to proceed.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN run-task --project-root . --task-id <task-id>` to create run evidence.
 - Use `CHANGE_ME_KNOWLEDGEOS_BIN context-pack --project-root . --task-id <task-id> --run-id <run-id>` and `CHANGE_ME_KNOWLEDGEOS_BIN plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary "<summary>"` before execution.

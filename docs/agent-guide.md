@@ -37,6 +37,7 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
 4. Start work through a run envelope.
    - `knowledgeos route-task --project-root . --task-id <task-id>`
    - `knowledgeos dispatch-task --project-root . --task-id <task-id>` and relay `AGENT_DISPATCH_PLAN`
+   - `knowledgeos subagent-adapter --project-root . --id <subagent-id>` before using a planned `codex-*` or `maestro-*` subagent.
    - `knowledgeos run-task --project-root . --task-id <task-id>`
    - `knowledgeos dispatch-task --project-root . --task-id <task-id> --run-id <run-id>`
    - `knowledgeos context-pack --project-root . --task-id <task-id> --run-id <run-id>`
@@ -56,6 +57,9 @@ Use this checklist before substantial work in a KnowledgeOS-controlled project.
    - Relay the returned `CHECKPOINT_OK` marker to the user.
    - Use `knowledgeos capability-event --project-root . --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose "<purpose>"` for MCP, skill, plugin/app, browser/Chrome/GitHub/security connector, subagent, orchestrator, shell, file_read, or important script calls.
    - Relay the returned `CAPABILITY_OK` marker to the user.
+   - When `dispatch-task` recommends `codex-*` or `maestro-*`, the KnowledgeOS CLI only resolves and records the adapter intent. Actual subagent delegation must use the host Codex runtime tool, followed by `capability-event --kind subagent`.
+   - If a planned subagent is not used, record it as `--status skipped` with a public reason before `dispatch-report`.
+   - If a spawned subagent times out, blocks, or cannot be closed cleanly, record it as `--status timed_out`, `--status blocked`, or `--status close_failed`; `dispatch-report` will surface it as a runtime gap instead of a successful agent.
    - Use `knowledgeos dispatch-report --project-root . --task-id <task-id> --run-id <run-id>` to summarize actual capability dispatch.
    - Relay the returned `AGENT_DISPATCH_OK` marker to the user and include the full capability summary in the final answer for substantial work.
    - Treat `AGENT_DISPATCH_OK` as the complete capability report: agents invoked/skipped, MCP, skills, plugins/apps, browser/Chrome/GitHub/security connectors, scripts, shell, file reads, evidence files, and gaps.

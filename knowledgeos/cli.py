@@ -70,6 +70,7 @@ REQUIRED_PUBLIC_FILES = [
     "templates/governance-core/sync/import-state.json",
     "templates/capability-layer/README.md",
     "templates/capability-layer/STRUCTURE-CHECK.md",
+    "templates/capability-layer/subagents/maestro/manifest.yaml",
     "templates/project-control-plane/AGENTS.md",
     "examples/scenarios/README.md",
     "examples/scenarios/distracted-agent-guardrails.md",
@@ -169,7 +170,8 @@ CAPABILITY_EVENT_KINDS = {
     "orchestrator",
 }
 AGENT_CAPABILITY_KINDS = {"orchestrator", "subagent"}
-SKIPPED_CAPABILITY_STATUSES = {"skipped", "skip", "not_needed", "not-needed"}
+SKIPPED_CAPABILITY_STATUSES = {"skipped", "skip", "not_needed", "not-needed", "timed_out", "timed-out", "timeout", "blocked", "close_failed", "close-failed"}
+RUNTIME_GAP_CAPABILITY_STATUSES = {"timed_out", "timed-out", "timeout", "blocked", "close_failed", "close-failed"}
 EFFECT_STRICTNESS_LEVELS = {"observe", "warn", "enforce", "off"}
 DECISION_STRICTNESS_LEVELS = {"warn", "enforce", "off"}
 DECISION_EVENT_KINDS = {
@@ -258,6 +260,45 @@ RUNNABLE_TASK_STATUSES = {"ready", "in_progress"}
 TOOL_KINDS = {"mcp", "skill", "workflow", "orchestrator", "subagent", "memory"}
 TOOL_STATUSES = {"enabled", "disabled", "optional", "recommended", "configured", "indexed"}
 ACTIVE_TOOL_STATUSES = {"enabled", "recommended", "configured", "indexed"}
+CODEX_RUNTIME_TOOL = "multi_agent_v1.spawn_agent"
+CODEX_RUNTIME_AGENT_TYPES = {"default", "explorer", "worker"}
+SUBAGENT_CANDIDATE_LIMIT = 3
+CODEX_NATIVE_SUBAGENTS = [
+    {
+        "id": "codex-default",
+        "runtime_agent_type": "default",
+        "task_fit": "capability_orchestration,knowledge_structuring,report_task,documentation_task",
+        "capability_fit": "codex_native,default_agent,general_execution",
+        "scope": "codex-native-subagent",
+    },
+    {
+        "id": "codex-explorer",
+        "runtime_agent_type": "explorer",
+        "task_fit": "research_task,documentation_task,analysis_task,security_audit,architecture_design",
+        "capability_fit": "codex_native,exploration,read_only,research",
+        "scope": "codex-native-subagent",
+    },
+    {
+        "id": "codex-worker",
+        "runtime_agent_type": "worker",
+        "task_fit": "engineering_change,route_bound_execution_guard,executable_control_plane,workflow_routing,tool_registry",
+        "capability_fit": "codex_native,implementation,read_write,tests",
+        "scope": "codex-native-subagent",
+    },
+]
+SUBAGENT_PREFERENCES_BY_TASK = {
+    "analysis_task": ["codex-explorer", "maestro-analytics-engineer", "codex-default"],
+    "architecture_design": ["maestro-architect", "codex-explorer", "maestro-api-designer"],
+    "capability_orchestration": ["codex-default", "maestro-architect", "maestro-coder"],
+    "documentation_task": ["codex-explorer", "maestro-technical-writer", "codex-default"],
+    "engineering_change": ["codex-worker", "maestro-coder", "maestro-code-reviewer"],
+    "executable_control_plane": ["codex-worker", "maestro-architect", "maestro-coder"],
+    "report_task": ["codex-default", "codex-explorer", "maestro-technical-writer"],
+    "route_bound_execution_guard": ["codex-worker", "maestro-coder", "maestro-code-reviewer"],
+    "security_audit": ["maestro-security-engineer", "maestro-code-reviewer", "codex-explorer"],
+    "tool_registry": ["codex-worker", "maestro-architect", "codex-default"],
+    "workflow_routing": ["codex-worker", "maestro-architect", "maestro-coder"],
+}
 DISPATCH_POLICY_SECTIONS = {
     "default_order",
     "always_consult_before",
@@ -901,8 +942,74 @@ def choose_tools(entries: list[dict[str, str]], kind: str, task_type: str, capab
     return chosen
 
 
+def runtime_agent_type_for_entry(entry: dict[str, str]) -> str:
+    explicit = entry.get("runtime_agent_type", "").strip()
+    if explicit in CODEX_RUNTIME_AGENT_TYPES:
+        return explicit
+    capability_fit = set(split_csv(entry.get("capability_fit", "")))
+    entry_id = entry.get("id", "")
+    if entry_id == "codex-default":
+        return "default"
+    if entry_id == "codex-explorer":
+        return "explorer"
+    if entry_id == "codex-worker":
+        return "worker"
+    if entry_id.startswith("maestro-"):
+        if "full" in capability_fit or "read_write" in capability_fit:
+            return "worker"
+        if "read_only" in capability_fit or "read_shell" in capability_fit:
+            return "explorer"
+        return "default"
+    return ""
+
+
+def is_runtime_callable_subagent(entry: dict[str, str]) -> bool:
+    if entry.get("kind") != "subagent":
+        return False
+    runtime_tool = entry.get("runtime_tool", "")
+    runtime_type = runtime_agent_type_for_entry(entry)
+    return runtime_tool == CODEX_RUNTIME_TOOL and runtime_type in CODEX_RUNTIME_AGENT_TYPES
+
+
+def select_subagent_candidates(entries: list[dict[str, str]], task_type: str, limit: int = SUBAGENT_CANDIDATE_LIMIT) -> list[dict[str, str]]:
+    active = [entry for entry in entries if entry.get("kind") == "subagent" and entry.get("status") in ACTIVE_TOOL_STATUSES]
+    by_id = {entry.get("id", ""): entry for entry in active}
+    selected: list[dict[str, str]] = []
+
+    def add(entry: dict[str, str] | None) -> None:
+        if not entry:
+            return
+        if entry in selected:
+            return
+        selected.append(entry)
+
+    for preferred_id in SUBAGENT_PREFERENCES_BY_TASK.get(task_type, []):
+        add(by_id.get(preferred_id))
+        if len(selected) >= limit:
+            return selected[:limit]
+
+    fitted = choose_tools(entries, "subagent", task_type)
+    fitted.sort(
+        key=lambda item: (
+            0 if is_runtime_callable_subagent(item) else 1,
+            0 if item.get("id", "").startswith("codex-") else 1,
+            item.get("id", ""),
+        )
+    )
+    for entry in fitted:
+        add(entry)
+        if len(selected) >= limit:
+            return selected[:limit]
+
+    for fallback_id in ["codex-default", "maestro-architect", "codex-explorer", "codex-worker"]:
+        add(by_id.get(fallback_id))
+        if len(selected) >= limit:
+            return selected[:limit]
+    return selected[:limit]
+
+
 def tool_summary(entry: dict[str, str]) -> dict[str, Any]:
-    return {
+    summary = {
         "id": entry.get("id", ""),
         "kind": entry.get("kind", ""),
         "status": entry.get("status", ""),
@@ -911,6 +1018,25 @@ def tool_summary(entry: dict[str, str]) -> dict[str, Any]:
         "human_gate": entry.get("human_gate", ""),
         "execution_mode": entry.get("execution_mode", ""),
     }
+    for key in ["runtime", "runtime_tool", "runtime_agent_type", "adapter", "adapter_role", "source_path"]:
+        value = entry.get(key, "")
+        if value:
+            summary[key] = value
+    if summary.get("kind") == "subagent" and not summary.get("runtime_agent_type"):
+        inferred = runtime_agent_type_for_entry(entry)
+        if inferred:
+            summary["runtime_agent_type"] = inferred
+    if summary.get("kind") == "subagent":
+        summary["runtime_callable"] = is_runtime_callable_subagent(entry)
+    return summary
+
+
+def dispatch_tool_runtime_callable(item: dict[str, Any]) -> bool:
+    return (
+        str(item.get("kind", "")) == "subagent"
+        and str(item.get("runtime_tool", "")) == CODEX_RUNTIME_TOOL
+        and str(item.get("runtime_agent_type", "")) in CODEX_RUNTIME_AGENT_TYPES
+    )
 
 
 def summarize_dispatch_plan(dispatch: dict[str, Any]) -> dict[str, Any]:
@@ -929,19 +1055,23 @@ def summarize_dispatch_plan(dispatch: dict[str, Any]) -> dict[str, Any]:
         for item in planned_tools
         if str(item.get("kind", "")) in AGENT_CAPABILITY_KINDS or str(item.get("stage", "")) in {"branch_builder", "orchestrator", "subagent"}
     ]
+    runtime_callable_agents = [item for item in planned_agents if dispatch_tool_runtime_callable(item)]
     required_stages = [str(step.get("stage", "")) for step in steps if isinstance(step, dict) and step.get("required")]
     marker = (
         f"AGENT_DISPATCH_PLAN agents={len(planned_agents)} "
-        f"capabilities={len(planned_tools)} required={len(required_stages)}"
+        f"runtime_callable={len(runtime_callable_agents)} capabilities={len(planned_tools)} required={len(required_stages)}"
     )
     return {
         "dispatch_marker": "AGENT_DISPATCH_PLAN",
         "marker": marker,
         "dispatch_summary": {
             "planned_agents": len(planned_agents),
+            "runtime_callable_agents": len(runtime_callable_agents),
             "planned_capabilities": len(planned_tools),
             "required_stages": required_stages,
+            "declared_agents": [str(item.get("id", "")) for item in planned_agents if item.get("id")],
             "planned_agent_ids": [str(item.get("id", "")) for item in planned_agents if item.get("id")],
+            "runtime_callable_agent_ids": [str(item.get("id", "")) for item in runtime_callable_agents if item.get("id")],
         },
     }
 
@@ -986,9 +1116,9 @@ def build_dispatch_plan(project_root: Path, task_id: str) -> dict[str, Any]:
             add_step("orchestrator", "coordinate role-specific subagents with execution_mode=ask", orchestrators, required=True)
 
     if "subagent" in default_order:
-        subagents = choose_tools(entries, "subagent", task_type)
+        subagents = select_subagent_candidates(entries, task_type)
         if subagents:
-            add_step("subagent", "use role-specific subagent or planning adapter when registered", subagents)
+            add_step("subagent", "use up to three role-specific runtime subagent candidates when useful", subagents)
 
     if "mcp" in default_order:
         mcp_tools = choose_tools(entries, "mcp", task_type)
@@ -3487,6 +3617,31 @@ def build_runtime_adapters_state(project_root: Path, *, show_paths: bool = False
             }
         )
 
+    runtime_subagents: list[dict[str, Any]] = []
+    try:
+        registry_entries = load_tool_registry(project_root)
+    except FileNotFoundError:
+        registry_entries = []
+    for entry in registry_entries:
+        if entry.get("kind") != "subagent":
+            continue
+        if entry.get("status") not in ACTIVE_TOOL_STATUSES:
+            continue
+        if not is_runtime_callable_subagent(entry):
+            continue
+        runtime_subagents.append(
+            {
+                "id": entry.get("id", ""),
+                "status": "registered",
+                "runtime": entry.get("runtime", "codex"),
+                "runtime_tool": entry.get("runtime_tool", ""),
+                "runtime_agent_type": runtime_agent_type_for_entry(entry),
+                "adapter": entry.get("adapter", ""),
+                "execution_mode": entry.get("execution_mode", ""),
+                "human_gate": entry.get("human_gate", ""),
+            }
+        )
+
     missing_required = [item["id"] for item in adapters if item["status"] != "available" and not item["optional"]]
     available_count = sum(1 for item in adapters if item["status"] == "available")
     return {
@@ -3498,13 +3653,95 @@ def build_runtime_adapters_state(project_root: Path, *, show_paths: bool = False
         "available_count": available_count,
         "total": len(adapters),
         "adapters": adapters,
+        "runtime_subagents": sorted(runtime_subagents, key=lambda item: item["id"]),
         "policy": {
             "default_runtime": "mock",
             "real_cli_execution": "disabled_until_adapter_phase",
+            "native_subagent_execution": "delegated_to_codex_runtime_tool",
             "project_cwd_allowed": False,
             "project_mutation_allowed": False,
             "os_route_required_for_mutation": True,
         },
+    }
+
+
+def maestro_role_spec_path(subagent_id: str) -> Path:
+    root = knowledgeos_root_from_file()
+    runtime_path = root / "capability-layer" / "subagents" / "maestro" / f"{subagent_id}.yaml"
+    if runtime_path.exists():
+        return runtime_path
+    return root / "templates" / "capability-layer" / "subagents" / "maestro" / f"{subagent_id}.yaml"
+
+
+def load_maestro_role_spec(subagent_id: str) -> dict[str, str]:
+    path = maestro_role_spec_path(subagent_id)
+    if not path.exists():
+        return {}
+    keys = {"id", "display_name", "runtime_agent_type", "default_scope", "write_policy_hint", "role_prompt", "recommended_task_fit"}
+    return parse_scalar_values(path, keys)
+
+
+def build_default_subagent_role_prompt(entry: dict[str, str]) -> str:
+    subagent_id = entry.get("id", "")
+    runtime_type = runtime_agent_type_for_entry(entry) or "default"
+    if subagent_id.startswith("maestro-"):
+        readable = subagent_id.removeprefix("maestro-").replace("-", " ")
+        return (
+            f"Act as the Maestro {readable} adapter. Use the {runtime_type} Codex subagent runtime. "
+            "Return concise findings, concrete evidence, and any gaps. Do not mutate files unless the parent task route allows it."
+        )
+    return (
+        f"Act as {subagent_id} through the Codex {runtime_type} subagent runtime. "
+        "Return concise findings, concrete evidence, and any gaps."
+    )
+
+
+def build_subagent_adapter(project_root: Path, subagent_id: str, *, task_id: str = "", run_id: str = "", purpose: str = "") -> dict[str, Any]:
+    entries = load_tool_registry(project_root)
+    entry = next((item for item in entries if item.get("id") == subagent_id), None)
+    if not entry:
+        raise KeyError(f"unknown subagent id: {subagent_id}")
+    if entry.get("kind") != "subagent":
+        raise ValueError(f"{subagent_id} is not a subagent entry")
+    runtime_type = runtime_agent_type_for_entry(entry)
+    if runtime_type not in CODEX_RUNTIME_AGENT_TYPES:
+        raise ValueError(f"{subagent_id} does not declare a supported runtime_agent_type")
+    runtime_tool = entry.get("runtime_tool", "")
+    if runtime_tool != CODEX_RUNTIME_TOOL:
+        raise ValueError(f"{subagent_id} is not backed by {CODEX_RUNTIME_TOOL}")
+    role_spec = load_maestro_role_spec(subagent_id) if subagent_id.startswith("maestro-") else {}
+    role_prompt = role_spec.get("role_prompt") or build_default_subagent_role_prompt(entry)
+    capability_event_suggestion = (
+        f"knowledgeos capability-event --project-root . --task-id {task_id or '<task-id>'} "
+        f"--run-id {run_id or '<run-id>'} --kind subagent --id {subagent_id} "
+        f"--purpose \"{purpose or 'Codex runtime subagent delegated work'}\""
+    )
+    if run_id and task_id:
+        run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+        append_command_event(
+            run_dir,
+            "subagent-adapter",
+            task_id,
+            run_id,
+            status="ready",
+            subagent_id=subagent_id,
+            runtime_tool=runtime_tool,
+            runtime_agent_type=runtime_type,
+        )
+    return {
+        "status": "ready",
+        "subagent_adapter_marker": "SUBAGENT_ADAPTER_OK",
+        "marker": f"SUBAGENT_ADAPTER_OK id={subagent_id} runtime_agent_type={runtime_type}",
+        "id": subagent_id,
+        "runtime": entry.get("runtime", "codex"),
+        "runtime_tool": runtime_tool,
+        "runtime_agent_type": runtime_type,
+        "adapter": entry.get("adapter", ""),
+        "adapter_role": entry.get("adapter_role", ""),
+        "role_prompt": role_prompt,
+        "role_spec": f"capability-layer/subagents/maestro/{subagent_id}.yaml" if subagent_id.startswith("maestro-") else "",
+        "capability_event_suggestion": capability_event_suggestion,
+        "actual_execution": "call Codex runtime tool multi_agent_v1.spawn_agent with runtime_agent_type and role_prompt",
     }
 
 
@@ -4102,6 +4339,9 @@ def record_dispatch_event(project_root: Path, task_id: str, run_id: str, dispatc
                         "kind": str(tool.get("kind", "")),
                         "id": str(tool.get("id", "")),
                         "required": str(bool(step.get("required"))).lower(),
+                        "runtime_tool": str(tool.get("runtime_tool", "")),
+                        "runtime_agent_type": str(tool.get("runtime_agent_type", "")),
+                        "runtime_callable": str(bool(tool.get("runtime_callable"))).lower(),
                     }
                 )
     append_command_event(
@@ -4189,6 +4429,12 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
         if str(event.get("status", "completed")).strip().lower() in SKIPPED_CAPABILITY_STATUSES
     ]
     agent_events = [event for event in invoked_events if str(event.get("kind", "")) in AGENT_CAPABILITY_KINDS]
+    skipped_agent_events = [event for event in skipped_events if str(event.get("kind", "")) in AGENT_CAPABILITY_KINDS]
+    runtime_gap_events = [
+        event
+        for event in skipped_agent_events
+        if str(event.get("status", "")).strip().lower() in RUNTIME_GAP_CAPABILITY_STATUSES
+    ]
     counts_by_kind: dict[str, int] = {kind: 0 for kind in sorted(CAPABILITY_EVENT_KINDS)}
     for event in invoked_events:
         kind = str(event.get("kind", "unknown")) or "unknown"
@@ -4244,9 +4490,17 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
         gaps.append("no capability-event records were written; report no external capability use with an explicit reason")
     if required_without_record:
         gaps.append("required dispatch stages without capability-event or skip reason: " + ", ".join(required_without_record))
+    if runtime_gap_events:
+        gaps.append(
+            "runtime subagent gaps: "
+            + ", ".join(
+                f"{event.get('id', '')}={event.get('status', '')}"
+                for event in runtime_gap_events
+            )
+        )
     if not gaps:
         gaps.append("none")
-    marker = f"AGENT_DISPATCH_OK agents={len(agent_events)} capabilities={len(invoked_events)} run={run_id}"
+    marker = f"AGENT_DISPATCH_OK agents={len(agent_events)} capabilities={len(invoked_events)} skipped_agents={len(skipped_agent_events)} run={run_id}"
     report_path = run_dir / "dispatch-report.md"
     lines = [
         "# Full Capability Dispatch Report",
@@ -4260,6 +4514,8 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
         "Meaning: AGENT_DISPATCH_OK summarizes all recorded external and mounted capabilities, not only subagents.",
         "",
         f"Agents Invoked: {len(agent_events)}",
+        "",
+        f"Agents Skipped Or Gapped: {len(skipped_agent_events)}",
         "",
         f"Capabilities Invoked: {len(invoked_events)}",
         "",
@@ -4314,6 +4570,8 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
         agent_count=len(agent_events),
         capability_count=len(invoked_events),
         skipped_count=len(skipped_events),
+        skipped_agent_count=len(skipped_agent_events),
+        runtime_gap_count=len(runtime_gap_events),
     )
     return {
         "status": "reported",
@@ -4321,6 +4579,8 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
         "marker": marker,
         "full_capability_report": True,
         "agent_count": len(agent_events),
+        "skipped_agent_count": len(skipped_agent_events),
+        "runtime_gap_count": len(runtime_gap_events),
         "capability_count": len(invoked_events),
         "skipped_count": len(skipped_events),
         "counts_by_kind": counts_by_kind,
@@ -4341,6 +4601,26 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
                 "status": str(event.get("status", "completed")),
             }
             for event in agent_events
+        ],
+        "skipped_agents": [
+            {
+                "kind": str(event.get("kind", "")),
+                "id": str(event.get("id", "")),
+                "purpose": str(event.get("purpose", "")),
+                "status": str(event.get("status", "skipped")),
+                "evidence": str(event.get("evidence", "")),
+            }
+            for event in skipped_agent_events
+        ],
+        "runtime_gaps": [
+            {
+                "kind": str(event.get("kind", "")),
+                "id": str(event.get("id", "")),
+                "purpose": str(event.get("purpose", "")),
+                "status": str(event.get("status", "")),
+                "evidence": str(event.get("evidence", "")),
+            }
+            for event in runtime_gap_events
         ],
         "events": [
             {
@@ -5455,6 +5735,81 @@ def ensure_archive_write_guard(project_root: Path, *, apply: bool, backup_name: 
     return action
 
 
+def registry_block_from_entry(entry: dict[str, str]) -> str:
+    ordered_keys = [
+        "kind",
+        "status",
+        "scope",
+        "invocation",
+        "task_fit",
+        "capability_fit",
+        "runtime",
+        "runtime_tool",
+        "runtime_agent_type",
+        "adapter",
+        "adapter_role",
+        "human_gate",
+        "execution_mode",
+        "source_path",
+        "notes",
+    ]
+    lines = [f"  - id: {entry['id']}"]
+    for key in ordered_keys:
+        value = entry.get(key, "")
+        if value != "":
+            lines.append(f"    {key}: {value}")
+    return "\n".join(lines)
+
+
+def codex_native_registry_entries() -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for item in CODEX_NATIVE_SUBAGENTS:
+        entries.append(
+            {
+                "id": item["id"],
+                "kind": "subagent",
+                "status": "recommended",
+                "scope": item["scope"],
+                "invocation": "via_codex_runtime_spawn_agent",
+                "task_fit": item["task_fit"],
+                "capability_fit": item["capability_fit"],
+                "runtime": "codex",
+                "runtime_tool": CODEX_RUNTIME_TOOL,
+                "runtime_agent_type": item["runtime_agent_type"],
+                "human_gate": "true",
+                "execution_mode": "ask",
+                "source_path": f"codex-runtime:{CODEX_RUNTIME_TOOL}",
+                "notes": "Codex native runtime subagent. Dispatch plan generates intent; actual spawn happens through Codex runtime.",
+            }
+        )
+    return entries
+
+
+def ensure_runtime_native_subagents(project_root: Path, *, apply: bool, backup_name: str) -> dict[str, Any] | None:
+    registry_path = project_root / ".agent-os" / "tool-registry.yaml"
+    if not registry_path.exists():
+        return None
+    existing_ids = {entry.get("id", "") for entry in load_tool_registry(project_root)}
+    missing = [entry for entry in codex_native_registry_entries() if entry["id"] not in existing_ids]
+    if not missing:
+        return None
+    action: dict[str, Any] = {
+        "action": "add_runtime_native_subagents",
+        "path": str(registry_path),
+        "missing_ids": [entry["id"] for entry in missing],
+        "backup": "",
+    }
+    if apply:
+        backup = backup_project_file(project_root, registry_path, backup_name)
+        action["backup"] = str(backup)
+        addition = "\n\n  # Codex native runtime subagents. Actual spawn is performed by Codex runtime tools.\n" + "\n\n".join(
+            registry_block_from_entry(entry) for entry in missing
+        )
+        current = read_text(registry_path).rstrip()
+        write_text(registry_path, current + addition + "\n")
+    return action
+
+
 def audit_project_mount(
     project_root: Path,
     root: Path,
@@ -5506,6 +5861,9 @@ def audit_project_mount(
     archive_action = ensure_archive_write_guard(project_root, apply=False, backup_name=backup_name)
     if archive_action:
         issues.append("missing_archive_write_guard")
+    native_subagents_action = ensure_runtime_native_subagents(project_root, apply=False, backup_name=backup_name)
+    if native_subagents_action:
+        issues.append("missing_runtime_native_subagents")
 
     should_rewrite_mount = project_root != root and (
         "legacy_preos_governance_root" in issues
@@ -5543,6 +5901,9 @@ def audit_project_mount(
     archive_action = ensure_archive_write_guard(project_root, apply=apply, backup_name=backup_name)
     if archive_action:
         actions.append(archive_action)
+    native_subagents_action = ensure_runtime_native_subagents(project_root, apply=apply, backup_name=backup_name)
+    if native_subagents_action:
+        actions.append(native_subagents_action)
 
     # Re-read after optional repair so the reported final status reflects the
     # actual mount state rather than the pre-repair state.
@@ -7728,6 +8089,8 @@ def cmd_dispatch_report(args: argparse.Namespace) -> int:
         print(result["marker"])
         print("Full Capability Dispatch Report")
         print(f"agents: {result['agent_count']}")
+        print(f"skipped_agents: {result.get('skipped_agent_count', 0)}")
+        print(f"runtime_gaps: {result.get('runtime_gap_count', 0)}")
         print(f"capabilities: {result['capability_count']}")
         print(f"skipped: {result.get('skipped_count', 0)}")
         print("by_kind:")
@@ -7742,6 +8105,10 @@ def cmd_dispatch_report(args: argparse.Namespace) -> int:
             print("skipped_or_not_needed:")
             for event in result["skipped"]:
                 print(f"- {event['kind']}: {event['id']} ({event['status']}) - {event['purpose']}")
+        if result.get("runtime_gaps"):
+            print("runtime_gap_details:")
+            for event in result["runtime_gaps"]:
+                print(f"- {event['kind']}: {event['id']} ({event['status']}) - {event['evidence']}")
         if result.get("gaps"):
             print("gaps:")
             for gap in result["gaps"]:
@@ -8025,7 +8392,34 @@ def cmd_runtime_adapters(args: argparse.Namespace) -> int:
         print(f"real_cli_execution: {result['policy']['real_cli_execution']}")
         for adapter in result["adapters"]:
             print(f"- {adapter['id']}: {adapter['status']} ({adapter['execution_mode']})")
+        if result.get("runtime_subagents"):
+            print("runtime_subagents:")
+            for item in result["runtime_subagents"]:
+                print(f"- {item['id']}: {item['runtime_tool']}({item['runtime_agent_type']})")
     return 0 if result.get("status") == "ready" else 1
+
+
+def cmd_subagent_adapter(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = build_subagent_adapter(
+            project_root,
+            args.id,
+            task_id=args.task_id or "",
+            run_id=args.run_id or "",
+            purpose=args.purpose or "",
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"runtime_tool: {result['runtime_tool']}")
+        print(f"runtime_agent_type: {result['runtime_agent_type']}")
+        print(f"capability_event: {result['capability_event_suggestion']}")
+    return 0
 
 
 def cmd_workbench_state(args: argparse.Namespace) -> int:
@@ -8552,6 +8946,15 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_adapters.add_argument("--show-paths", action="store_true", help="include absolute executable paths instead of privacy redaction")
     runtime_adapters.add_argument("--json", action="store_true")
     runtime_adapters.set_defaults(func=cmd_runtime_adapters)
+
+    subagent_adapter = sub.add_parser("subagent-adapter", help="resolve a registered subagent into a Codex runtime adapter call package")
+    subagent_adapter.add_argument("--project-root", required=True)
+    subagent_adapter.add_argument("--id", required=True, help="registered subagent id, for example codex-explorer or maestro-architect")
+    subagent_adapter.add_argument("--task-id", help="optional task id; when paired with --run-id records command evidence")
+    subagent_adapter.add_argument("--run-id", help="optional run id; when paired with --task-id records command evidence")
+    subagent_adapter.add_argument("--purpose", default="", help="short public purpose for the suggested capability-event")
+    subagent_adapter.add_argument("--json", action="store_true")
+    subagent_adapter.set_defaults(func=cmd_subagent_adapter)
 
     preview = sub.add_parser("workbench-preview", help="serve the read-only Workbench preview with live project state")
     preview.add_argument("--project-root", required=True)
