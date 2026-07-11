@@ -86,6 +86,54 @@ class KnowledgeOSCliTests(unittest.TestCase):
             summary,
         )
 
+    def seed_subagent_catalog(
+        self,
+        project: Path,
+        task_id: str,
+        run_id: str,
+        *,
+        missing: set[str] | None = None,
+        native_attempts: int = 3,
+        reuse_native_challenge: bool = False,
+    ) -> list[str]:
+        missing = missing or set()
+        registered = [
+            entry["id"]
+            for entry in cli.load_tool_registry(project)
+            if entry.get("kind") == "subagent"
+            and entry.get("status") in cli.ACTIVE_TOOL_STATUSES
+            and cli.is_runtime_callable_subagent(entry)
+        ]
+        native_ids = {item["id"] for item in cli.CODEX_NATIVE_SUBAGENTS}
+        for subagent_id in registered:
+            if subagent_id in missing:
+                cli.build_subagent_adapter(project, subagent_id, task_id=task_id, run_id=run_id, purpose="Strict catalog smoke.")
+                continue
+            attempts = native_attempts if subagent_id in native_ids else 1
+            shared_adapter = (
+                cli.build_subagent_adapter(project, subagent_id, task_id=task_id, run_id=run_id, purpose="Strict catalog smoke.")
+                if reuse_native_challenge and subagent_id in native_ids
+                else None
+            )
+            for attempt in range(1, attempts + 1):
+                adapter = shared_adapter or cli.build_subagent_adapter(
+                    project, subagent_id, task_id=task_id, run_id=run_id, purpose="Strict catalog smoke."
+                )
+                nonce = f"TEST-{subagent_id}-{attempt}"
+                cli.record_capability_event(
+                    project,
+                    task_id,
+                    run_id,
+                    kind="subagent",
+                    capability_id=subagent_id,
+                    purpose="Strict catalog smoke.",
+                    evidence=(
+                        f"SUBAGENT_SMOKE_OK id={subagent_id} nonce={nonce}; cleanup=completed; "
+                        f"role_contract=passed; adapter_challenge={adapter['runtime_challenge']}"
+                    ),
+                )
+        return sorted(registered)
+
     def test_doctor_public_root_passes(self):
         result = self.run_cli("doctor", "--root", str(ROOT), "--json")
         payload = json.loads(result.stdout)
@@ -559,8 +607,311 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertEqual(payload["runtime_tool"], "multi_agent_v1.spawn_agent")
         self.assertEqual(payload["runtime_agent_type"], "explorer")
         self.assertIn("Maestro Architect", payload["role_prompt"])
+        self.assertIn("bounded delegated subagent", payload["role_prompt"])
+        self.assertIn("Do not create or reopen KnowledgeOS tasks/specs", payload["role_prompt"])
+        self.assertEqual(payload["runtime_challenge"], "")
+        self.assertEqual(payload["evidence_model"], "parent_attested_runtime")
+        self.assertFalse(payload["host_runtime_verified"])
         self.assertIn("--kind subagent --id maestro-architect", payload["capability_event_suggestion"])
         self.assertIn("SUBAGENT_ADAPTER_OK", payload["marker"])
+
+    def test_verify_subagents_accepts_unique_catalog_and_native_stability(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            registered = self.seed_subagent_catalog(project, "T001", run_id)
+
+            result = self.run_cli(
+                "verify-subagents",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "passed")
+            self.assertEqual(payload["subagent_catalog_marker"], "SUBAGENT_CATALOG_OK")
+            self.assertEqual(payload["registered_role_ids"], registered)
+            self.assertEqual(payload["covered_role_count"], len(registered))
+            self.assertEqual(payload["missing_role_ids"], [])
+            self.assertFalse(payload["catalog_drift"])
+            self.assertEqual(payload["evidence_model"], "parent_attested_runtime")
+            self.assertFalse(payload["host_runtime_verified"])
+            self.assertTrue(all(payload["success_counts"][subagent_id] == 3 for subagent_id in payload["native_role_ids"]))
+
+            plain = self.run_cli(
+                "verify-subagents",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+            )
+            self.assertIn("SUBAGENT_CATALOG_OK", plain.stdout)
+
+    def test_verify_subagents_rejects_duplicates_missing_roles_and_native_shortfalls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            registered = [
+                entry["id"]
+                for entry in cli.load_tool_registry(project)
+                if entry.get("kind") == "subagent"
+                and entry.get("status") in cli.ACTIVE_TOOL_STATUSES
+                and cli.is_runtime_callable_subagent(entry)
+            ]
+            missing_id = sorted(registered)[-1]
+            self.seed_subagent_catalog(project, "T001", run_id, missing={missing_id}, native_attempts=1)
+            duplicate_id = sorted(set(registered) - {missing_id})[0]
+            for attempt in range(2, 6):
+                cli.record_capability_event(
+                    project,
+                    "T001",
+                    run_id,
+                    kind="subagent",
+                    capability_id=duplicate_id,
+                    purpose="Duplicate catalog smoke.",
+                    evidence=f"SUBAGENT_SMOKE_OK id={duplicate_id} nonce=DUP-{attempt}; cleanup=completed; role_contract=passed",
+                )
+
+            result = self.run_cli(
+                "verify-subagents",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "failed")
+            self.assertEqual(payload["subagent_catalog_marker"], "")
+            self.assertIn(missing_id, payload["missing_role_ids"])
+            self.assertTrue(payload["native_shortfalls"])
+            self.assertNotIn("SUBAGENT_CATALOG_OK", payload["marker"])
+
+    def test_verify_subagents_rejects_invalid_strict_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.seed_subagent_catalog(project, "T001", run_id)
+            cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="subagent",
+                capability_id="unknown-runtime-agent",
+                purpose="Invalid strict catalog evidence.",
+                evidence="SUBAGENT_SMOKE_OK id=unknown-runtime-agent nonce=UNKNOWN-1; cleanup=completed; role_contract=passed",
+            )
+
+            result = self.run_cli(
+                "verify-subagents",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["invalid_events"][0]["id"], "unknown-runtime-agent")
+            self.assertEqual(payload["invalid_events"][0]["reason"], "unknown_runtime_subagent")
+
+    def test_verify_subagents_rejects_malformed_marker_and_unbound_attestation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.seed_subagent_catalog(project, "T001", run_id)
+            cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="subagent",
+                capability_id="codex-explorer",
+                purpose="Malformed strict evidence.",
+                evidence="SUBAGENT_SMOKE_OK id=codex-explorer nonce=MALFORMED",
+            )
+
+            result = self.run_cli(
+                "verify-subagents", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json", check=False
+            )
+            self.assertEqual(result.returncode, 2)
+            payload = json.loads(result.stdout)
+            self.assertIn("missing_cleanup", {item["reason"] for item in payload["invalid_events"]})
+
+    def test_verify_subagents_locks_catalog_snapshot_and_native_floor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            registered = self.seed_subagent_catalog(project, "T001", run_id)
+
+            lowered = self.run_cli(
+                "verify-subagents", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id,
+                "--native-min-successes", "1", "--json", check=False,
+            )
+            self.assertEqual(lowered.returncode, 1)
+            self.assertIn("cannot be lower", lowered.stderr)
+
+            registry = project / ".agent-os" / "tool-registry.yaml"
+            registry_text = registry.read_text(encoding="utf-8")
+            entry_pattern = rf"(?ms)(^  - id: {re.escape(registered[-1])}\n.*?^    status: )\w+"
+            registry_text, replacements = re.subn(entry_pattern, r"\1disabled", registry_text, count=1)
+            self.assertEqual(replacements, 1)
+            registry.write_text(registry_text, encoding="utf-8")
+            drifted = self.run_cli(
+                "verify-subagents", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json", check=False
+            )
+            self.assertEqual(drifted.returncode, 2)
+            self.assertTrue(json.loads(drifted.stdout)["catalog_drift"])
+
+    def test_verify_subagents_requires_distinct_adapter_challenge_per_native_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.seed_subagent_catalog(project, "T001", run_id, reuse_native_challenge=True)
+
+            result = self.run_cli(
+                "verify-subagents", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json", check=False
+            )
+            self.assertEqual(result.returncode, 2)
+            payload = json.loads(result.stdout)
+            self.assertEqual(set(payload["native_shortfalls"].values()), {1})
+            self.assertGreaterEqual(payload["ignored_reused_challenge_count"], 6)
+
+    def test_verify_subagents_rejects_pre_snapshot_native_disable_and_incomplete_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            registry = project / ".agent-os" / "tool-registry.yaml"
+            text = registry.read_text(encoding="utf-8")
+            text, replacements = re.subn(
+                r"(?ms)(^  - id: codex-explorer\n.*?^    status: )\w+", r"\1disabled", text, count=1
+            )
+            self.assertEqual(replacements, 1)
+            registry.write_text(text, encoding="utf-8")
+            cli.build_subagent_adapter(project, "codex-default", task_id="T001", run_id=run_id)
+
+            weakened = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertEqual(weakened["status"], "failed")
+            self.assertTrue(weakened["catalog_drift"])
+
+            snapshot_path = project / ".agent-os" / "runs" / run_id / "subagent-catalog.json"
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            snapshot.pop("catalog_sha256")
+            snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+            incomplete = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertEqual(incomplete["catalog_snapshot_error"], "catalog_snapshot_missing_hash")
+
+
+    def test_verify_subagents_rejects_tampered_snapshot_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.seed_subagent_catalog(project, "T001", run_id)
+            snapshot_path = project / ".agent-os" / "runs" / run_id / "subagent-catalog.json"
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            snapshot.pop("evidence_model")
+            snapshot["captured_at"] = "0"
+            snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+            malformed = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertNotEqual(malformed["catalog_snapshot_error"], "")
+
+    def test_verify_subagents_rejects_duplicate_challenge_tokens(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.seed_subagent_catalog(project, "T001", run_id)
+            adapter = cli.build_subagent_adapter(project, "codex-explorer", task_id="T001", run_id=run_id)
+            cli.record_capability_event(
+                project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose="Ambiguous challenge.",
+                evidence=(
+                    "SUBAGENT_SMOKE_OK id=codex-explorer nonce=AMBIGUOUS; cleanup=completed; role_contract=passed; "
+                    f"adapter_challenge={adapter['runtime_challenge']}; adapter_challenge=other"
+                ),
+            )
+            payload = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertIn("duplicate_or_malformed_adapter_challenge", {item["reason"] for item in payload["invalid_events"]})
+
+    def test_verify_subagents_rejects_empty_catalog_and_missing_adapter_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+
+            with patch.object(cli, "load_tool_registry", return_value=[]):
+                empty = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertEqual(empty["status"], "failed")
+            self.assertTrue(empty["catalog_empty"])
+
+            registered = [
+                entry["id"]
+                for entry in cli.load_tool_registry(project)
+                if entry.get("kind") == "subagent"
+                and entry.get("status") in cli.ACTIVE_TOOL_STATUSES
+                and cli.is_runtime_callable_subagent(entry)
+            ]
+            cli.ensure_subagent_catalog_snapshot(
+                project / ".agent-os" / "runs" / run_id,
+                "T001",
+                run_id,
+                cli.active_runtime_subagent_catalog(project),
+            )
+            native_ids = {item["id"] for item in cli.CODEX_NATIVE_SUBAGENTS}
+            for subagent_id in registered:
+                attempts = 3 if subagent_id in native_ids else 1
+                for attempt in range(1, attempts + 1):
+                    cli.record_capability_event(
+                        project,
+                        "T001",
+                        run_id,
+                        kind="subagent",
+                        capability_id=subagent_id,
+                        purpose="Strict smoke without adapter evidence.",
+                        evidence=f"SUBAGENT_SMOKE_OK id={subagent_id} nonce=NO-ADAPTER-{attempt}; cleanup=completed; role_contract=passed",
+                    )
+            missing_adapter = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertEqual(missing_adapter["status"], "failed")
+            self.assertEqual(missing_adapter["missing_adapter_role_ids"], sorted(registered))
 
     def test_init_project_includes_runtime_native_and_maestro_adapters(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4002,6 +4353,110 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertEqual(payload["runtime_gap_count"], 1)
             self.assertEqual(payload["runtime_gaps"][0]["id"], "codex-explorer")
             self.assertIn("runtime subagent gaps: codex-explorer=timed_out", payload["gaps"])
+
+    def test_dispatch_report_resolves_late_results_and_keeps_policy_blocks_out_of_runtime_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="orchestrator",
+                capability_id="maestro",
+                purpose="Satisfy the required orchestrator stage for this dispatch-report fixture.",
+            )
+            purpose = "Read-only explorer review."
+            timeout_event = cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="subagent",
+                capability_id="codex-explorer",
+                purpose=purpose,
+                status="timed_out",
+                evidence="wait window elapsed",
+            )
+            cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="subagent",
+                capability_id="codex-explorer",
+                purpose=purpose,
+                status="completed",
+                evidence="late result received; recovered_from=timed_out",
+                recovers_event_id=timeout_event["capability_event_id"],
+            )
+            cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="subagent",
+                capability_id="codex-worker",
+                purpose="Stopped at a safety policy gate.",
+                status="blocked",
+                evidence="policy decision, not a runtime failure",
+            )
+
+            result = self.run_cli("dispatch-report", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["runtime_gap_count"], 0)
+            self.assertEqual(payload["resolved_runtime_gap_count"], 1)
+            self.assertEqual(payload["resolved_runtime_gaps"][0]["id"], "codex-explorer")
+            self.assertEqual(payload["gaps"], ["none"])
+            self.assertEqual(payload["skipped_agent_count"], 2)
+
+    def test_dispatch_report_does_not_treat_failed_event_as_timeout_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            purpose = "Bounded review."
+            cli.record_capability_event(project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose=purpose, status="timed_out", evidence="wait elapsed")
+            cli.record_capability_event(project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose=purpose, status="failed", evidence="recovered_from=timed_out")
+
+            payload = cli.build_dispatch_report(project, "T001", run_id)
+            self.assertEqual(payload["runtime_gap_count"], 2)
+            self.assertEqual(payload["resolved_runtime_gap_count"], 0)
+
+    def test_dispatch_report_treats_failed_subagent_as_runtime_gap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            cli.record_capability_event(
+                project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose="Failed runtime.", status="failed", evidence="runtime returned failure"
+            )
+            payload = cli.build_dispatch_report(project, "T001", run_id)
+            self.assertEqual(payload["agent_count"], 0)
+            self.assertEqual(payload["runtime_gap_count"], 1)
+
+    def test_dispatch_report_recovery_is_one_to_one_by_event_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            first = cli.record_capability_event(project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose="Same purpose.", status="timed_out", evidence="wait elapsed")
+            cli.record_capability_event(project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose="Same purpose.", status="timed_out", evidence="second wait elapsed")
+            cli.record_capability_event(
+                project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose="Same purpose.", status="completed",
+                evidence="late result", recovers_event_id=first["capability_event_id"],
+            )
+
+            payload = cli.build_dispatch_report(project, "T001", run_id)
+            self.assertEqual(payload["runtime_gap_count"], 1)
+            self.assertEqual(payload["resolved_runtime_gap_count"], 1)
 
     def test_complete_task_returns_agent_dispatch_summary(self):
         with tempfile.TemporaryDirectory() as tmp:

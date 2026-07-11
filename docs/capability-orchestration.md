@@ -152,6 +152,10 @@ Use `subagent-adapter` to resolve the callable package:
 
 The command emits `SUBAGENT_ADAPTER_OK` with `runtime_tool`, `runtime_agent_type`, role prompt, and a suggested `capability-event`. It is still read-only with respect to actual agent execution.
 
+Keep the agent id returned by `spawn_agent`. A short marker smoke and a substantive review have different latency profiles: use one multi-minute wait for real work rather than repeated short polls. If the wait expires, request current findings once, wait once more, and close only after a terminal result. When a late result arrives, append a completed event with `recovered_from=timed_out`; `dispatch-report` then separates resolved history from active runtime gaps.
+
+Adapter role prompts also carry a subagent runtime boundary. A bounded specialist works directly on the parent-assigned scope and returns findings; it does not restart the project lifecycle or recursively dispatch another agent unless the parent explicitly delegated orchestration. This prevents parent-level KnowledgeOS rules from creating an accidental delegation tree inside every specialist call.
+
 If the host runtime accepts a subagent but the agent later times out, blocks, or cannot be closed cleanly, record that truth directly:
 
 ```bash
@@ -167,6 +171,22 @@ If the host runtime accepts a subagent but the agent later times out, blocks, or
 ```
 
 `dispatch-report` will surface that as a runtime gap instead of counting it as a successful agent.
+
+For an explicit whole-catalog validation, strict evidence can be checked without trusting raw event counts:
+
+```bash
+./bin/knowledgeos verify-subagents \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --native-min-successes 3
+```
+
+The command emits `SUBAGENT_CATALOG_OK` only when every role in the run-level catalog snapshot has a unique successful nonce with `cleanup=completed`, `role_contract=passed`, and a matching adapter challenge. Repeated evidence for one role cannot compensate for another missing role, catalog drift fails verification, and the native stability floor cannot be lowered below three.
+
+Each adapter challenge is single-use. This is a parent-attested runtime proof: KnowledgeOS does not have direct access to the Codex host's private tool-call log, so output also reports `host_runtime_verified: false` instead of claiming an independent host signature.
+
+When a late completion resolves a timeout, record the exact timeout capability-event id with `capability-event --recovers-event-id <CAP-...>`. Recovery is one-to-one; matching text alone cannot clear a runtime gap.
 
 ComposioHQ Agent Orchestrator remains an optional external worktree/PR orchestration adapter. It is not the active source of the 39 specialist agents.
 

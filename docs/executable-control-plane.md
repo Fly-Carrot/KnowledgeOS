@@ -468,6 +468,26 @@ SUBAGENT_ADAPTER_OK id=maestro-architect runtime_agent_type=explorer
 
 It returns `runtime_tool: multi_agent_v1.spawn_agent`, the runtime agent type, the role prompt, and a suggested `capability-event`. It does not execute the subagent itself; actual delegation belongs to the host Codex runtime. After delegation, record the real use with `capability-event --kind subagent`.
 
+### `verify-subagents`
+
+Verify that strict, challenge-bound parent attestations cover the immutable run catalog instead of trusting current registry entries or raw event counts.
+
+```bash
+./bin/knowledgeos verify-subagents \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --native-min-successes 3
+```
+
+A successful run emits:
+
+```text
+SUBAGENT_CATALOG_OK roles=42/42 native_min=3 invalid=0
+```
+
+Each covered role needs a unique smoke nonce, matching registered role id, `cleanup=completed`, `role_contract=passed`, and a single-use challenge returned by `subagent-adapter`. Duplicate events cannot replace a missing role, the standard native/Maestro catalog cannot be removed before snapshot, catalog drift is rejected, and native Codex roles cannot use a minimum below three. The result reports `evidence_model: parent_attested_runtime` and `host_runtime_verified: false` because the CLI cannot independently inspect Codex host tool logs.
+
 ### `verify-lifecycle`
 
 Verify that a run has all phases required by `.agent-os/phase-policy.yaml`.

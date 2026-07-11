@@ -8,6 +8,8 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ### Added
 
+- `verify-subagents` now validates challenge-bound parent attestations against an immutable run catalog snapshot and emits `SUBAGENT_CATALOG_OK` only when marker, cleanup, role-contract, catalog-integrity, and native stability checks pass.
+- A public Markdown and HTML subagent validation report records the 42-role runtime matrix without exposing local paths or runtime agent ids.
 - Full Capability Dispatch Report: `dispatch-report` now treats `AGENT_DISPATCH_OK` as a complete mounted-capability report, not only a subagent summary.
 - `capability-event` can record plugin/app, browser, Chrome, GitHub, security connector, MCP, skill, subagent, orchestrator, script, shell, and file-read capability use.
 - `KOS_DECISION` prompt contract: every conversation should begin with a visible KnowledgeOS routing judgment covering project state, work class, required flow, and reason.
@@ -45,6 +47,14 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ### Fixed
 
+- Substantive subagent work is no longer treated as failed solely because a short marker-smoke wait elapsed; startup guidance now preserves agent ids, uses a multi-minute wait, performs one interrupt/recovery cycle, and reconciles late results.
+- Adapter role prompts now enforce a bounded-subagent runtime boundary so specialist agents do not restart the full KnowledgeOS lifecycle or recursively delegate unless explicitly appointed as orchestrators.
+- `dispatch-report` no longer labels safety-policy `blocked` events as runtime failures, separates resolved late-result gaps from active gaps, and reports unique agent ids separately from raw capability-event counts.
+- Catalog verification no longer allows duplicate events for one role to compensate for another missing role.
+- Catalog verification now rejects catalog drift, malformed marker evidence, missing adapter challenges, and attempts to lower the native stability floor below three; output explicitly states the parent-attested trust boundary.
+- Runtime-gap reconciliation now requires a later `completed` event of the same capability kind, id, and purpose, so failed or unrelated events cannot erase a timeout.
+- Adapter challenges are now single-use, standard runtime roles remain mandatory even if disabled before the first snapshot, snapshot metadata fails closed, and timeout recovery is one-to-one through `--recovers-event-id`.
+- Snapshot metadata now has a complete integrity hash and validated timestamp/evidence model; failed or cancelled subagents are runtime gaps, never successful invocations.
 - Prompt templates and generated startup prompts now require `AGENT_DISPATCH_PLAN`, `AGENT_DISPATCH_OK`, and full capability summaries for substantial work.
 - `dispatch-task` limits subagent candidates to a small runtime-callable set instead of flooding plans with every Maestro role.
 - `harness-audit --apply` can repair old project registries that are missing the three Codex native runtime subagents.
@@ -58,6 +68,11 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 - Local Codex operator configuration can use the current `hooks` feature flag instead of the deprecated `codex_hooks` feature path.
 - `verify-lifecycle` now blocks completion when dispatch evidence or required capability-stage evidence is missing.
 - Root and template startup prompts now mention `TRACE_OK`, `CHECKPOINT_OK`, and `CAPABILITY_OK` as separate public evidence channels.
+
+### Verified
+
+- All 42 registered runtime-callable roles completed strict live role-contract validation; the three native Codex roles each completed three serial smoke rounds.
+- The prior explorer timeout was reproduced as a workload-duration issue: explorer and default both exceeded the same fixed wait on substantive review, then returned valid recoverable results.
 
 ## 0.5.0 - System Hardening And Kernel Repair
 

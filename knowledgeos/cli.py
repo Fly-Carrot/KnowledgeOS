@@ -170,8 +170,17 @@ CAPABILITY_EVENT_KINDS = {
     "orchestrator",
 }
 AGENT_CAPABILITY_KINDS = {"orchestrator", "subagent"}
-SKIPPED_CAPABILITY_STATUSES = {"skipped", "skip", "not_needed", "not-needed", "timed_out", "timed-out", "timeout", "blocked", "close_failed", "close-failed"}
-RUNTIME_GAP_CAPABILITY_STATUSES = {"timed_out", "timed-out", "timeout", "blocked", "close_failed", "close-failed"}
+SKIPPED_CAPABILITY_STATUSES = {"skipped", "skip", "not_needed", "not-needed", "timed_out", "timed-out", "timeout", "blocked", "close_failed", "close-failed", "interrupted", "orphaned", "errored", "failed", "cancelled", "canceled"}
+RUNTIME_GAP_CAPABILITY_STATUSES = {"timed_out", "timed-out", "timeout", "close_failed", "close-failed", "interrupted", "orphaned", "errored", "failed", "cancelled", "canceled"}
+SUBAGENT_SMOKE_MARKER = "SUBAGENT_SMOKE_OK"
+SUBAGENT_CATALOG_MARKER = "SUBAGENT_CATALOG_OK"
+DEFAULT_NATIVE_SUBAGENT_SUCCESSES = 3
+SUBAGENT_RUNTIME_BOUNDARY = (
+    "Runtime boundary: You are a bounded delegated subagent, not the parent orchestrator. "
+    "Work directly on the assigned scope and return findings to the parent. Do not create or reopen KnowledgeOS tasks/specs, "
+    "run completion/postflight, or recursively spawn subagents unless the parent explicitly delegates orchestration. "
+    "The parent owns lifecycle and capability evidence."
+)
 EFFECT_STRICTNESS_LEVELS = {"observe", "warn", "enforce", "off"}
 DECISION_STRICTNESS_LEVELS = {"warn", "enforce", "off"}
 DECISION_EVENT_KINDS = {
@@ -1996,6 +2005,10 @@ def capability_events_path(run_dir: Path) -> Path:
     return run_dir / "capability-events.ndjson"
 
 
+def subagent_catalog_snapshot_path(run_dir: Path) -> Path:
+    return run_dir / "subagent-catalog.json"
+
+
 def effect_assertions_path(run_dir: Path) -> Path:
     return run_dir / "effect-assertions.ndjson"
 
@@ -3696,6 +3709,75 @@ def build_default_subagent_role_prompt(entry: dict[str, str]) -> str:
     )
 
 
+def active_runtime_subagent_catalog(project_root: Path) -> dict[str, str]:
+    catalog = {
+        entry.get("id", ""): runtime_agent_type_for_entry(entry)
+        for entry in load_tool_registry(project_root)
+        if entry.get("kind") == "subagent"
+        and entry.get("status") in ACTIVE_TOOL_STATUSES
+        and is_runtime_callable_subagent(entry)
+    }
+    catalog.pop("", None)
+    return catalog
+
+
+def standard_runtime_subagent_catalog() -> dict[str, str]:
+    catalog = {item["id"]: item["runtime_agent_type"] for item in CODEX_NATIVE_SUBAGENTS}
+    root = knowledgeos_root_from_file()
+    role_dir = root / "capability-layer" / "subagents" / "maestro"
+    if not role_dir.exists():
+        role_dir = root / "templates" / "capability-layer" / "subagents" / "maestro"
+    for path in sorted(role_dir.glob("maestro-*.yaml")):
+        values = parse_scalar_values(path, {"id", "runtime_agent_type"})
+        subagent_id = values.get("id", "")
+        runtime_type = values.get("runtime_agent_type", "")
+        if subagent_id and runtime_type in CODEX_RUNTIME_AGENT_TYPES:
+            catalog[subagent_id] = runtime_type
+    return catalog
+
+
+def subagent_catalog_sha256(catalog: dict[str, str]) -> str:
+    payload = json.dumps(catalog, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def subagent_snapshot_integrity_sha256(snapshot: dict[str, Any]) -> str:
+    payload = {key: value for key, value in snapshot.items() if key != "snapshot_integrity_sha256"}
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def ensure_subagent_catalog_snapshot(run_dir: Path, task_id: str, run_id: str, catalog: dict[str, str]) -> dict[str, Any]:
+    path = subagent_catalog_snapshot_path(run_dir)
+    if path.exists():
+        snapshot = json.loads(read_text(path))
+        return snapshot
+    required_catalog = standard_runtime_subagent_catalog()
+    expected_catalog = dict(required_catalog)
+    expected_catalog.update({subagent_id: runtime_type for subagent_id, runtime_type in catalog.items() if subagent_id not in expected_catalog})
+    snapshot = {
+        "schema_version": "knowledgeos.subagent-catalog.v1",
+        "task_id": task_id,
+        "run_id": run_id,
+        "roles": dict(sorted(expected_catalog.items())),
+        "catalog_sha256": subagent_catalog_sha256(expected_catalog),
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "evidence_model": "parent_attested_runtime",
+    }
+    snapshot["snapshot_integrity_sha256"] = subagent_snapshot_integrity_sha256(snapshot)
+    path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    append_command_event(
+        run_dir,
+        "subagent-catalog-snapshot",
+        task_id,
+        run_id,
+        status="recorded",
+        catalog_sha256=snapshot["catalog_sha256"],
+        role_count=len(expected_catalog),
+    )
+    return snapshot
+
+
 def build_subagent_adapter(project_root: Path, subagent_id: str, *, task_id: str = "", run_id: str = "", purpose: str = "") -> dict[str, Any]:
     entries = load_tool_registry(project_root)
     entry = next((item for item in entries if item.get("id") == subagent_id), None)
@@ -3711,13 +3793,20 @@ def build_subagent_adapter(project_root: Path, subagent_id: str, *, task_id: str
         raise ValueError(f"{subagent_id} is not backed by {CODEX_RUNTIME_TOOL}")
     role_spec = load_maestro_role_spec(subagent_id) if subagent_id.startswith("maestro-") else {}
     role_prompt = role_spec.get("role_prompt") or build_default_subagent_role_prompt(entry)
+    role_prompt = f"{role_prompt}\n\n{SUBAGENT_RUNTIME_BOUNDARY}"
     capability_event_suggestion = (
         f"knowledgeos capability-event --project-root . --task-id {task_id or '<task-id>'} "
         f"--run-id {run_id or '<run-id>'} --kind subagent --id {subagent_id} "
         f"--purpose \"{purpose or 'Codex runtime subagent delegated work'}\""
     )
+    runtime_challenge = ""
+    catalog_sha256 = ""
     if run_id and task_id:
         run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+        snapshot = ensure_subagent_catalog_snapshot(run_dir, task_id, run_id, active_runtime_subagent_catalog(project_root))
+        catalog_sha256 = str(snapshot.get("catalog_sha256", ""))
+        challenge_source = f"{task_id}:{run_id}:{subagent_id}:{time.time_ns()}:{os.urandom(16).hex()}"
+        runtime_challenge = hashlib.sha256(challenge_source.encode("utf-8")).hexdigest()[:24]
         append_command_event(
             run_dir,
             "subagent-adapter",
@@ -3727,6 +3816,8 @@ def build_subagent_adapter(project_root: Path, subagent_id: str, *, task_id: str
             subagent_id=subagent_id,
             runtime_tool=runtime_tool,
             runtime_agent_type=runtime_type,
+            runtime_challenge=runtime_challenge,
+            catalog_sha256=catalog_sha256,
         )
     return {
         "status": "ready",
@@ -3736,6 +3827,10 @@ def build_subagent_adapter(project_root: Path, subagent_id: str, *, task_id: str
         "runtime": entry.get("runtime", "codex"),
         "runtime_tool": runtime_tool,
         "runtime_agent_type": runtime_type,
+        "runtime_challenge": runtime_challenge,
+        "catalog_sha256": catalog_sha256,
+        "evidence_model": "parent_attested_runtime",
+        "host_runtime_verified": False,
         "adapter": entry.get("adapter", ""),
         "adapter_role": entry.get("adapter_role", ""),
         "role_prompt": role_prompt,
@@ -4366,6 +4461,8 @@ def record_capability_event(
     purpose: str,
     status: str = "completed",
     evidence: str = "",
+    invocation_id: str = "",
+    recovers_event_id: str = "",
 ) -> dict[str, Any]:
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     if kind not in CAPABILITY_EVENT_KINDS:
@@ -4391,6 +4488,10 @@ def record_capability_event(
         "evidence": evidence.strip(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    if invocation_id.strip():
+        record["invocation_id"] = invocation_id.strip()
+    if recovers_event_id.strip():
+        record["recovers_event_id"] = recovers_event_id.strip()
     event_path = capability_events_path(run_dir)
     with event_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
@@ -4415,6 +4516,223 @@ def record_capability_event(
     }
 
 
+def verify_subagent_catalog(
+    project_root: Path,
+    task_id: str,
+    run_id: str,
+    *,
+    native_min_successes: int = DEFAULT_NATIVE_SUBAGENT_SUCCESSES,
+) -> dict[str, Any]:
+    if native_min_successes < DEFAULT_NATIVE_SUBAGENT_SUCCESSES:
+        raise ValueError(
+            f"--native-min-successes cannot be lower than {DEFAULT_NATIVE_SUBAGENT_SUCCESSES}"
+        )
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    current_catalog = active_runtime_subagent_catalog(project_root)
+    snapshot_path = subagent_catalog_snapshot_path(run_dir)
+    snapshot: dict[str, Any] = {}
+    snapshot_error = ""
+    if snapshot_path.exists():
+        try:
+            snapshot = json.loads(read_text(snapshot_path))
+        except (json.JSONDecodeError, OSError) as exc:
+            snapshot_error = f"invalid_catalog_snapshot: {exc}"
+    else:
+        snapshot_error = "missing_catalog_snapshot"
+    registered = {
+        str(subagent_id): str(runtime_type)
+        for subagent_id, runtime_type in (snapshot.get("roles", {}) if isinstance(snapshot.get("roles", {}), dict) else {}).items()
+    }
+    snapshot_sha256 = str(snapshot.get("catalog_sha256", ""))
+    validation_started_at = str(snapshot.get("captured_at", ""))
+    expected_snapshot_sha256 = subagent_catalog_sha256(registered) if registered else ""
+    required_snapshot_fields = {
+        "schema_version": "knowledgeos.subagent-catalog.v1",
+        "task_id": task_id,
+        "run_id": run_id,
+    }
+    for field, expected in required_snapshot_fields.items():
+        if snapshot and snapshot.get(field) != expected:
+            snapshot_error = f"catalog_snapshot_{field}_mismatch"
+            break
+    if snapshot and not validation_started_at:
+        snapshot_error = "catalog_snapshot_missing_captured_at"
+    elif snapshot and snapshot.get("evidence_model") != "parent_attested_runtime":
+        snapshot_error = "catalog_snapshot_evidence_model_mismatch"
+    elif snapshot and not snapshot_sha256:
+        snapshot_error = "catalog_snapshot_missing_hash"
+    elif snapshot_sha256 != expected_snapshot_sha256:
+        snapshot_error = "catalog_snapshot_hash_mismatch"
+    elif snapshot:
+        try:
+            captured_at = datetime.fromisoformat(validation_started_at)
+            if captured_at.tzinfo is None:
+                raise ValueError("timezone required")
+        except ValueError:
+            snapshot_error = "catalog_snapshot_invalid_captured_at"
+    if snapshot and not snapshot_error:
+        observed_integrity = str(snapshot.get("snapshot_integrity_sha256", ""))
+        if not observed_integrity:
+            snapshot_error = "catalog_snapshot_missing_integrity"
+        elif observed_integrity != subagent_snapshot_integrity_sha256(snapshot):
+            snapshot_error = "catalog_snapshot_integrity_mismatch"
+    required_catalog = standard_runtime_subagent_catalog()
+    missing_standard_roles = sorted(set(required_catalog) - set(registered))
+    standard_type_mismatches = {
+        subagent_id: {"expected": runtime_type, "observed": registered.get(subagent_id, "")}
+        for subagent_id, runtime_type in required_catalog.items()
+        if registered.get(subagent_id) != runtime_type
+    }
+    catalog_drift = bool(registered) and current_catalog != registered
+    native_ids = {
+        item["id"]
+        for item in CODEX_NATIVE_SUBAGENTS
+        if item["id"] in registered
+    }
+    adapter_role_ids: set[str] = set()
+    adapter_mismatches: list[dict[str, str]] = []
+    adapter_challenges: dict[str, set[str]] = {subagent_id: set() for subagent_id in registered}
+    for event in load_command_events(run_dir):
+        if event.get("generated_by") != "knowledgeos" or event.get("event_type") != "subagent-adapter":
+            continue
+        if event.get("task_id") != task_id or event.get("run_id") != run_id or event.get("status") != "ready":
+            continue
+        if validation_started_at and str(event.get("timestamp", "")) <= validation_started_at:
+            continue
+        subagent_id = str(event.get("subagent_id", ""))
+        if subagent_id not in registered:
+            continue
+        observed_type = str(event.get("runtime_agent_type", ""))
+        event_catalog_sha256 = str(event.get("catalog_sha256", ""))
+        runtime_challenge = str(event.get("runtime_challenge", ""))
+        if observed_type == registered[subagent_id] and event_catalog_sha256 == snapshot_sha256 and runtime_challenge:
+            adapter_role_ids.add(subagent_id)
+            adapter_challenges[subagent_id].add(runtime_challenge)
+        else:
+            adapter_mismatches.append(
+                {
+                    "id": subagent_id,
+                    "expected_runtime_agent_type": registered[subagent_id],
+                    "observed_runtime_agent_type": observed_type,
+                    "catalog_sha256": event_catalog_sha256,
+                }
+            )
+    missing_adapter_role_ids = sorted(set(registered) - adapter_role_ids)
+    success_nonces: dict[str, set[str]] = {subagent_id: set() for subagent_id in registered}
+    invalid_events: list[dict[str, str]] = []
+    consumed_challenges: set[str] = set()
+    ignored_reused_challenge_count = 0
+    for event in load_capability_events(run_dir):
+        if "_invalid_json" in event or event.get("kind") != "subagent":
+            continue
+        if validation_started_at and str(event.get("timestamp", "")) <= validation_started_at:
+            continue
+        evidence = str(event.get("evidence", ""))
+        if SUBAGENT_SMOKE_MARKER not in evidence:
+            continue
+        subagent_id = str(event.get("id", ""))
+        reason = ""
+        if subagent_id not in registered:
+            reason = "unknown_runtime_subagent"
+        elif str(event.get("status", "")).strip().lower() != "completed":
+            reason = "status_not_completed"
+        else:
+            marker_match = re.search(
+                rf"(?:^|;\s*){re.escape(SUBAGENT_SMOKE_MARKER)} id={re.escape(subagent_id)}(?: round=\d+)? nonce=([A-Za-z0-9._-]+)(?:;|$)",
+                evidence,
+            )
+            ordered_tokens = [token.strip() for token in evidence.split(";")]
+            tokens = set(ordered_tokens)
+            challenge_tokens = [token for token in ordered_tokens if token.startswith("adapter_challenge=")]
+            observed_challenge = challenge_tokens[0].partition("=")[2] if len(challenge_tokens) == 1 else ""
+            if not marker_match:
+                reason = "marker_or_role_id_mismatch"
+            elif "cleanup=completed" not in tokens:
+                reason = "missing_cleanup" if not any(token.startswith("cleanup=") for token in tokens) else "cleanup_not_completed"
+            elif "role_contract=passed" not in tokens:
+                reason = "missing_role_contract" if not any(token.startswith("role_contract=") for token in tokens) else "role_contract_not_passed"
+            elif not challenge_tokens:
+                reason = "missing_adapter_challenge"
+            elif len(challenge_tokens) != 1 or not observed_challenge:
+                reason = "duplicate_or_malformed_adapter_challenge"
+            elif observed_challenge not in adapter_challenges.get(subagent_id, set()):
+                reason = "adapter_challenge_mismatch"
+            elif observed_challenge in consumed_challenges:
+                ignored_reused_challenge_count += 1
+            else:
+                consumed_challenges.add(observed_challenge)
+                success_nonces[subagent_id].add(marker_match.group(1))
+        if reason:
+            invalid_events.append(
+                {
+                    "capability_event_id": str(event.get("capability_event_id", "")),
+                    "id": subagent_id,
+                    "reason": reason,
+                }
+            )
+
+    covered_role_ids = sorted(subagent_id for subagent_id, nonces in success_nonces.items() if nonces)
+    missing_role_ids = sorted(set(registered) - set(covered_role_ids))
+    success_counts = {subagent_id: len(success_nonces[subagent_id]) for subagent_id in sorted(registered)}
+    native_shortfalls = {
+        subagent_id: success_counts[subagent_id]
+        for subagent_id in sorted(native_ids)
+        if success_counts[subagent_id] < native_min_successes
+    }
+    catalog_empty = not registered
+    passed = (
+        not catalog_empty
+        and not snapshot_error
+        and not catalog_drift
+        and not missing_standard_roles
+        and not standard_type_mismatches
+        and not missing_adapter_role_ids
+        and not adapter_mismatches
+        and not missing_role_ids
+        and not native_shortfalls
+        and not invalid_events
+    )
+    marker_name = SUBAGENT_CATALOG_MARKER if passed else "SUBAGENT_CATALOG_FAIL"
+    marker = (
+        f"{marker_name} roles={len(covered_role_ids)}/{len(registered)} "
+        f"native_min={native_min_successes} invalid={len(invalid_events)}"
+    )
+    return {
+        "schema_version": "knowledgeos.verify-subagents.v1",
+        "status": "passed" if passed else "failed",
+        "subagent_catalog_marker": SUBAGENT_CATALOG_MARKER if passed else "",
+        "marker": marker,
+        "task_id": task_id,
+        "run_id": run_id,
+        "registered_role_count": len(registered),
+        "covered_role_count": len(covered_role_ids),
+        "registered_role_ids": sorted(registered),
+        "catalog_empty": catalog_empty,
+        "catalog_snapshot": str(snapshot_path),
+        "catalog_sha256": snapshot_sha256,
+        "validation_started_at": validation_started_at,
+        "catalog_snapshot_error": snapshot_error,
+        "catalog_drift": catalog_drift,
+        "current_role_ids": sorted(current_catalog),
+        "missing_standard_roles": missing_standard_roles,
+        "standard_type_mismatches": standard_type_mismatches,
+        "evidence_model": "parent_attested_runtime",
+        "host_runtime_verified": False,
+        "adapter_role_ids": sorted(adapter_role_ids),
+        "missing_adapter_role_ids": missing_adapter_role_ids,
+        "adapter_mismatches": adapter_mismatches,
+        "covered_role_ids": covered_role_ids,
+        "missing_role_ids": missing_role_ids,
+        "success_counts": success_counts,
+        "native_role_ids": sorted(native_ids),
+        "native_min_successes": native_min_successes,
+        "native_shortfalls": native_shortfalls,
+        "invalid_events": invalid_events,
+        "ignored_reused_challenge_count": ignored_reused_challenge_count,
+        "ledger": str(capability_events_path(run_dir)),
+    }
+
+
 def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     events = [event for event in load_capability_events(run_dir) if "_invalid_json" not in event]
@@ -4430,11 +4748,39 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
     ]
     agent_events = [event for event in invoked_events if str(event.get("kind", "")) in AGENT_CAPABILITY_KINDS]
     skipped_agent_events = [event for event in skipped_events if str(event.get("kind", "")) in AGENT_CAPABILITY_KINDS]
-    runtime_gap_events = [
+    unique_agent_keys = {(str(event.get("kind", "")), str(event.get("id", ""))) for event in agent_events}
+    unique_skipped_agent_keys = {(str(event.get("kind", "")), str(event.get("id", ""))) for event in skipped_agent_events}
+    observed_runtime_gap_events = [
         event
         for event in skipped_agent_events
         if str(event.get("status", "")).strip().lower() in RUNTIME_GAP_CAPABILITY_STATUSES
     ]
+    runtime_gap_events: list[dict[str, Any]] = []
+    resolved_runtime_gaps: list[dict[str, Any]] = []
+    consumed_recovery_event_ids: set[str] = set()
+    for gap_event in observed_runtime_gap_events:
+        gap_status = str(gap_event.get("status", "")).strip().lower().replace("-", "_")
+        if gap_status in {"timeout", "timed_out"}:
+            gap_status = "timed_out"
+        recovery = next(
+            (
+                event
+                for event in agent_events
+                if event.get("kind") == gap_event.get("kind")
+                and event.get("id") == gap_event.get("id")
+                and event.get("purpose") == gap_event.get("purpose")
+                and str(event.get("status", "")).strip().lower() == "completed"
+                and str(event.get("timestamp", "")) > str(gap_event.get("timestamp", ""))
+                and event.get("recovers_event_id") == gap_event.get("capability_event_id")
+                and str(event.get("capability_event_id", "")) not in consumed_recovery_event_ids
+            ),
+            None,
+        )
+        if recovery:
+            consumed_recovery_event_ids.add(str(recovery.get("capability_event_id", "")))
+            resolved_runtime_gaps.append({"gap": gap_event, "recovery": recovery})
+        else:
+            runtime_gap_events.append(gap_event)
     counts_by_kind: dict[str, int] = {kind: 0 for kind in sorted(CAPABILITY_EVENT_KINDS)}
     for event in invoked_events:
         kind = str(event.get("kind", "unknown")) or "unknown"
@@ -4500,7 +4846,7 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
         )
     if not gaps:
         gaps.append("none")
-    marker = f"AGENT_DISPATCH_OK agents={len(agent_events)} capabilities={len(invoked_events)} skipped_agents={len(skipped_agent_events)} run={run_id}"
+    marker = f"AGENT_DISPATCH_OK agents={len(unique_agent_keys)} capabilities={len(invoked_events)} skipped_agents={len(unique_skipped_agent_keys)} run={run_id}"
     report_path = run_dir / "dispatch-report.md"
     lines = [
         "# Full Capability Dispatch Report",
@@ -4513,9 +4859,9 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
         "",
         "Meaning: AGENT_DISPATCH_OK summarizes all recorded external and mounted capabilities, not only subagents.",
         "",
-        f"Agents Invoked: {len(agent_events)}",
+        f"Agents Invoked: {len(unique_agent_keys)} unique agents across {len(agent_events)} events",
         "",
-        f"Agents Skipped Or Gapped: {len(skipped_agent_events)}",
+        f"Agents Skipped Or Gapped: {len(unique_skipped_agent_keys)} unique agents across {len(skipped_agent_events)} events",
         "",
         f"Capabilities Invoked: {len(invoked_events)}",
         "",
@@ -4560,6 +4906,13 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
     lines.extend(["", "## Gaps", ""])
     for gap in gaps:
         lines.append(f"- {gap}")
+    lines.extend(["", "## Resolved Runtime Gaps", ""])
+    if resolved_runtime_gaps:
+        for item in resolved_runtime_gaps:
+            gap_event = item["gap"]
+            lines.append(f"- {gap_event.get('id', '')}: {gap_event.get('status', '')} -> completed")
+    else:
+        lines.append("- none")
     write_text(report_path, "\n".join(lines) + "\n")
     append_command_event(
         run_dir,
@@ -4567,20 +4920,26 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
         task_id,
         run_id,
         status="reported",
-        agent_count=len(agent_events),
+        agent_count=len(unique_agent_keys),
+        agent_event_count=len(agent_events),
         capability_count=len(invoked_events),
         skipped_count=len(skipped_events),
-        skipped_agent_count=len(skipped_agent_events),
+        skipped_agent_count=len(unique_skipped_agent_keys),
+        skipped_agent_event_count=len(skipped_agent_events),
         runtime_gap_count=len(runtime_gap_events),
+        resolved_runtime_gap_count=len(resolved_runtime_gaps),
     )
     return {
         "status": "reported",
         "dispatch_report_marker": "AGENT_DISPATCH_OK",
         "marker": marker,
         "full_capability_report": True,
-        "agent_count": len(agent_events),
-        "skipped_agent_count": len(skipped_agent_events),
+        "agent_count": len(unique_agent_keys),
+        "agent_event_count": len(agent_events),
+        "skipped_agent_count": len(unique_skipped_agent_keys),
+        "skipped_agent_event_count": len(skipped_agent_events),
         "runtime_gap_count": len(runtime_gap_events),
+        "resolved_runtime_gap_count": len(resolved_runtime_gaps),
         "capability_count": len(invoked_events),
         "skipped_count": len(skipped_events),
         "counts_by_kind": counts_by_kind,
@@ -4621,6 +4980,16 @@ def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict
                 "evidence": str(event.get("evidence", "")),
             }
             for event in runtime_gap_events
+        ],
+        "resolved_runtime_gaps": [
+            {
+                "id": str(item["gap"].get("id", "")),
+                "purpose": str(item["gap"].get("purpose", "")),
+                "status": str(item["gap"].get("status", "")),
+                "recovery_status": str(item["recovery"].get("status", "completed")),
+                "recovery_evidence": str(item["recovery"].get("evidence", "")),
+            }
+            for item in resolved_runtime_gaps
         ],
         "events": [
             {
@@ -7807,6 +8176,8 @@ def cmd_capability_event(args: argparse.Namespace) -> int:
             purpose=args.purpose,
             status=args.status,
             evidence=args.evidence,
+            invocation_id=args.invocation_id,
+            recovers_event_id=args.recovers_event_id,
         )
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
@@ -8422,6 +8793,38 @@ def cmd_subagent_adapter(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_verify_subagents(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = verify_subagent_catalog(
+            project_root,
+            args.task_id,
+            args.run_id,
+            native_min_successes=args.native_min_successes,
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
+        if result["catalog_empty"]:
+            print("catalog_empty: true")
+        if result["missing_adapter_role_ids"]:
+            print("missing_adapter_roles: " + ", ".join(result["missing_adapter_role_ids"]))
+        if result["adapter_mismatches"]:
+            print(f"adapter_mismatches: {len(result['adapter_mismatches'])}")
+        if result["missing_role_ids"]:
+            print("missing_roles: " + ", ".join(result["missing_role_ids"]))
+        if result["native_shortfalls"]:
+            print("native_shortfalls: " + ", ".join(f"{key}={value}" for key, value in result["native_shortfalls"].items()))
+        if result["invalid_events"]:
+            print(f"invalid_events: {len(result['invalid_events'])}")
+    return 0 if result.get("status") == "passed" else 2
+
+
 def cmd_workbench_state(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
@@ -8688,6 +9091,8 @@ def build_parser() -> argparse.ArgumentParser:
     capability_event_parser.add_argument("--purpose", required=True, help="public purpose for the capability call")
     capability_event_parser.add_argument("--status", default="completed")
     capability_event_parser.add_argument("--evidence", default="")
+    capability_event_parser.add_argument("--invocation-id", default="", help="host runtime invocation id when available")
+    capability_event_parser.add_argument("--recovers-event-id", default="", help="exact timed-out capability event this completion resolves")
     capability_event_parser.add_argument("--json", action="store_true")
     capability_event_parser.set_defaults(func=cmd_capability_event)
 
@@ -8955,6 +9360,14 @@ def build_parser() -> argparse.ArgumentParser:
     subagent_adapter.add_argument("--purpose", default="", help="short public purpose for the suggested capability-event")
     subagent_adapter.add_argument("--json", action="store_true")
     subagent_adapter.set_defaults(func=cmd_subagent_adapter)
+
+    verify_subagents = sub.add_parser("verify-subagents", help="verify challenge-bound parent attestations for an immutable runtime subagent catalog")
+    verify_subagents.add_argument("--project-root", required=True)
+    verify_subagents.add_argument("--task-id", required=True)
+    verify_subagents.add_argument("--run-id", required=True)
+    verify_subagents.add_argument("--native-min-successes", type=int, default=DEFAULT_NATIVE_SUBAGENT_SUCCESSES)
+    verify_subagents.add_argument("--json", action="store_true")
+    verify_subagents.set_defaults(func=cmd_verify_subagents)
 
     preview = sub.add_parser("workbench-preview", help="serve the read-only Workbench preview with live project state")
     preview.add_argument("--project-root", required=True)

@@ -2,6 +2,39 @@
 
 This file is the real-time construction log for the local KnowledgeOS build.
 
+## 2026-07-11 - Milestone Update: Verified Subagent Runtime Catalog
+
+Status: implemented and live-validated in KOS-T087
+
+Problem:
+
+- Minimal adapter checks could not prove that every registered role actually ran.
+- Repeated capability events could inflate visible agent counts without proving unique catalog coverage.
+- A fixed 120-second wait made substantive explorer work look failed even when a valid result arrived later.
+- Safety-policy `blocked` events were mixed with timeout and cleanup failures under `runtime_gaps`.
+
+Changes:
+
+- Added `verify-subagents` with immutable catalog snapshots, adapter challenges, unique-role/nonces, cleanup, role-contract, and native stability checks.
+- Added timeout recovery guidance to startup prompts and agent documentation.
+- Added a bounded-subagent role-prompt contract that prevents accidental recursive lifecycle and delegation inside specialist calls.
+- Added resolved runtime-gap reconciliation to `dispatch-report`.
+- Added single-use adapter challenges, mandatory standard-catalog baselines, fail-closed snapshot metadata, and one-to-one timeout recovery event links.
+- Added complete snapshot-integrity validation and explicit failed/cancelled runtime-gap classification.
+- Changed dispatch agent counts to unique agent ids while retaining raw event counts separately.
+- Added `docs/subagent-runtime-validation.md` and its composable HTML sidecar.
+
+Verification:
+
+- `SUBAGENT_CATALOG_OK roles=42/42 native_min=3 invalid=0`.
+- Three native Codex roles completed three serial smoke rounds each.
+- All 39 Maestro adapter roles completed one live role-contract smoke each.
+- Forty-eight catalog invocations completed with strict evidence; three additional diagnostic invocations isolated timeout behavior.
+- The substantive explorer review eventually completed and closed; a default control also exceeded 120 seconds and recovered after one interrupt, proving the issue was not explorer-specific.
+- A frozen-diff Maestro reviewer reproduced the recursive-dispatch trigger, confirming that parent-level lifecycle rules needed an explicit subagent boundary.
+- Active runtime gaps after reconciliation: zero.
+- The verifier explicitly reports `evidence_model=parent_attested_runtime` and `host_runtime_verified=false`; it does not overclaim independent access to Codex host tool logs.
+
 ## 2026-07-08 - Milestone Update: Runtime Subagents And Maestro Adapter
 
 Status: implemented in current branch
