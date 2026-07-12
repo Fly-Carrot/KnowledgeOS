@@ -44,7 +44,11 @@ Modules are invoked by task intent, route policy, or project profile.
 Current and planned modules include:
 
 - `spec`: durable user intent, context pack, plan, and drift checks;
+- `thread-plan`: chat-level natural-language plan history across multiple tasks and runs;
 - `capability`: dispatch policy, tool registry, and capability events;
+- `decision-graph`: public decision summaries, plan branches, abandoned routes, rollbacks, and decision-map HTML;
+- `mission-flow`: readable completion flow summaries and HTML sidecars for medium or larger tasks;
+- `html-sidecar`: presentation-only report rendering where provenance and safety are enforced but visual layout is project-selectable;
 - `archive`: cold storage for old or superseded project content;
 - `migration`: old-project reorganization plans;
 - `harness`: cross-project audit and repair;
@@ -61,6 +65,7 @@ The Workbench should read:
 - `.agent-os/tasks.yaml`;
 - `.agent-os/runs/`;
 - `.agent-os/specs/`;
+- `.agent-os/threads/`;
 - receipts and handoffs;
 - evidence lanes.
 
@@ -83,14 +88,14 @@ Recommended profiles:
 - `minimal`: kernel gates only;
 - `standard`: kernel plus context, plan, checkpoint, and capability visibility;
 - `strict`: standard plus stronger spec and release checks;
-- `research`: strict spec/context tracking and artifact discipline;
+- `research`: strict spec/context tracking, artifact discipline, and decision graph visibility;
 - `release`: strict verification, security review, and postflight requirements.
 
 Checkpoint reporting should remain mandatory for substantial managed work even when optional modules are disabled.
 
 ## Evidence Lanes
 
-KnowledgeOS separates evidence into four lanes.
+KnowledgeOS separates evidence into auditable lanes.
 
 ### Public Operational Trace
 
@@ -136,6 +141,45 @@ This lane records visible use of:
 
 Required dispatch stages must be recorded or explicitly skipped with a public reason.
 
+### Agent Dispatch Report
+
+```text
+File: .agent-os/runs/<RUN_ID>/dispatch-report.md
+Command: dispatch-report
+Markers: AGENT_DISPATCH_PLAN / AGENT_DISPATCH_OK
+```
+
+`dispatch-task` exposes the planned agent, subagent, orchestrator, and capability routing with `AGENT_DISPATCH_PLAN`.
+
+`dispatch-report` summarizes the actual `capability-event` ledger with `AGENT_DISPATCH_OK` as a Full Capability Dispatch Report. It covers all mounted or external capabilities, including agents invoked/skipped, MCP, skills, plugins/apps, browser/Chrome/GitHub/security connectors, scripts, shell, file reads, evidence files, and gaps. It is a visibility report, not a replacement for the capability ledger.
+
+### Decision Graph
+
+```text
+File: .agent-os/runs/<RUN_ID>/decision-events.ndjson
+Command: decision-event
+Marker: DECISION_OK
+Verifier: verify-decisions
+Verify Marker: DECISION_VERIFY_OK
+```
+
+This module lane records public, human-readable decision summaries: plan branches, selected routes, inserted steps, abandoned branches, rollbacks, superseded paths, deferred work, human decisions, risk tradeoffs, and final decisions. It is not hidden chain-of-thought.
+
+Project policy lives at `.agent-os/decision-policy.yaml`. Default strictness is `warn`; `enforce` blocks completion on invalid or missing decision evidence; `off` requires a downgrade reason.
+
+### Thread Plan Ledger
+
+```text
+File: .agent-os/threads/<THREAD_ID>/thread-plan.ndjson
+Command: thread-plan
+Marker: THREAD_PLAN_OK
+HTML: thread-plan render --format html
+```
+
+This module lane records a long-lived chat-window plan in natural language. It can show `Plan A / Plan B`, `Phase A / Phase B`, current progress, abandoned or delayed routes, and linked task runs. It is append-only and human-readable.
+
+Thread Plan Ledger is not a checkpoint and does not block completion. It complements `plan-task`: `plan-task` is the run-level execution plan; `thread-plan` is the multi-turn conversation map.
+
 ### Completion And Sync
 
 ```text
@@ -145,6 +189,39 @@ Marker: SYNC_OK
 ```
 
 This lane proves the task closed through the completion gate and postflight contract.
+
+### Completion Mission Flow
+
+```text
+File: .agent-os/runs/<RUN_ID>/mission-flow.md
+Command: flow-summary
+Marker: FLOW_OK
+HTML: render-html --kind mission-flow
+```
+
+This presentation lane gives humans a readable, layered flow at the end of medium, high, or complex tasks. It uses plain labels such as `Goal`, `Health Check`, `Task & Plan`, `Safe Writes`, `Work Done`, `Tools Used`, `Proof`, `Decisions`, and `Finish`.
+
+Mission Flow is not kernel evidence. It summarizes existing evidence lanes and should remain visually clear instead of exposing raw internal terminology.
+
+### HTML Sidecars
+
+```text
+Command: render-html
+Modes: default / minimal / bare / fragment
+```
+
+HTML sidecars are presentation artifacts. The source of truth remains Markdown, YAML, and NDJSON.
+
+KnowledgeOS enforces only the evidence metadata contract:
+
+- source path;
+- source SHA-256;
+- generated time;
+- kind and run/thread/spec association when available;
+- `HTML is presentation, not source of truth.`;
+- no remote scripts, remote fonts, or CDN dependencies by default.
+
+KnowledgeOS does not enforce a single visual language. Projects and apps may choose the `default`, `minimal`, `bare`, or `fragment` presentation mode as long as the evidence metadata contract remains intact.
 
 ## Full Task Chain
 
@@ -156,6 +233,7 @@ User Intent
 -> Doctor Gate
 -> Task Intake
 -> Spec Alignment
+-> Thread Plan
 -> Route Guard
 -> Dispatch Plan
 -> Write Guard
@@ -164,14 +242,16 @@ User Intent
 -> Plan Task
 -> Execution
 -> Capability Visibility
+-> Decision Graph
 -> Phase Checkpoints
 -> Eval
 -> Verify
 -> Complete
 -> Sync
+-> Mission Flow
 ```
 
-`trace-step` explains the operational path. `phase-task` proves the lifecycle checkpoints. `capability-event` proves tool and agent visibility. `complete-task` proves closure and sync.
+`trace-step` explains the operational path. `phase-task` proves the lifecycle checkpoints. `capability-event` proves tool and agent visibility. `decision-event` explains public decision changes. `thread-plan` preserves the long-lived natural-language plan across the chat window. `complete-task` proves closure and sync. `flow-summary` turns one run into a readable end-of-task map for humans.
 
 ## Doctor And Repair Tools
 

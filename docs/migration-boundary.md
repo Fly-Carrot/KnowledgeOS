@@ -20,6 +20,20 @@ The local track lives under `.knowledgeos-local/` and can reference the current 
 
 This track is for migration planning only. It should not be published as part of the clean KnowledgeOS release.
 
+For runtime migrations that must touch exact machine-local targets outside the repo, keep the allowlist in `.knowledgeos-local/write-policy.local.yaml`.
+
+That file is a local overlay, not part of the public control plane. It may contain sections such as:
+
+- `external_controlled`
+- `external_forbidden_without_human_gate`
+- `external_require_receipt_for`
+
+External writes remain denied by default. They become legal only when all three conditions are true:
+
+1. the path is listed in the local overlay;
+2. the active task route explicitly sets `allow_external_controlled: true`;
+3. normal KnowledgeOS route, run, eval, and lifecycle evidence still complete.
+
 ## Reorganization Boundary
 
 `migrate-legacy-project` is the safe entry point for old project folders. It creates a reviewable plan first and only moves confidently classified top-level entries with `--apply`.

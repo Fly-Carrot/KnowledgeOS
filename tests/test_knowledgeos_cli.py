@@ -86,6 +86,54 @@ class KnowledgeOSCliTests(unittest.TestCase):
             summary,
         )
 
+    def seed_subagent_catalog(
+        self,
+        project: Path,
+        task_id: str,
+        run_id: str,
+        *,
+        missing: set[str] | None = None,
+        native_attempts: int = 3,
+        reuse_native_challenge: bool = False,
+    ) -> list[str]:
+        missing = missing or set()
+        registered = [
+            entry["id"]
+            for entry in cli.load_tool_registry(project)
+            if entry.get("kind") == "subagent"
+            and entry.get("status") in cli.ACTIVE_TOOL_STATUSES
+            and cli.is_runtime_callable_subagent(entry)
+        ]
+        native_ids = {item["id"] for item in cli.CODEX_NATIVE_SUBAGENTS}
+        for subagent_id in registered:
+            if subagent_id in missing:
+                cli.build_subagent_adapter(project, subagent_id, task_id=task_id, run_id=run_id, purpose="Strict catalog smoke.")
+                continue
+            attempts = native_attempts if subagent_id in native_ids else 1
+            shared_adapter = (
+                cli.build_subagent_adapter(project, subagent_id, task_id=task_id, run_id=run_id, purpose="Strict catalog smoke.")
+                if reuse_native_challenge and subagent_id in native_ids
+                else None
+            )
+            for attempt in range(1, attempts + 1):
+                adapter = shared_adapter or cli.build_subagent_adapter(
+                    project, subagent_id, task_id=task_id, run_id=run_id, purpose="Strict catalog smoke."
+                )
+                nonce = f"TEST-{subagent_id}-{attempt}"
+                cli.record_capability_event(
+                    project,
+                    task_id,
+                    run_id,
+                    kind="subagent",
+                    capability_id=subagent_id,
+                    purpose="Strict catalog smoke.",
+                    evidence=(
+                        f"SUBAGENT_SMOKE_OK id={subagent_id} nonce={nonce}; cleanup=completed; "
+                        f"role_contract=passed; adapter_challenge={adapter['runtime_challenge']}"
+                    ),
+                )
+        return sorted(registered)
+
     def test_doctor_public_root_passes(self):
         result = self.run_cli("doctor", "--root", str(ROOT), "--json")
         payload = json.loads(result.stdout)
@@ -163,7 +211,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
             tmp_root = Path(tmp)
             project = tmp_root / "LegacyProject"
             project.mkdir()
-            old_governance = tmp_root / "Antigravity_Skills" / "global-agent-fabric"
+            old_governance = tmp_root / "Legacy_PreOS_Root" / "global-agent-fabric"
             desired_governance = tmp_root / "KnowledgeOS" / "global-agent-fabric"
             desired_capability = tmp_root / "KnowledgeOS" / "capability-layer"
             self.run_cli(
@@ -193,6 +241,11 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 "\n".join(line for line in write_policy.read_text(encoding="utf-8").splitlines() if "archive/**" not in line) + "\n",
                 encoding="utf-8",
             )
+            registry_path = project / ".agent-os" / "tool-registry.yaml"
+            registry_text = registry_path.read_text(encoding="utf-8")
+            for subagent_id in ["codex-default", "codex-explorer", "codex-worker"]:
+                registry_text = re.sub(rf"\n  - id: {subagent_id}\n(?:    .*\n)*", "\n", registry_text)
+            registry_path.write_text(registry_text, encoding="utf-8")
 
             dry_run = self.run_cli(
                 "harness-audit",
@@ -212,11 +265,12 @@ class KnowledgeOSCliTests(unittest.TestCase):
             issues = dry_payload["projects"][0]["issues"]
             desired_governance = desired_governance.resolve()
             desired_capability = desired_capability.resolve()
-            self.assertIn("legacy_antigravity_governance_root", issues)
+            self.assertIn("legacy_preos_governance_root", issues)
             self.assertIn("postflight_hook_missing_or_not_executable", issues)
             self.assertIn("missing_control_file:.agent-os/specs.yaml", issues)
             self.assertIn("workflow_router_lifecycle_drift", issues)
             self.assertIn("missing_archive_write_guard", issues)
+            self.assertIn("missing_runtime_native_subagents", issues)
             self.assertFalse((desired_governance / "hooks" / "after-task.sh").exists())
             self.assertFalse((project / ".agent-os" / "specs.yaml").exists())
 
@@ -250,6 +304,10 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("verify-lifecycle --project-root .", upgraded_router)
             self.assertIn("verify-effects --project-root .", upgraded_router)
             self.assertIn("archive/**", write_policy.read_text(encoding="utf-8"))
+            registry_text = (project / ".agent-os" / "tool-registry.yaml").read_text(encoding="utf-8")
+            self.assertIn("id: codex-default", registry_text)
+            self.assertIn("id: codex-explorer", registry_text)
+            self.assertIn("id: codex-worker", registry_text)
             doctor = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
             self.assertIn("status: ok", doctor.stdout)
 
@@ -528,12 +586,345 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertEqual(adapters["mock"]["execution"], "not_started")
         self.assertIn("gemini-cli", adapters)
         self.assertIn("codex-cli", adapters)
+        runtime_subagents = {item["id"]: item for item in payload["runtime_subagents"]}
+        self.assertIn("codex-default", runtime_subagents)
+        self.assertIn("codex-explorer", runtime_subagents)
+        self.assertIn("codex-worker", runtime_subagents)
+        self.assertEqual(runtime_subagents["maestro-architect"]["runtime_tool"], "multi_agent_v1.spawn_agent")
+        self.assertEqual(runtime_subagents["maestro-architect"]["runtime_agent_type"], "explorer")
         self.assertNotIn(str(ROOT), result.stdout)
         self.assertNotRegex(result.stdout, r"/usr/|/opt/|/Users/")
 
         plain = self.run_cli("runtime-adapters", "--project-root", str(ROOT))
         self.assertIn("default_runtime: mock", plain.stdout)
         self.assertIn("real_cli_execution: disabled_until_adapter_phase", plain.stdout)
+        self.assertIn("runtime_subagents:", plain.stdout)
+
+    def test_subagent_adapter_resolves_maestro_role_prompt(self):
+        result = self.run_cli("subagent-adapter", "--project-root", str(ROOT), "--id", "maestro-architect", "--json")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["subagent_adapter_marker"], "SUBAGENT_ADAPTER_OK")
+        self.assertEqual(payload["runtime_tool"], "multi_agent_v1.spawn_agent")
+        self.assertEqual(payload["runtime_agent_type"], "explorer")
+        self.assertIn("Maestro Architect", payload["role_prompt"])
+        self.assertIn("bounded delegated subagent", payload["role_prompt"])
+        self.assertIn("Do not create or reopen KnowledgeOS tasks/specs", payload["role_prompt"])
+        self.assertEqual(payload["runtime_challenge"], "")
+        self.assertEqual(payload["evidence_model"], "parent_attested_runtime")
+        self.assertFalse(payload["host_runtime_verified"])
+        self.assertIn("--kind subagent --id maestro-architect", payload["capability_event_suggestion"])
+        self.assertIn("SUBAGENT_ADAPTER_OK", payload["marker"])
+
+    def test_verify_subagents_accepts_unique_catalog_and_native_stability(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            registered = self.seed_subagent_catalog(project, "T001", run_id)
+
+            result = self.run_cli(
+                "verify-subagents",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+            )
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "passed")
+            self.assertEqual(payload["subagent_catalog_marker"], "SUBAGENT_CATALOG_OK")
+            self.assertEqual(payload["registered_role_ids"], registered)
+            self.assertEqual(payload["covered_role_count"], len(registered))
+            self.assertEqual(payload["missing_role_ids"], [])
+            self.assertFalse(payload["catalog_drift"])
+            self.assertEqual(payload["evidence_model"], "parent_attested_runtime")
+            self.assertFalse(payload["host_runtime_verified"])
+            self.assertTrue(all(payload["success_counts"][subagent_id] == 3 for subagent_id in payload["native_role_ids"]))
+
+            plain = self.run_cli(
+                "verify-subagents",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+            )
+            self.assertIn("SUBAGENT_CATALOG_OK", plain.stdout)
+
+    def test_verify_subagents_rejects_duplicates_missing_roles_and_native_shortfalls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            registered = [
+                entry["id"]
+                for entry in cli.load_tool_registry(project)
+                if entry.get("kind") == "subagent"
+                and entry.get("status") in cli.ACTIVE_TOOL_STATUSES
+                and cli.is_runtime_callable_subagent(entry)
+            ]
+            missing_id = sorted(registered)[-1]
+            self.seed_subagent_catalog(project, "T001", run_id, missing={missing_id}, native_attempts=1)
+            duplicate_id = sorted(set(registered) - {missing_id})[0]
+            for attempt in range(2, 6):
+                cli.record_capability_event(
+                    project,
+                    "T001",
+                    run_id,
+                    kind="subagent",
+                    capability_id=duplicate_id,
+                    purpose="Duplicate catalog smoke.",
+                    evidence=f"SUBAGENT_SMOKE_OK id={duplicate_id} nonce=DUP-{attempt}; cleanup=completed; role_contract=passed",
+                )
+
+            result = self.run_cli(
+                "verify-subagents",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "failed")
+            self.assertEqual(payload["subagent_catalog_marker"], "")
+            self.assertIn(missing_id, payload["missing_role_ids"])
+            self.assertTrue(payload["native_shortfalls"])
+            self.assertNotIn("SUBAGENT_CATALOG_OK", payload["marker"])
+
+    def test_verify_subagents_rejects_invalid_strict_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.seed_subagent_catalog(project, "T001", run_id)
+            cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="subagent",
+                capability_id="unknown-runtime-agent",
+                purpose="Invalid strict catalog evidence.",
+                evidence="SUBAGENT_SMOKE_OK id=unknown-runtime-agent nonce=UNKNOWN-1; cleanup=completed; role_contract=passed",
+            )
+
+            result = self.run_cli(
+                "verify-subagents",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["invalid_events"][0]["id"], "unknown-runtime-agent")
+            self.assertEqual(payload["invalid_events"][0]["reason"], "unknown_runtime_subagent")
+
+    def test_verify_subagents_rejects_malformed_marker_and_unbound_attestation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.seed_subagent_catalog(project, "T001", run_id)
+            cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="subagent",
+                capability_id="codex-explorer",
+                purpose="Malformed strict evidence.",
+                evidence="SUBAGENT_SMOKE_OK id=codex-explorer nonce=MALFORMED",
+            )
+
+            result = self.run_cli(
+                "verify-subagents", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json", check=False
+            )
+            self.assertEqual(result.returncode, 2)
+            payload = json.loads(result.stdout)
+            self.assertIn("missing_cleanup", {item["reason"] for item in payload["invalid_events"]})
+
+    def test_verify_subagents_locks_catalog_snapshot_and_native_floor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            registered = self.seed_subagent_catalog(project, "T001", run_id)
+
+            lowered = self.run_cli(
+                "verify-subagents", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id,
+                "--native-min-successes", "1", "--json", check=False,
+            )
+            self.assertEqual(lowered.returncode, 1)
+            self.assertIn("cannot be lower", lowered.stderr)
+
+            registry = project / ".agent-os" / "tool-registry.yaml"
+            registry_text = registry.read_text(encoding="utf-8")
+            entry_pattern = rf"(?ms)(^  - id: {re.escape(registered[-1])}\n.*?^    status: )\w+"
+            registry_text, replacements = re.subn(entry_pattern, r"\1disabled", registry_text, count=1)
+            self.assertEqual(replacements, 1)
+            registry.write_text(registry_text, encoding="utf-8")
+            drifted = self.run_cli(
+                "verify-subagents", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json", check=False
+            )
+            self.assertEqual(drifted.returncode, 2)
+            self.assertTrue(json.loads(drifted.stdout)["catalog_drift"])
+
+    def test_verify_subagents_requires_distinct_adapter_challenge_per_native_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.seed_subagent_catalog(project, "T001", run_id, reuse_native_challenge=True)
+
+            result = self.run_cli(
+                "verify-subagents", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json", check=False
+            )
+            self.assertEqual(result.returncode, 2)
+            payload = json.loads(result.stdout)
+            self.assertEqual(set(payload["native_shortfalls"].values()), {1})
+            self.assertGreaterEqual(payload["ignored_reused_challenge_count"], 6)
+
+    def test_verify_subagents_rejects_pre_snapshot_native_disable_and_incomplete_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            registry = project / ".agent-os" / "tool-registry.yaml"
+            text = registry.read_text(encoding="utf-8")
+            text, replacements = re.subn(
+                r"(?ms)(^  - id: codex-explorer\n.*?^    status: )\w+", r"\1disabled", text, count=1
+            )
+            self.assertEqual(replacements, 1)
+            registry.write_text(text, encoding="utf-8")
+            cli.build_subagent_adapter(project, "codex-default", task_id="T001", run_id=run_id)
+
+            weakened = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertEqual(weakened["status"], "failed")
+            self.assertTrue(weakened["catalog_drift"])
+
+            snapshot_path = project / ".agent-os" / "runs" / run_id / "subagent-catalog.json"
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            snapshot.pop("catalog_sha256")
+            snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+            incomplete = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertEqual(incomplete["catalog_snapshot_error"], "catalog_snapshot_missing_hash")
+
+
+    def test_verify_subagents_rejects_tampered_snapshot_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.seed_subagent_catalog(project, "T001", run_id)
+            snapshot_path = project / ".agent-os" / "runs" / run_id / "subagent-catalog.json"
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            snapshot.pop("evidence_model")
+            snapshot["captured_at"] = "0"
+            snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+            malformed = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertNotEqual(malformed["catalog_snapshot_error"], "")
+
+    def test_verify_subagents_rejects_duplicate_challenge_tokens(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.seed_subagent_catalog(project, "T001", run_id)
+            adapter = cli.build_subagent_adapter(project, "codex-explorer", task_id="T001", run_id=run_id)
+            cli.record_capability_event(
+                project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose="Ambiguous challenge.",
+                evidence=(
+                    "SUBAGENT_SMOKE_OK id=codex-explorer nonce=AMBIGUOUS; cleanup=completed; role_contract=passed; "
+                    f"adapter_challenge={adapter['runtime_challenge']}; adapter_challenge=other"
+                ),
+            )
+            payload = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertIn("duplicate_or_malformed_adapter_challenge", {item["reason"] for item in payload["invalid_events"]})
+
+    def test_verify_subagents_rejects_empty_catalog_and_missing_adapter_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+
+            with patch.object(cli, "load_tool_registry", return_value=[]):
+                empty = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertEqual(empty["status"], "failed")
+            self.assertTrue(empty["catalog_empty"])
+
+            registered = [
+                entry["id"]
+                for entry in cli.load_tool_registry(project)
+                if entry.get("kind") == "subagent"
+                and entry.get("status") in cli.ACTIVE_TOOL_STATUSES
+                and cli.is_runtime_callable_subagent(entry)
+            ]
+            cli.ensure_subagent_catalog_snapshot(
+                project / ".agent-os" / "runs" / run_id,
+                "T001",
+                run_id,
+                cli.active_runtime_subagent_catalog(project),
+            )
+            native_ids = {item["id"] for item in cli.CODEX_NATIVE_SUBAGENTS}
+            for subagent_id in registered:
+                attempts = 3 if subagent_id in native_ids else 1
+                for attempt in range(1, attempts + 1):
+                    cli.record_capability_event(
+                        project,
+                        "T001",
+                        run_id,
+                        kind="subagent",
+                        capability_id=subagent_id,
+                        purpose="Strict smoke without adapter evidence.",
+                        evidence=f"SUBAGENT_SMOKE_OK id={subagent_id} nonce=NO-ADAPTER-{attempt}; cleanup=completed; role_contract=passed",
+                    )
+            missing_adapter = cli.verify_subagent_catalog(project, "T001", run_id)
+            self.assertEqual(missing_adapter["status"], "failed")
+            self.assertEqual(missing_adapter["missing_adapter_role_ids"], sorted(registered))
+
+    def test_init_project_includes_runtime_native_and_maestro_adapters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            result = self.run_cli("tool-registry", "--project-root", str(project), "--json")
+            payload = json.loads(result.stdout)
+            entries = {item["id"]: item for item in payload["entries"]}
+            for subagent_id in ["codex-default", "codex-explorer", "codex-worker", "maestro-architect"]:
+                self.assertIn(subagent_id, entries)
+                self.assertEqual(entries[subagent_id]["runtime_tool"], "multi_agent_v1.spawn_agent")
+                self.assertEqual(entries[subagent_id]["execution_mode"], "ask")
 
     def test_init_project_preserves_existing_agents_md(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -816,6 +1207,138 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 self.assertEqual(guarded.returncode, 2)
                 guarded_payload = json.loads(guarded.stdout)
                 self.assertEqual(guarded_payload["decision"], "human_gate_required")
+
+    def test_check_route_write_denies_external_paths_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+
+            external_target = str(Path.home() / ".local" / "bin" / "agy")
+            blocked = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                external_target,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(blocked.returncode, 2)
+            payload = json.loads(blocked.stdout)
+            self.assertEqual(payload["decision"], "deny")
+            self.assertFalse(payload["inside_project"])
+
+    def test_check_route_write_allows_external_paths_only_with_local_overlay_and_route_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+
+            tasks_path = project / ".agent-os" / "tasks.yaml"
+            tasks_path.write_text(
+                tasks_path.read_text(encoding="utf-8").replace("type: initialization", "type: migration_task", 1),
+                encoding="utf-8",
+            )
+
+            router_path = project / ".agent-os" / "workflows" / "router.yaml"
+            router_path.write_text(
+                router_path.read_text(encoding="utf-8")
+                + "\n"
+                + "  migration_task:\n"
+                + "    route_order:\n"
+                + "      - doctor --project-root .\n"
+                + "      - route-task --project-root . --task-id <task-id>\n"
+                + "      - check-route-write --project-root . --task-id <task-id> --path <planned-path>\n"
+                + "    eval_profile: migration_task\n"
+                + "    human_gate: explicit_approval\n"
+                + "    allow_external_controlled: true\n"
+                + "    allowed_outputs:\n"
+                + "      - .knowledgeos-local/\n",
+                encoding="utf-8",
+            )
+
+            local_policy = project / ".knowledgeos-local" / "write-policy.local.yaml"
+            local_policy.parent.mkdir(parents=True, exist_ok=True)
+            external_target = str(Path.home() / ".local" / "bin" / "agy")
+            local_policy.write_text(
+                "external_controlled:\n"
+                f"  - {external_target}\n"
+                "external_require_receipt_for:\n"
+                f"  - {external_target}\n",
+                encoding="utf-8",
+            )
+
+            allowed = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                external_target,
+                "--json",
+            )
+            payload = json.loads(allowed.stdout)
+            self.assertEqual(payload["decision"], "allow")
+            self.assertEqual(payload["route_status"], "allowed_by_external_route")
+            self.assertFalse(payload["inside_project"])
+            self.assertTrue(payload["receipt_required"])
+
+    def test_check_route_write_blocks_external_paths_when_route_lacks_external_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+
+            tasks_path = project / ".agent-os" / "tasks.yaml"
+            tasks_path.write_text(
+                tasks_path.read_text(encoding="utf-8").replace("type: initialization", "type: migration_task", 1),
+                encoding="utf-8",
+            )
+
+            router_path = project / ".agent-os" / "workflows" / "router.yaml"
+            router_path.write_text(
+                router_path.read_text(encoding="utf-8")
+                + "\n"
+                + "  migration_task:\n"
+                + "    route_order:\n"
+                + "      - doctor --project-root .\n"
+                + "      - route-task --project-root . --task-id <task-id>\n"
+                + "      - check-route-write --project-root . --task-id <task-id> --path <planned-path>\n"
+                + "    eval_profile: migration_task\n"
+                + "    human_gate: explicit_approval\n"
+                + "    allowed_outputs:\n"
+                + "      - .knowledgeos-local/\n",
+                encoding="utf-8",
+            )
+
+            local_policy = project / ".knowledgeos-local" / "write-policy.local.yaml"
+            local_policy.parent.mkdir(parents=True, exist_ok=True)
+            external_target = str(Path.home() / ".local" / "bin" / "agy")
+            local_policy.write_text(
+                "external_controlled:\n"
+                f"  - {external_target}\n",
+                encoding="utf-8",
+            )
+
+            blocked = self.run_cli(
+                "check-route-write",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--path",
+                external_target,
+                "--json",
+                check=False,
+            )
+            self.assertEqual(blocked.returncode, 2)
+            payload = json.loads(blocked.stdout)
+            self.assertEqual(payload["decision"], "route_output_denied")
+            self.assertIn("does not allow external controlled writes", payload["reason"])
 
     def test_archive_management_route_allows_archive_root_check(self):
         result = self.run_cli(
@@ -1209,9 +1732,14 @@ class KnowledgeOSCliTests(unittest.TestCase):
             payload = json.loads(completed.stdout)
             self.assertEqual(payload["status"], "completed")
             self.assertEqual(payload["sync_status"], "PENDING")
+            self.assertEqual(payload["flow_marker"], "FLOW_OK")
+            self.assertIn("Goal:", payload["flow_mermaid"])
+            self.assertIn("Health check:", payload["flow_mermaid"])
+            self.assertTrue((run_dir / "mission-flow.md").exists())
             self.assertIn("status: completed", (run_dir / "run.yaml").read_text(encoding="utf-8"))
             self.assertIn("status: completed", (project / ".agent-os" / "tasks.yaml").read_text(encoding="utf-8"))
             self.assertIn("Guarded task complete", (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8"))
+            self.assertIn("Mission Flow Marker: FLOW_OK", (run_dir / "receipt.md").read_text(encoding="utf-8"))
 
     def test_complete_task_requires_lifecycle_phases(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1688,6 +2216,409 @@ class KnowledgeOSCliTests(unittest.TestCase):
             payload = json.loads(as_json.stdout)
             self.assertEqual(payload["trace_marker"], "TRACE_OK")
             self.assertIn("TRACE_OK step=route_guard", payload["marker"])
+
+    def test_decision_event_records_queryable_public_decision_tree_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+
+            root = self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "branch_opened",
+                "--status",
+                "planned",
+                "--title",
+                "Compare analysis paths",
+                "--summary",
+                "Open alternative analysis routes before execution.",
+                "--reason",
+                "Research tasks can branch before a stable plan is chosen.",
+                "--option",
+                "full rerun",
+                "--option",
+                "targeted rerun",
+                "--evidence",
+                "user request",
+                "--json",
+            )
+            root_payload = json.loads(root.stdout)
+            self.assertEqual(root_payload["decision_marker"], "DECISION_OK")
+            self.assertTrue(root_payload["decision_id"].startswith("DEC-"))
+
+            child = self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--parent-id",
+                root_payload["decision_id"],
+                "--kind",
+                "branch_selected",
+                "--status",
+                "selected",
+                "--title",
+                "Use targeted rerun",
+                "--summary",
+                "Select the smaller rerun path for faster validation.",
+                "--reason",
+                "The targeted path proves the changed artifact without repeating expensive work.",
+                "--chosen",
+                "targeted rerun",
+                "--evidence",
+                "plan review",
+                "--json",
+            )
+            child_payload = json.loads(child.stdout)
+            self.assertEqual(child_payload["record"]["parent_id"], root_payload["decision_id"])
+
+            queried = self.run_cli(
+                "decision-query",
+                "--project-root",
+                str(project),
+                "--run-id",
+                run_id,
+                "--parent-id",
+                root_payload["decision_id"],
+                "--json",
+            )
+            query_payload = json.loads(queried.stdout)
+            self.assertEqual(query_payload["count"], 1)
+            self.assertEqual(query_payload["events"][0]["decision_id"], child_payload["decision_id"])
+
+            run_dir = project / ".agent-os" / "runs" / run_id
+            self.assertIn('"event_type": "decision-event"', (run_dir / "command-events.ndjson").read_text(encoding="utf-8"))
+            self.assertIn('"kind": "branch_selected"', (run_dir / "decision-events.ndjson").read_text(encoding="utf-8"))
+
+    def test_thread_plan_ledger_is_chat_level_append_only_and_readable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+
+            started = self.run_cli(
+                "thread-plan",
+                "start",
+                "--project-root",
+                str(project),
+                "--title",
+                "长期维护鸟类声景基金申请计划",
+                "--spec-id",
+                "SPEC-TEST",
+                "--json",
+            )
+            start_payload = json.loads(started.stdout)
+            self.assertEqual(start_payload["thread_plan_marker"], "THREAD_PLAN_OK")
+            thread_id = start_payload["thread_id"]
+            thread_dir = project / ".agent-os" / "threads" / thread_id
+            ledger = thread_dir / "thread-plan.ndjson"
+            current = json.loads((project / ".agent-os" / "threads" / "current.json").read_text(encoding="utf-8"))
+            self.assertEqual(current["thread_id"], thread_id)
+            first_lines = ledger.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(first_lines), 1)
+            self.assertIn("总体计划", first_lines[0])
+
+            self.run_cli(
+                "thread-plan",
+                "append",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--kind",
+                "branch",
+                "--text",
+                "Plan A：先稳定 OS 计划记录，再做可视化；Plan B：直接做复杂 dashboard，暂缓。",
+            )
+            self.run_cli(
+                "thread-plan",
+                "append",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--kind",
+                "phase",
+                "--text",
+                "Phase A：把聊天级计划记录清楚；Phase B：再把多个任务串起来。",
+            )
+            after_lines = ledger.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(after_lines[0], first_lines[0])
+            self.assertEqual(len(after_lines), 3)
+
+            run = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(run.stdout)["run_id"]
+            linked = self.run_cli(
+                "thread-plan",
+                "link-run",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--json",
+            )
+            self.assertEqual(json.loads(linked.stdout)["status"], "linked")
+
+            current_result = self.run_cli("thread-plan", "current", "--project-root", str(project), "--json")
+            self.assertEqual(json.loads(current_result.stdout)["current"]["thread_id"], thread_id)
+
+            markdown = self.run_cli(
+                "thread-plan",
+                "render",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--format",
+                "markdown",
+                "--json",
+            )
+            md_payload = json.loads(markdown.stdout)
+            md_text = Path(md_payload["output"]).read_text(encoding="utf-8")
+            self.assertIn("Plan A / Plan B", md_text)
+            self.assertIn("Phase A / Phase B", md_text)
+            self.assertIn("当前工作线", md_text)
+            self.assertIn(run_id, md_text)
+
+            mermaid = self.run_cli(
+                "thread-plan",
+                "render",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--format",
+                "mermaid",
+            )
+            self.assertIn("THREAD_PLAN_OK action=render", mermaid.stdout)
+            self.assertIn("flowchart LR", mermaid.stdout)
+            self.assertIn("Plan A", mermaid.stdout)
+
+            html = self.run_cli(
+                "thread-plan",
+                "render",
+                "--project-root",
+                str(project),
+                "--thread-id",
+                thread_id,
+                "--format",
+                "html",
+                "--json",
+            )
+            html_payload = json.loads(html.stdout)
+            html_text = Path(html_payload["output"]).read_text(encoding="utf-8")
+            manifest = json.loads(Path(html_payload["manifest"]).read_text(encoding="utf-8"))
+            source_sha = hashlib.sha256(ledger.read_bytes()).hexdigest()
+            self.assertEqual(manifest["kind"], "thread-plan")
+            self.assertEqual(manifest["source_sha256"], source_sha)
+            self.assertIn(source_sha, html_text)
+            self.assertIn("HTML is presentation, not source of truth.", html_text)
+            self.assertEqual(html_text.lower().count("<h1"), 2)
+            self.assertNotIn("<script", html_text.lower())
+            self.assertNotIn("https://", html_text)
+
+            old_lines = ledger.read_text(encoding="utf-8").splitlines()
+            second = self.run_cli(
+                "thread-plan",
+                "start",
+                "--project-root",
+                str(project),
+                "--title",
+                "另一个聊天计划",
+                "--json",
+            )
+            second_thread_id = json.loads(second.stdout)["thread_id"]
+            self.assertNotEqual(second_thread_id, thread_id)
+            self.assertEqual(ledger.read_text(encoding="utf-8").splitlines(), old_lines)
+            second_current = json.loads((project / ".agent-os" / "threads" / "current.json").read_text(encoding="utf-8"))
+            self.assertEqual(second_current["thread_id"], second_thread_id)
+
+    def test_verify_decisions_detects_orphans_and_requires_explanations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+
+            invalid = self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "branch_abandoned",
+                "--status",
+                "abandoned",
+                "--title",
+                "Abandon unexplained path",
+                "--summary",
+                "This should fail because reason is required.",
+                "--evidence",
+                "test",
+                check=False,
+            )
+            self.assertEqual(invalid.returncode, 1)
+            self.assertIn("--reason is required", invalid.stderr)
+
+            valid = self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "final_decision",
+                "--status",
+                "executed",
+                "--title",
+                "Finish linear path",
+                "--summary",
+                "Record a simple final decision.",
+                "--reason",
+                "No branch was needed.",
+                "--evidence",
+                "test",
+                "--json",
+            )
+            self.assertIn("DECISION_OK", json.loads(valid.stdout)["marker"])
+            passed = self.run_cli("verify-decisions", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            self.assertEqual(json.loads(passed.stdout)["status"], "passed")
+
+            run_dir = project / ".agent-os" / "runs" / run_id
+            forged = {
+                "decision_id": "DEC-ORPHAN",
+                "parent_id": "DEC-MISSING",
+                "task_id": "T001",
+                "run_id": run_id,
+                "kind": "branch_selected",
+                "status": "selected",
+                "title": "Forged orphan",
+                "summary": "This node has no parent.",
+                "reason": "test",
+                "options": [],
+                "chosen": "",
+                "evidence": "manual write",
+                "timestamp": "2026-05-29T00:00:00+00:00",
+            }
+            with (run_dir / "decision-events.ndjson").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(forged, ensure_ascii=False, sort_keys=True) + "\n")
+
+            failed = self.run_cli("verify-decisions", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json", check=False)
+            self.assertEqual(failed.returncode, 2)
+            self.assertIn("decision_orphan_parent", failed.stdout)
+
+    def test_complete_task_enforces_decision_verification_when_policy_enforces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            created = self.run_cli(
+                "create-task",
+                "--project-root",
+                str(project),
+                "--title",
+                "Decision gated completion",
+                "--type",
+                "report_task",
+                "--output",
+                "docs/report.md",
+                "--acceptance",
+                "report exists",
+                "--json",
+            )
+            task_id = json.loads(created.stdout)["task_id"]
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", task_id, "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.log_required_phases(project, task_id, run_id)
+            self.write_plan_context(project, task_id, run_id)
+            report = project / "docs" / "report.md"
+            report.parent.mkdir()
+            report.write_text("report\n", encoding="utf-8")
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id)
+            self.run_cli("artifact-assert", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id, "--kind", "file_exists", "--path", "docs/report.md")
+            (project / ".agent-os" / "decision-policy.yaml").write_text(
+                "decision_policy:\n  strictness: enforce\n",
+                encoding="utf-8",
+            )
+
+            blocked = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--summary",
+                "Should fail before decision proof.",
+                "--allow-pending-postflight",
+                "temporary project",
+                check=False,
+            )
+            self.assertEqual(blocked.returncode, 1)
+            self.assertIn("decision verification failed", blocked.stderr)
+
+            self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--kind",
+                "final_decision",
+                "--status",
+                "executed",
+                "--title",
+                "Complete simple report",
+                "--summary",
+                "No branch was needed for this deterministic report task.",
+                "--reason",
+                "The task had a single declared output.",
+                "--evidence",
+                "docs/report.md",
+            )
+            completed = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                task_id,
+                "--run-id",
+                run_id,
+                "--summary",
+                "Completed after decision proof.",
+                "--allow-pending-postflight",
+                "temporary project",
+                "--json",
+            )
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["decision_status"], "passed")
+            receipt = (project / ".agent-os" / "receipts" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("Decision Verification Status: passed", receipt)
 
     def test_artifact_assert_records_effect_marker_for_real_file_checks(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2474,6 +3405,147 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertTrue(Path(handoff_payload["manifest"]).exists())
             self.assertIn("status: ready", (project / ".agent-os" / "tasks.yaml").read_text(encoding="utf-8"))
 
+    def test_render_html_decision_map_sidecar_from_decision_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            root = self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "branch_opened",
+                "--status",
+                "planned",
+                "--title",
+                "Open model strategy",
+                "--summary",
+                "Compare model paths.",
+                "--reason",
+                "Research modeling can require alternatives.",
+                "--option",
+                "fast model",
+                "--option",
+                "full model",
+                "--evidence",
+                "plan",
+                "--json",
+            )
+            root_id = json.loads(root.stdout)["decision_id"]
+            self.run_cli(
+                "decision-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--parent-id",
+                root_id,
+                "--kind",
+                "branch_abandoned",
+                "--status",
+                "abandoned",
+                "--title",
+                "Skip full model",
+                "--summary",
+                "Full model is deferred for this run.",
+                "--reason",
+                "The quick validation branch is enough for the current task.",
+                "--evidence",
+                "runtime budget",
+            )
+
+            rendered = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--run-id",
+                run_id,
+                "--kind",
+                "decision-map",
+                "--json",
+            )
+            payload = json.loads(rendered.stdout)
+            html = Path(payload["output"]).read_text(encoding="utf-8")
+            manifest = json.loads(Path(payload["manifest"]).read_text(encoding="utf-8"))
+            source_sha = hashlib.sha256((project / ".agent-os" / "runs" / run_id / "decision-events.ndjson").read_bytes()).hexdigest()
+            self.assertIn(source_sha, html)
+            self.assertIn("Open model strategy", html)
+            self.assertIn("Skip full model", html)
+            self.assertIn("HTML is presentation, not source of truth.", html)
+            self.assertEqual(manifest["kind"], "decision-map")
+            self.assertEqual(manifest["source_sha256"], source_sha)
+
+    def test_flow_summary_and_mission_flow_html_are_readable_sidecars(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.write_plan_context(project, "T001", run_id)
+            self.log_required_phases(project, "T001", run_id)
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "shell",
+                "--id",
+                "unit-test",
+                "--purpose",
+                "Validate mission flow readability.",
+            )
+
+            plain = self.run_cli("flow-summary", "--project-root", str(project), "--run-id", run_id)
+            self.assertIn("FLOW_OK run=", plain.stdout)
+            self.assertIn("```mermaid", plain.stdout)
+            self.assertIn("Goal:", plain.stdout)
+            self.assertIn("Health check:", plain.stdout)
+            self.assertIn("Safe writes:", plain.stdout)
+            self.assertNotIn("lifecycle_status", plain.stdout)
+
+            as_json = self.run_cli("flow-summary", "--project-root", str(project), "--run-id", run_id, "--json")
+            payload = json.loads(as_json.stdout)
+            self.assertEqual(payload["flow_marker"], "FLOW_OK")
+            self.assertIn("Task and plan:", payload["mermaid"])
+            source = project / ".agent-os" / "runs" / run_id / "mission-flow.md"
+            self.assertTrue(source.exists())
+
+            rendered = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--run-id",
+                run_id,
+                "--kind",
+                "mission-flow",
+                "--json",
+            )
+            html_payload = json.loads(rendered.stdout)
+            html = Path(html_payload["output"]).read_text(encoding="utf-8")
+            manifest = json.loads(Path(html_payload["manifest"]).read_text(encoding="utf-8"))
+            source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+            self.assertEqual(html_payload["flow_marker"], "FLOW_OK")
+            self.assertEqual(manifest["kind"], "mission-flow")
+            self.assertEqual(manifest["source_sha256"], source_sha)
+            self.assertIn(source_sha, html)
+            self.assertIn("Mission Flow", html)
+            self.assertIn("Safe Writes", html)
+            self.assertIn("HTML is presentation, not source of truth.", html)
+
     def test_render_html_rich_report_is_self_contained_composable_and_stale_detectable(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
@@ -2581,6 +3653,138 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("status: ok", doctor.stdout)
             self.assertIn("status: ready", (project / ".agent-os" / "tasks.yaml").read_text(encoding="utf-8"))
 
+    def test_render_html_presentation_modes_keep_metadata_but_loosen_layout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            drafts = project / "reports" / "drafts"
+            drafts.mkdir(parents=True)
+            report = drafts / "layout.md"
+            report.write_text("# Layout Report\n\n## Finding\n\n- Evidence over template lock-in.\n", encoding="utf-8")
+            source_sha = hashlib.sha256(report.read_bytes()).hexdigest()
+
+            default_render = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/layout.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/default.html",
+                "--json",
+            )
+            default_payload = json.loads(default_render.stdout)
+            default_html = Path(default_payload["output"]).read_text(encoding="utf-8")
+            default_manifest = json.loads(Path(default_payload["manifest"]).read_text(encoding="utf-8"))
+            self.assertEqual(default_payload["presentation"], "default")
+            self.assertEqual(default_manifest["presentation"], "default")
+            self.assertIn("kos-hero", default_html)
+            self.assertIn("kos-panel", default_html)
+            self.assertIn(source_sha, default_html)
+
+            minimal_render = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/layout.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/minimal.html",
+                "--presentation",
+                "minimal",
+                "--json",
+            )
+            minimal_payload = json.loads(minimal_render.stdout)
+            minimal_html = Path(minimal_payload["output"]).read_text(encoding="utf-8")
+            minimal_manifest = json.loads(Path(minimal_payload["manifest"]).read_text(encoding="utf-8"))
+            self.assertEqual(minimal_payload["presentation"], "minimal")
+            self.assertEqual(minimal_manifest["presentation"], "minimal")
+            self.assertTrue(minimal_manifest["html_required_metadata"])
+            self.assertIn(source_sha, minimal_html)
+            self.assertIn("HTML is presentation, not source of truth.", minimal_html)
+            self.assertNotIn("kos-hero", minimal_html)
+            self.assertNotIn("kos-panel", minimal_html)
+            self.assertNotIn("<script", minimal_html.lower())
+            self.assertNotIn("<link", minimal_html.lower())
+            self.assertNotIn('src="http', minimal_html.lower())
+            self.assertNotIn('href="http', minimal_html.lower())
+
+            bare_render = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/layout.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/bare.html",
+                "--presentation",
+                "bare",
+                "--json",
+            )
+            bare_payload = json.loads(bare_render.stdout)
+            bare_html = Path(bare_payload["output"]).read_text(encoding="utf-8")
+            self.assertEqual(bare_payload["presentation"], "bare")
+            self.assertIn("<!doctype html>", bare_html.lower())
+            self.assertIn(source_sha, bare_html)
+            self.assertIn("presentation=bare", bare_html)
+            self.assertNotIn("kos-hero", bare_html)
+            self.assertNotIn("kos-panel", bare_html)
+
+            fragment_render = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/layout.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/fragment.html",
+                "--presentation",
+                "fragment",
+                "--json",
+            )
+            fragment_payload = json.loads(fragment_render.stdout)
+            fragment_html = Path(fragment_payload["fragment"]).read_text(encoding="utf-8")
+            fragment_manifest = json.loads(Path(fragment_payload["manifest"]).read_text(encoding="utf-8"))
+            self.assertEqual(fragment_payload["presentation"], "fragment")
+            self.assertEqual(fragment_payload["output"], "")
+            self.assertFalse((project / "reports" / "drafts" / "fragment.html").exists())
+            self.assertEqual(fragment_manifest["presentation"], "fragment")
+            self.assertEqual(fragment_manifest["output"], "")
+            self.assertIn(source_sha, fragment_html)
+            self.assertIn("HTML is presentation, not source of truth.", fragment_html)
+
+            project_yaml = project / ".agent-os" / "project.yaml"
+            project_yaml.write_text(
+                project_yaml.read_text(encoding="utf-8")
+                + "\nreporting:\n  html_sidecars: true\n  html_source_of_truth: false\n  html_presentation_default: minimal\n  html_required_metadata: true\n",
+                encoding="utf-8",
+            )
+            policy_render = self.run_cli(
+                "render-html",
+                "--project-root",
+                str(project),
+                "--input",
+                "reports/drafts/layout.md",
+                "--kind",
+                "rich-report",
+                "--output",
+                "reports/drafts/policy-default.html",
+                "--json",
+            )
+            policy_payload = json.loads(policy_render.stdout)
+            policy_html = Path(policy_payload["output"]).read_text(encoding="utf-8")
+            self.assertEqual(policy_payload["presentation"], "minimal")
+            self.assertNotIn("kos-hero", policy_html)
+
     def test_doctor_passes_initialized_project(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "ExampleProject"
@@ -2608,7 +3812,46 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertTrue(any(item["label"] == "phase_keys" for item in payload))
             self.assertTrue(any(item["label"] == "workflow_router" for item in payload))
             self.assertTrue(any(item["label"] == "tool_registry" for item in payload))
+            self.assertTrue(any(item["label"] == "decision_policy" for item in payload))
             self.assertTrue(any(item["label"] == "effect_policy" for item in payload))
+
+    def test_decision_policy_defaults_to_warn_and_requires_reason_when_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            runtime = Path(tmp) / "KnowledgeOSRuntime"
+            self.run_cli("init-os", "--root", str(ROOT), "--os-root", str(runtime), "--json")
+            self.run_cli(
+                "init-project",
+                "--root",
+                str(ROOT),
+                "--project-root",
+                str(project),
+                "--name",
+                "Example",
+                "--global-root",
+                str(runtime / "global-agent-fabric"),
+                "--capability-root",
+                str(runtime / "capability-layer"),
+            )
+            policy = project / ".agent-os" / "decision-policy.yaml"
+            self.assertTrue(policy.exists())
+            policy.unlink()
+            missing = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
+            self.assertIn("status: ok", missing.stdout)
+
+            policy.write_text("decision_policy:\n  strictness: off\n  downgrade_reason:\n", encoding="utf-8")
+            disabled = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary", check=False)
+            self.assertEqual(disabled.returncode, 1)
+            self.assertIn("decision_policy", disabled.stdout)
+            self.assertIn("strictness=off requires downgrade_reason", disabled.stdout)
+
+            policy.write_text(
+                "decision_policy:\n  strictness: off\n  downgrade_reason: temporary exploration mode\n",
+                encoding="utf-8",
+            )
+            reasoned = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
+            self.assertIn("status: ok", reasoned.stdout)
 
     def test_effect_policy_defaults_to_observe_and_requires_reason_when_disabled(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2901,7 +4144,10 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertGreaterEqual(payload["counts"].get("mcp", 0), 1)
         self.assertGreaterEqual(payload["counts"].get("skill", 0), 1)
         self.assertGreaterEqual(payload["counts"].get("orchestrator", 0), 1)
-        self.assertGreaterEqual(payload["counts"].get("subagent", 0), 40)
+        self.assertGreaterEqual(payload["counts"].get("subagent", 0), 43)
+        self.assertIn("codex-default", result.stdout)
+        self.assertIn("codex-explorer", result.stdout)
+        self.assertIn("codex-worker", result.stdout)
         self.assertIn("maestro-mcp", result.stdout)
         self.assertIn("maestro-architect", result.stdout)
         self.assertIn("maestro-coder", result.stdout)
@@ -2913,15 +4159,354 @@ class KnowledgeOSCliTests(unittest.TestCase):
         result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")
         payload = json.loads(result.stdout)
         self.assertEqual(payload["status"], "dispatch_ready")
+        self.assertEqual(payload["dispatch_marker"], "AGENT_DISPATCH_PLAN")
+        self.assertIn("AGENT_DISPATCH_PLAN", payload["marker"])
+        self.assertGreaterEqual(payload["dispatch_summary"]["planned_agents"], 1)
+        self.assertGreaterEqual(payload["dispatch_summary"]["runtime_callable_agents"], 1)
         stages = {step["stage"]: step for step in payload["steps"]}
         self.assertIn("subagent", stages)
+        self.assertLessEqual(len(stages["subagent"]["tools"]), 3)
         subagent_ids = {tool["id"] for tool in stages["subagent"]["tools"]}
+        self.assertIn("codex-default", subagent_ids)
         self.assertIn("maestro-architect", subagent_ids)
         self.assertIn("maestro-coder", subagent_ids)
-        self.assertIn("maestro-security-engineer", subagent_ids)
+        for tool in stages["subagent"]["tools"]:
+            self.assertEqual(tool.get("runtime_tool"), "multi_agent_v1.spawn_agent")
+            self.assertTrue(tool.get("runtime_callable"))
         orchestrator_ids = {tool["id"] for tool in stages["orchestrator"]["tools"]}
         self.assertIn("maestro", orchestrator_ids)
         self.assertNotIn("agent-orchestrator", orchestrator_ids)
+
+    def test_dispatch_task_plain_output_shows_agent_dispatch_plan(self):
+        result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009")
+        self.assertIn("AGENT_DISPATCH_PLAN", result.stdout)
+        self.assertIn("planned_agents:", result.stdout)
+        self.assertIn("maestro", result.stdout)
+
+    def test_dispatch_report_summarizes_actual_capability_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "orchestrator",
+                "--id",
+                "maestro",
+                "--purpose",
+                "Coordinate explicit dispatch reporting test.",
+            )
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "shell",
+                "--id",
+                "unit-test",
+                "--purpose",
+                "Run targeted dispatch report test.",
+            )
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "github",
+                "--id",
+                "github-connector",
+                "--purpose",
+                "Inspect mounted GitHub capability reporting.",
+            )
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "browser",
+                "--id",
+                "browser-plugin",
+                "--purpose",
+                "Browser capability was considered but not needed for this CLI test.",
+                "--status",
+                "skipped",
+                "--evidence",
+                "no UI target",
+            )
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "subagent",
+                "--id",
+                "branch-builder",
+                "--purpose",
+                "Required branch planning was skipped because this test has a single deterministic path.",
+                "--status",
+                "skipped",
+                "--evidence",
+                "single-path test",
+            )
+
+            plain = self.run_cli("dispatch-report", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id)
+            self.assertIn("AGENT_DISPATCH_OK agents=1 capabilities=3", plain.stdout)
+            self.assertIn("Full Capability Dispatch Report", plain.stdout)
+            self.assertIn("orchestrator: maestro", plain.stdout)
+            self.assertIn("github: github-connector", plain.stdout)
+            self.assertIn("browser: used=0, skipped=1", plain.stdout)
+            self.assertIn("skipped_or_not_needed:", plain.stdout)
+            self.assertIn("gaps:", plain.stdout)
+
+            as_json = self.run_cli("dispatch-report", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            payload = json.loads(as_json.stdout)
+            self.assertEqual(payload["dispatch_report_marker"], "AGENT_DISPATCH_OK")
+            self.assertTrue(payload["full_capability_report"])
+            self.assertEqual(payload["agent_count"], 1)
+            self.assertEqual(payload["capability_count"], 3)
+            self.assertEqual(payload["skipped_count"], 2)
+            self.assertEqual(payload["counts_by_kind"]["github"], 1)
+            self.assertEqual(payload["counts_by_kind"]["browser"], 0)
+            self.assertEqual(payload["skipped_by_kind"]["browser"], 1)
+            self.assertEqual(payload["skipped_by_kind"]["subagent"], 1)
+            self.assertIn("capability_events", payload["evidence"])
+            self.assertIn("command_events", payload["evidence"])
+            self.assertEqual(payload["gaps"], ["none"])
+            self.assertTrue(Path(payload["report"]).exists())
+            report = Path(payload["report"]).read_text(encoding="utf-8")
+            self.assertIn("# Full Capability Dispatch Report", report)
+            self.assertIn("Meaning: AGENT_DISPATCH_OK summarizes all recorded external and mounted capabilities", report)
+            self.assertIn("## Skipped Or Not Needed", report)
+
+    def test_dispatch_report_records_runtime_subagent_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "orchestrator",
+                "--id",
+                "maestro",
+                "--purpose",
+                "Satisfy required orchestrator dispatch stage.",
+            )
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "subagent",
+                "--id",
+                "codex-explorer",
+                "--purpose",
+                "Live runtime smoke did not return before timeout.",
+                "--status",
+                "timed_out",
+                "--evidence",
+                "spawn_agent returned an id; wait_agent timed out; close_agent was aborted",
+            )
+            result = self.run_cli("dispatch-report", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["agent_count"], 1)
+            self.assertEqual(payload["skipped_agent_count"], 1)
+            self.assertEqual(payload["runtime_gap_count"], 1)
+            self.assertEqual(payload["runtime_gaps"][0]["id"], "codex-explorer")
+            self.assertIn("runtime subagent gaps: codex-explorer=timed_out", payload["gaps"])
+
+    def test_dispatch_report_resolves_late_results_and_keeps_policy_blocks_out_of_runtime_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="orchestrator",
+                capability_id="maestro",
+                purpose="Satisfy the required orchestrator stage for this dispatch-report fixture.",
+            )
+            purpose = "Read-only explorer review."
+            timeout_event = cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="subagent",
+                capability_id="codex-explorer",
+                purpose=purpose,
+                status="timed_out",
+                evidence="wait window elapsed",
+            )
+            cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="subagent",
+                capability_id="codex-explorer",
+                purpose=purpose,
+                status="completed",
+                evidence="late result received; recovered_from=timed_out",
+                recovers_event_id=timeout_event["capability_event_id"],
+            )
+            cli.record_capability_event(
+                project,
+                "T001",
+                run_id,
+                kind="subagent",
+                capability_id="codex-worker",
+                purpose="Stopped at a safety policy gate.",
+                status="blocked",
+                evidence="policy decision, not a runtime failure",
+            )
+
+            result = self.run_cli("dispatch-report", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["runtime_gap_count"], 0)
+            self.assertEqual(payload["resolved_runtime_gap_count"], 1)
+            self.assertEqual(payload["resolved_runtime_gaps"][0]["id"], "codex-explorer")
+            self.assertEqual(payload["gaps"], ["none"])
+            self.assertEqual(payload["skipped_agent_count"], 2)
+
+    def test_dispatch_report_does_not_treat_failed_event_as_timeout_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            purpose = "Bounded review."
+            cli.record_capability_event(project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose=purpose, status="timed_out", evidence="wait elapsed")
+            cli.record_capability_event(project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose=purpose, status="failed", evidence="recovered_from=timed_out")
+
+            payload = cli.build_dispatch_report(project, "T001", run_id)
+            self.assertEqual(payload["runtime_gap_count"], 2)
+            self.assertEqual(payload["resolved_runtime_gap_count"], 0)
+
+    def test_dispatch_report_treats_failed_subagent_as_runtime_gap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            cli.record_capability_event(
+                project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose="Failed runtime.", status="failed", evidence="runtime returned failure"
+            )
+            payload = cli.build_dispatch_report(project, "T001", run_id)
+            self.assertEqual(payload["agent_count"], 0)
+            self.assertEqual(payload["runtime_gap_count"], 1)
+
+    def test_dispatch_report_recovery_is_one_to_one_by_event_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            first = cli.record_capability_event(project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose="Same purpose.", status="timed_out", evidence="wait elapsed")
+            cli.record_capability_event(project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose="Same purpose.", status="timed_out", evidence="second wait elapsed")
+            cli.record_capability_event(
+                project, "T001", run_id, kind="subagent", capability_id="codex-explorer", purpose="Same purpose.", status="completed",
+                evidence="late result", recovers_event_id=first["capability_event_id"],
+            )
+
+            payload = cli.build_dispatch_report(project, "T001", run_id)
+            self.assertEqual(payload["runtime_gap_count"], 1)
+            self.assertEqual(payload["resolved_runtime_gap_count"], 1)
+
+    def test_complete_task_returns_agent_dispatch_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "ExampleProject"
+            project.mkdir()
+            self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
+            run_id = json.loads(started.stdout)["run_id"]
+            self.write_plan_context(project, "T001", run_id)
+            self.run_cli("dispatch-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id, "--json")
+            self.run_cli(
+                "capability-event",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--kind",
+                "orchestrator",
+                "--id",
+                "maestro",
+                "--purpose",
+                "Coordinate completion dispatch summary test.",
+            )
+            self.log_required_phases(project, "T001", run_id)
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id)
+
+            completed = self.run_cli(
+                "complete-task",
+                "--project-root",
+                str(project),
+                "--task-id",
+                "T001",
+                "--run-id",
+                run_id,
+                "--summary",
+                "Completed with explicit agent dispatch summary.",
+                "--allow-pending-postflight",
+                "temp project has no executable shared-fabric hook",
+                "--json",
+            )
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["agent_dispatch_status"], "AGENT_DISPATCH_OK")
+            self.assertIn("AGENT_DISPATCH_OK", payload["agent_dispatch_marker"])
+            self.assertGreaterEqual(payload["agents_invoked"], 1)
+            self.assertTrue(Path(payload["dispatch_report"]).exists())
+            receipt = (project / ".agent-os" / "runs" / run_id / "receipt.md").read_text(encoding="utf-8")
+            self.assertIn("Agent Dispatch Marker:", receipt)
+            self.assertIn("AGENT_DISPATCH_OK", receipt)
 
     def test_tool_registry_rejects_inline_secret_markers(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2959,21 +4544,37 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("check-route-write", result.stdout)
             self.assertIn("create-spec", result.stdout)
             self.assertIn("align-spec", result.stdout)
+            self.assertIn("thread-plan", result.stdout)
+            self.assertIn("THREAD_PLAN_OK", result.stdout)
+            self.assertIn("KOS_DECISION", result.stdout)
+            self.assertIn("full capability dispatch report", result.stdout)
             self.assertIn("context-pack", result.stdout)
             self.assertIn("plan-task", result.stdout)
+            self.assertIn("AGENT_DISPATCH_PLAN", result.stdout)
             self.assertIn("verify-context", result.stdout)
             self.assertIn("trace-step", result.stdout)
+            self.assertIn("KOS_DECISION", result.stdout)
             self.assertIn("TRACE_OK", result.stdout)
             self.assertIn("phase-task", result.stdout)
             self.assertIn("CHECKPOINT_OK", result.stdout)
             self.assertIn("capability-event", result.stdout)
             self.assertIn("CAPABILITY_OK", result.stdout)
+            self.assertIn("dispatch-report", result.stdout)
+            self.assertIn("AGENT_DISPATCH_OK", result.stdout)
+            self.assertIn("decision-event", result.stdout)
+            self.assertIn("DECISION_OK", result.stdout)
+            self.assertIn("verify-decisions", result.stdout)
+            self.assertIn("DECISION_VERIFY_OK", result.stdout)
             self.assertIn("artifact-assert", result.stdout)
             self.assertIn("EFFECT_OK", result.stdout)
             self.assertIn("verify-lifecycle", result.stdout)
             self.assertIn("verify-effects", result.stdout)
             self.assertIn("EFFECT_VERIFY_OK", result.stdout)
             self.assertIn("complete-task", result.stdout)
+            self.assertIn("flow-summary", result.stdout)
+            self.assertIn("FLOW_OK", result.stdout)
+            self.assertIn("thread-plan", result.stdout)
+            self.assertIn("THREAD_PLAN_OK", result.stdout)
             self.assertIn("archive-legacy-project", result.stdout)
 
     def test_startup_prompt_outputs_trace_step_contract(self):
@@ -2986,12 +4587,29 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("TRACE_OK", result.stdout)
             self.assertIn("phase-task", result.stdout)
             self.assertIn("CHECKPOINT_OK", result.stdout)
+            self.assertIn("AGENT_DISPATCH_PLAN", result.stdout)
             self.assertIn("capability-event", result.stdout)
             self.assertIn("CAPABILITY_OK", result.stdout)
+            self.assertIn("dispatch-report", result.stdout)
+            self.assertIn("AGENT_DISPATCH_OK", result.stdout)
             self.assertIn("artifact-assert", result.stdout)
             self.assertIn("EFFECT_OK", result.stdout)
             self.assertIn("verify-effects", result.stdout)
             self.assertIn("EFFECT_VERIFY_OK", result.stdout)
+            self.assertIn("flow-summary", result.stdout)
+            self.assertIn("FLOW_OK", result.stdout)
+
+    def test_static_prompt_contracts_require_dispatch_report_markers(self):
+        template = (ROOT / "templates" / "project-control-plane" / "AGENTS.md").read_text(encoding="utf-8")
+        guide = (ROOT / "docs" / "agent-guide.md").read_text(encoding="utf-8")
+        startup = (ROOT / ".agent-os" / "startup-prompt.md").read_text(encoding="utf-8")
+        for content in (template, guide, startup):
+            self.assertIn("KOS_DECISION", content)
+            self.assertIn("AGENT_DISPATCH_PLAN", content)
+            self.assertIn("dispatch-report", content)
+            self.assertIn("AGENT_DISPATCH_OK", content)
+            self.assertIn("full capability", content.lower())
+            self.assertIn("complete-task", content)
 
     def test_dispatch_task_prioritizes_branch_builder_and_consultation(self):
         result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")

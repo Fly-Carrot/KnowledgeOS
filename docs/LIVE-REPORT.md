@@ -2,6 +2,68 @@
 
 This file is the real-time construction log for the local KnowledgeOS build.
 
+## 2026-07-11 - Milestone Update: Verified Subagent Runtime Catalog
+
+Status: implemented and live-validated in KOS-T087
+
+Problem:
+
+- Minimal adapter checks could not prove that every registered role actually ran.
+- Repeated capability events could inflate visible agent counts without proving unique catalog coverage.
+- A fixed 120-second wait made substantive explorer work look failed even when a valid result arrived later.
+- Safety-policy `blocked` events were mixed with timeout and cleanup failures under `runtime_gaps`.
+
+Changes:
+
+- Added `verify-subagents` with immutable catalog snapshots, adapter challenges, unique-role/nonces, cleanup, role-contract, and native stability checks.
+- Added timeout recovery guidance to startup prompts and agent documentation.
+- Added a bounded-subagent role-prompt contract that prevents accidental recursive lifecycle and delegation inside specialist calls.
+- Added resolved runtime-gap reconciliation to `dispatch-report`.
+- Added single-use adapter challenges, mandatory standard-catalog baselines, fail-closed snapshot metadata, and one-to-one timeout recovery event links.
+- Added complete snapshot-integrity validation and explicit failed/cancelled runtime-gap classification.
+- Changed dispatch agent counts to unique agent ids while retaining raw event counts separately.
+- Added `docs/subagent-runtime-validation.md` and its composable HTML sidecar.
+
+Verification:
+
+- `SUBAGENT_CATALOG_OK roles=42/42 native_min=3 invalid=0`.
+- Three native Codex roles completed three serial smoke rounds each.
+- All 39 Maestro adapter roles completed one live role-contract smoke each.
+- Forty-eight catalog invocations completed with strict evidence; three additional diagnostic invocations isolated timeout behavior.
+- The substantive explorer review eventually completed and closed; a default control also exceeded 120 seconds and recovered after one interrupt, proving the issue was not explorer-specific.
+- A frozen-diff Maestro reviewer reproduced the recursive-dispatch trigger, confirming that parent-level lifecycle rules needed an explicit subagent boundary.
+- Active runtime gaps after reconciliation: zero.
+- The verifier explicitly reports `evidence_model=parent_attested_runtime` and `host_runtime_verified=false`; it does not overclaim independent access to Codex host tool logs.
+
+## 2026-07-08 - Milestone Update: Runtime Subagents And Maestro Adapter
+
+Status: implemented in current branch
+
+Problem:
+
+- `dispatch-task` could recommend Maestro specialist roles, but those roles were mostly registry declarations rather than runtime-callable adapter packages.
+- New project templates did not expose the three basic Codex runtime subagents.
+- Old projects could keep stale registries with no `codex-default`, `codex-explorer`, or `codex-worker`.
+- Large Maestro catalogs could make dispatch plans noisy by listing too many candidates.
+
+Changes:
+
+- Added global and template registry entries for `codex-default`, `codex-explorer`, and `codex-worker`.
+- Converted visible `maestro-*` subagents into adapter-backed entries with `runtime_tool: multi_agent_v1.spawn_agent`.
+- Added `capability-layer/subagents/maestro/` role specs and manifest.
+- Added `subagent-adapter`, which emits `SUBAGENT_ADAPTER_OK` and returns the runtime call package without spawning from the shell.
+- Updated `dispatch-task` to include runtime-callable agent metadata and to limit subagent recommendations to a small ranked candidate set.
+- Updated `runtime-adapters` to report registered Codex runtime subagents.
+- Extended `dispatch-report` so runtime subagent statuses such as `timed_out`, `blocked`, and `close_failed` become explicit `runtime_gaps` instead of being counted as successful agents.
+- Updated `harness-audit --apply` to repair old project registries missing native Codex runtime subagents.
+- Updated startup and agent docs to require actual host-runtime subagent calls to be followed by `capability-event --kind subagent` and `dispatch-report`.
+
+Verification:
+
+- Targeted unit tests cover registry visibility, dispatch candidate limiting, `subagent-adapter`, runtime adapter reporting, template initialization, and harness repair.
+- A regression test covers the Dewey-style timeout path: spawned subagent evidence can be recorded as `timed_out`, then surfaced through `AGENT_DISPATCH_OK` runtime gaps.
+- Full validation is recorded in the active KnowledgeOS run for `KOS-T086`.
+
 ## 2026-05-09 - Milestone: Safe Skeleton
 
 Status: in progress
@@ -658,3 +720,185 @@ Validation:
 - Reproduced the bogus capability link acceptance in a temporary project, then verified the same command fails with `capability event not found`.
 - Added targeted regression coverage for bogus capability links, forged effect ledgers, and same-second run id collisions.
 - Re-ran harness audit, guardrail scenarios, unit tests, smoke, and diff checks after the fix.
+
+## 2026-05-29 - Module Note: Decision Graph
+
+Status: implemented locally as an optional module, not a kernel expansion.
+
+Bug / product gap reproduced:
+
+- Long research and agent sessions could record what happened through trace steps and lifecycle checkpoints, but they had no first-class public record of why a plan branched, why a route was abandoned, or why a rollback happened.
+- Without a decision ledger, the human-readable plan could drift from the executed path, especially when a task inserted new checks or changed route midway.
+- Completion could not distinguish between ordinary linear progress and important decision changes that should be auditable.
+
+Fix:
+
+- Added `decision-event` to write `.agent-os/runs/<RUN_ID>/decision-events.ndjson` and return `DECISION_OK`.
+- Added `decision-query` for filtering decision events by run, task, kind, status, or parent id.
+- Added `verify-decisions` to detect forged events, orphan nodes, invalid kinds/statuses, and unexplained abandoned, rollback, or superseded branches.
+- Added `.agent-os/decision-policy.yaml` with default `strictness: warn`; `strictness: enforce` makes `complete-task` block on decision verification failure.
+- Added `render-html --kind decision-map` to generate a readable HTML sidecar from the decision ledger while keeping NDJSON as source of truth.
+- Updated agent guide, startup prompts, operating spec, executable control-plane docs, release checklist, project template, and tests.
+
+Validation:
+
+- Reproduced missing CLI behavior before implementation: `decision-event` was an invalid command and completion did not enforce decision verification.
+- Added targeted tests for event creation, query, orphan detection, strict policy completion blocking, default warn policy, startup prompt contract, doctor policy validation, and decision-map HTML output.
+- Verified `python3 -B -m py_compile knowledgeos/cli.py`.
+- Verified `python3 -B -m unittest discover -s tests -v`: 87 tests passed.
+- Verified `./examples/scenarios/run_guardrail_scenarios.sh`: 30 checkpoints passed.
+- Verified `./bin/knowledgeos doctor --root . --project-root . --summary`: 1789 checks passed.
+- Verified `git diff --check`.
+
+## 2026-05-29 - Reporting Note: Mission Flow
+
+Status: implemented locally as a presentation/reporting layer, not kernel evidence.
+
+Product gap reproduced:
+
+- Medium and complex tasks could finish with strong command evidence but still require the user to mentally assemble what happened from raw markers such as `CHECKPOINT_OK`, `CAPABILITY_OK`, `EFFECT_OK`, `DECISION_OK`, and `[SYNC_OK]`.
+- The user-facing closeout needed a readable flow diagram with plain labels, not a dense dump of internal lifecycle terms.
+
+Fix:
+
+- Added `flow-summary`, which writes `.agent-os/runs/<RUN_ID>/mission-flow.md` and emits `FLOW_OK`.
+- Added `render-html --kind mission-flow`, which creates a self-contained HTML sidecar with colored cards and source metadata.
+- Updated `complete-task` so medium, high, and complex tasks return `flow_marker`, `flow_summary_marker`, `flow_mermaid`, and `flow_source`.
+- Kept Mission Flow out of kernel enforcement. It summarizes existing evidence lanes for humans and does not replace Markdown, YAML, or NDJSON evidence.
+- Updated executable docs, operating spec, agent guide, startup prompts, templates, changelog, and tests.
+
+Validation:
+
+- Added targeted tests for `flow-summary`, mission-flow HTML sidecars, and `complete-task` flow output.
+- Verified the diagram uses readable labels such as `Goal`, `Health Check`, `Task & Plan`, `Safe Writes`, `Work Done`, `Tools Used`, `Proof`, `Decisions`, and `Finish`.
+
+## 2026-05-29 - Module Note: Thread Plan Ledger
+
+Status: implemented locally as a chat-level planning module, not a lifecycle checkpoint.
+
+Product gap reproduced:
+
+- Run-level Mission Flow summarizes one completed task but does not preserve the whole chat-window plan as the conversation grows.
+- Long research/product conversations need a natural-language version map: Plan A / Plan B, Phase A / Phase B, current route, inserted steps, linked runs, and deferred branches.
+- The desired view should be readable by humans and should not add another completion gate.
+
+Fix:
+
+- Added `thread-plan start`, `thread-plan current`, `thread-plan append`, `thread-plan link-run`, and `thread-plan render`.
+- Added `.agent-os/threads/<THREAD_ID>/thread-plan.ndjson` as the append-only source of truth, with Markdown and HTML sidecars for review.
+- Added `THREAD_PLAN_OK` command output for successful thread-plan operations.
+- Kept Thread Plan Ledger out of `complete-task`, `verify-lifecycle`, and checkpoint enforcement.
+- Updated executable docs, operating spec, agent guide, startup prompts, templates, release checklist, changelog, and tests.
+
+Validation:
+
+- Added targeted tests for start/current/append/link-run/render and append-only ledger behavior.
+- Verified Markdown includes `Plan A / Plan B`, `Phase A / Phase B`, current working line, and linked run evidence.
+- Verified HTML sidecar is self-contained and marks HTML as presentation, not source of truth.
+
+## 2026-05-30 - Bugfix Note: Thread Plan HTML Heading
+
+Status: fixed and regression-tested.
+
+Bug reproduced:
+
+- `thread-plan render --format html` produced three `<h1>` headings for one thread-plan page.
+- Root cause: the HTML document shell already renders a page title, the Thread Plan renderer manually prepended another `<h1>`, and the Markdown fragment converted its own top-level title into a third `<h1>`.
+
+Fix:
+
+- Removed the extra hand-written Thread Plan body heading from `render_thread_plan_html`.
+- Kept the canonical Markdown title and the outer HTML shell title intact.
+
+Validation:
+
+- Reproduced the issue in a temporary project before the fix: `h1_count=3`.
+- Re-ran the same reproduction after the fix: `h1_count=2`.
+- Added a regression assertion to the Thread Plan Ledger test.
+
+## 2026-06-08 - HTML Sidecar Presentation Modes
+
+Status: implemented locally as a lighter presentation contract.
+
+Product gap reproduced:
+
+- `render-html --presentation minimal` failed with `unrecognized arguments`, so projects had no supported way to keep KnowledgeOS evidence metadata while opting out of the default hero/sidebar/card layout.
+- The original HTML sidecar contract mixed two concerns: required provenance metadata and optional visual styling.
+
+Fix:
+
+- Added `render-html --presentation default|minimal|bare|fragment`.
+- Kept `default` backward compatible with the existing `knowledgeos-default` card layout.
+- Added `minimal` and `bare` shells that preserve source path, source SHA-256, generated time, kind/run metadata, and the source-of-truth notice without forcing hero/sidebar layout.
+- Added `fragment` mode for composable report pieces that write only `.fragment.html` and `.manifest.json`.
+- Updated manifests with `presentation` and `html_required_metadata`.
+- Documented that KnowledgeOS enforces provenance, traceability, and safety, not visual design.
+
+Validation:
+
+- Reproduced the missing CLI option before implementation.
+- Added a targeted regression test for all four presentation modes.
+- Verified `python3 -B -m py_compile knowledgeos/cli.py`.
+
+## 2026-06-09 - Explicit Agent Dispatch Reporting
+
+Status: implemented locally as a visible dispatch summary layer.
+
+Product gap reproduced:
+
+- `dispatch-task` returned a structured plan but did not emit an obvious `AGENT_DISPATCH_PLAN` marker for user-facing summaries.
+- `capability-event` recorded individual MCP, skill, subagent, orchestrator, script, shell, and file-read events, but there was no single run-level report like `[SYNC_OK]`.
+- `complete-task` could finish without returning a visible agent/subagent dispatch summary.
+
+Fix:
+
+- Added `AGENT_DISPATCH_PLAN` fields to `dispatch-task` JSON and plain output.
+- Added `dispatch-report`, which reads `capability-events.ndjson`, writes `dispatch-report.md`, and emits `AGENT_DISPATCH_OK`.
+- Updated `complete-task` receipts and JSON output with agent count, capability count, dispatch marker, and report path.
+
+Validation:
+
+- Added targeted tests for dispatch plan markers, dispatch-report output, and complete-task dispatch summaries.
+- Reproduced all three missing behaviors before implementation.
+- Verified the targeted tests pass after implementation.
+
+## 2026-06-09 - Dispatch Reporting Prompt Contract Sync
+
+Status: fixed locally as a prompt/template propagation patch.
+
+Bug reproduced:
+
+- A downstream agent completed a KnowledgeOS task and reported `[SYNC_OK]`, but did not show `AGENT_DISPATCH_PLAN` or `AGENT_DISPATCH_OK` in the final visible summary.
+- Runtime support already existed in `dispatch-task`, `dispatch-report`, and `complete-task`.
+- Root cause: project template and guide text did not consistently require agents to relay the dispatch markers, so stale project prompts could silently omit them.
+
+Fix:
+
+- Updated the project `AGENTS.md` template to require `AGENT_DISPATCH_PLAN`, `dispatch-report`, and final `AGENT_DISPATCH_OK` reporting.
+- Updated the live startup prompt and agent guide with the same visible dispatch contract.
+- Added a static prompt-contract regression test so future template drift is caught.
+
+Validation:
+
+- Targeted prompt contract tests cover generated prompts and static template/docs/startup files.
+
+## 2026-06-11 - Full Capability Dispatch Report And KOS Decision Contract
+
+Status: implemented locally as a stricter visible reporting contract.
+
+Product gap reproduced:
+
+- `AGENT_DISPATCH_OK` was too subagent-centric, so runs with `agents=0` could look empty even when shell, file reads, GitHub, browser, security, MCP, skills, or scripts were used.
+- Project prompts required dispatch reporting for substantial work but did not require every conversation to start with an explicit KnowledgeOS routing decision.
+
+Fix:
+
+- Upgraded `dispatch-report` into a Full Capability Dispatch Report.
+- Added used/skipped counts by capability kind, skipped/not-needed records, dispatch plan evidence, evidence file paths, and gaps.
+- Extended `capability-event` kinds to cover plugin/app, browser, Chrome, GitHub, and security connectors.
+- Updated startup prompt, project template, generated guide, and agent guide to require `KOS_DECISION` at conversation start.
+- Clarified that `AGENT_DISPATCH_OK` must summarize all mounted/external capabilities, not only subagents.
+
+Validation:
+
+- Added regression coverage for GitHub/browser capability reporting, skipped required subagent reporting, full capability wording, and `KOS_DECISION` prompt contract.

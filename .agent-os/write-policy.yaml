@@ -20,6 +20,7 @@ write_policy:
     - examples/**
     - templates/**
     - .agent-os/**
+    - .knowledgeos-local/**
     - knowledge/**
     - src/**
     - tests/**
@@ -40,6 +41,7 @@ write_policy:
     - .agent-os/dispatch-policy.yaml
     - .agent-os/tool-registry.yaml
     - .agent-os/workflows/router.yaml
+    - .agent-os/decision-policy.yaml
     - .agent-os/effect-policy.yaml
     - .agent-os/phase-policy.yaml
     - .agent-os/fabric-link.yaml
@@ -52,8 +54,15 @@ write_policy:
     - .agent-os/runs/**/command-events.ndjson
     - .agent-os/runs/**/step-events.ndjson
     - .agent-os/runs/**/capability-events.ndjson
+    - .agent-os/runs/**/decision-events.ndjson
     - .agent-os/runs/**/effect-assertions.ndjson
     - .agent-os/runs/**/postflight.md
+    - .agent-os/threads/current.json
+    - .agent-os/threads/**/thread.json
+    - .agent-os/threads/**/thread-plan.ndjson
+    - .agent-os/threads/**/thread-plan.md
+    - .agent-os/threads/**/thread-map.html
+    - .agent-os/threads/**/command-events.ndjson
     - templates/governance-core/**
     - templates/capability-layer/**
 
@@ -70,3 +79,4 @@ write_policy:
     - examples/**
     - templates/**
     - .agent-os/**
+    - .knowledgeos-local/**
