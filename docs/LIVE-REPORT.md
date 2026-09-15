@@ -2,6 +2,58 @@
 
 This file is the real-time construction log for the local KnowledgeOS build.
 
+## 2026-09-15 - Correctness And Lean Orchestration Candidate
+
+Status: integration candidate; see final verification below before rollout.
+
+Scope: implement the accepted [model-neutral specification](specs/correctness-lean-v1.md) on an isolated branch based on published commit `4867612`. Existing installed code, uncommitted work, and global prompts are not overwritten.
+
+### Reproduced Defects
+
+- Task/Spec alignment wrote an alignment record while context still selected the project active Spec. Regression fixtures use two tasks/Specs and deliberately move unrelated active pointers. The repair stores explicit task binding and frozen run provenance; real Spec drift requires explicit re-alignment and a new plan.
+- Runtime callability was inferred from registry metadata, and consultation instructions could disagree with standing authorization. Regressions distinguish missing/expired host snapshots, generic spawn schemas, revoked/scoped grants, and unavailable stock Maestro. Runtime facts must come from current host evidence, not role names.
+- Completion accepted an eval after an output or effective policy changed. Both temporary-project cases failed before repair; evaluation now fingerprints its inputs and completion checks freshness.
+- Repeated completion repeated a successful hook; a failed hook could also be replayed after already producing a side effect. Both cases were reproduced using a real shell hook appending to a counter. Durable attempt records plus a completion lock prevent automatic replay.
+- A previously recorded effect assertion remained valid after the artifact was replaced with a stub and reevaluated. The new regression failed before repair; final effect verification now reruns the original assertion against the actual file without recording a fake tool invocation.
+- Re-aligning a changed Spec and rebuilding its plan could still reuse the old eval. A failing integration regression led to including frozen run Spec provenance in the evaluation fingerprint as well as artifact/policy hashes.
+- Prompt surfaces were maintained separately. A shared versioned generator now emits compact/guided views with identical safety rules and preserves content outside its managed block.
+- Integration exposed two further gaps: the short flow initially lacked automatic run-bound dispatch evidence, and legacy templates omitted the stock Maestro source field. Both were reproduced and repaired rather than asking the agent to compensate with extra commands.
+
+### Implemented Interface Changes
+
+- `align-spec --task-id ... --spec-id ... [--run-id ...]` now persists explicit binding. `--spec-id none` is an explicit choice subject to project policy. Context and write guards reject drift in a relevant unfinished run.
+- `dispatch-task`, `run-task`, and adapter inspection accept explicit host snapshot arguments: `--host-snapshot`, `--host-id`, `--host-session-id`, `--host-snapshot-sha256`, and `--host-attestation-evidence`. CLI file imports are **parent-attested observations**, not authorization credentials. Embedding hosts may supply scoped grants through the in-process bridge; no authenticated Codex bridge is automatically installed by this patch.
+- Dispatch reports distinguish registered, adapter-resolvable, host-available, and execution-verified states. Generic spawn uses prompt-based roles and only the observed schema. Invocation counts use actual invocation ids, not the number of running/completed ledger rows.
+- Preflight planning is cached under `.knowledgeos-local/dispatch-preflight/`; run plans are in the ignored run envelope. Fingerprints cover task, bound Spec, policy, registry, route, and host evidence. Reuse never reuses an authorization permit or skips write checks.
+- Successful `run-task`, `plan-task`, and run-bound dispatch emit producer-linked checkpoints. The normal path can omit a second dispatch and standalone verification calls. Review/execute/report and actual capability/effect evidence remain explicit; `complete-task` still performs final checks.
+- `project.guidance_mode` selects `guided` (default) or `compact`. Both are generated from `knowledgeos/guidance.py` with identical safety rules. No model-name heuristic changes strictness.
+
+### Validation And Migration Notes
+
+- Tests create isolated projects and runtimes; no real project outputs are reset or reconstructed.
+- Existing effect/decision/strictness tests now evaluate after changing policy so they continue testing their specific gate. Separate regressions explicitly verify that policy changes invalidate the prior eval. Safety assertions were not removed.
+- A legacy eval without `input_fingerprint` needs a fresh `eval-task`; history is not rewritten to invent this evidence.
+- An interrupted completion can leave `completion.lock`; a failed/ambiguous hook leaves `postflight-attempt.json`. Inspect the process and real external side effect before recovery. Do not blindly delete the journal and replay. An explicit pending reason remains non-successful sync, never `SYNC_OK`.
+- Filesystem ledgers and host attestations provide auditable evidence, not a security boundary against a process that can rewrite both the evidence and its verifier.
+- Model/runtime qualification remains **untested** until the per-model matrix in the Spec is run. Unit tests and coding subagents are not substitutes for that matrix; default guidance remains guided.
+
+### Release Boundary
+
+This is a candidate on `codex/correctness-lean-v1`, based on the existing published development branch, not an automatic main-branch merge or installation upgrade. No new stable version tag is issued before model/host qualification. The host-snapshot import is available for explicit client integration, while clients without current host evidence continue to report unknown. It does not manufacture runtime tools or grant permissions from JSON.
+
+Validation includes new-project guardrail scenarios, old-project audit/repair on an isolated baseline copy with an unchanged data fixture, real shell-hook replay tests, and a parent-observed current generic-spawn schema import. Browser repository navigation timed out; repository baseline verification used the GitHub connector rather than claiming browser success.
+
+### Final Code Validation
+
+- `python3 -B -m unittest discover -s tests -v`: **189 passed** after the final integration fixes.
+- `python3 -B -m py_compile knowledgeos/cli.py knowledgeos/guidance.py`: passed.
+- `examples/scenarios/run_guardrail_scenarios.sh`: **30 passed, 0 failed**.
+- Repository doctor: **1,688 passed, 0 failed**. Historical local evidence needed by this repository's doctor was preserved locally, not published as fabricated placeholders.
+- Isolated legacy-project doctor after audited repair: **383 passed, 0 failed**; existing data fixture remained byte-identical.
+- `make smoke` passed during integration; the final standalone test/scenario/doctor commands above revalidated the later integration fixes.
+- Staged diff whitespace and added-line private-path/credential-pattern scans passed. Only public source, tests, templates, Spec, and changelog/report files are selected; local ledgers, host snapshots, caches, and installed-tree changes are excluded.
+- Remaining qualification: authenticated host-client integration, interrupted OS/filesystem fault recovery beyond the tested lock/journal cases, and the full exact-model benchmark matrix. No claim of universal GPT-5 compatibility or freedom from all bugs.
+
 ## 2026-07-11 - Milestone Update: Verified Subagent Runtime Catalog
 
 Status: implemented and live-validated in KOS-T087

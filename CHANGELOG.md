@@ -6,6 +6,18 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ## Unreleased
 
+### Correctness And Lean Orchestration Candidate
+
+- Bind a task to its explicit Spec (or explicit none), freeze the binding per run, and preserve alignment history. An unrelated project active Spec is no longer silently adopted.
+- Separate registry declarations, resolvable adapters, current host availability, and verified executions. Keep unknown states visible and suppress the unavailable stock Maestro orchestrator without deleting custom entries.
+- Generate compact and guided prompts from one versioned safety contract. Existing unmarked/custom instructions require review rather than silent replacement; model names never lower safety gates.
+- Bind evaluation evidence to declared artifacts and policy hashes. Completion rejects stale evidence after changes; legacy evaluations without a fingerprint must be rerun.
+- Serialize completion and journal postflight attempts. Successful retries reuse matching sync evidence; interrupted or failed external attempts require reconciliation instead of automatic replay.
+- Recheck recorded artifact assertions against real files at completion, including after a fresh eval, so replacing verified content with a stub cannot reuse an old effect proof.
+- Reuse fingerprinted dispatch planning while rechecking authorization. Run creation binds dispatch evidence automatically; read-only inspection does not create caches. Preflight caches stay in ignored local state.
+- Emit idempotent, command-bound route/plan/dispatch checkpoint evidence from successful producers. Review, execute, and report remain evidence-backed explicit steps; legacy manual phases remain supported.
+- Preserve standalone diagnostics and manual phase commands. This candidate does not certify GPT-5/GPT-6 model performance or change the user's installed/global configuration automatically.
+
 ### Added
 
 - `verify-subagents` now validates challenge-bound parent attestations against an immutable run catalog snapshot and emits `SUBAGENT_CATALOG_OK` only when marker, cleanup, role-contract, catalog-integrity, and native stability checks pass.
