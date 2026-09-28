@@ -6,6 +6,13 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ## Unreleased
 
+### Startup Diagnostics Hotfix
+
+- Limit unresolved-placeholder checks to structured control-plane configuration, excluding run/thread evidence, snapshots, receipts, handoffs and backups. Keep real configuration placeholders blocking.
+- Render newly initialized agent/startup entries through the shared guidance renderer so paths containing spaces or apostrophes remain valid shell arguments and fingerprints match the project. Preserve existing custom entries and dry-run semantics.
+- Exclude cold archives, initialization backups and generated outputs from automatic harness project discovery; explicitly selected roots and nested live projects remain discoverable.
+- Add regression coverage for each reproduced failure and document validation and rollback boundaries in `docs/startup-diagnostic-report.md`.
+
 ### Unified Runtime Safety And Route Reuse
 
 - Preserve bounded subagent history controls in the schema-aware adapter; refuse implicit/full history without specific run-bound approval.
