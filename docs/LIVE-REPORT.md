@@ -2,6 +2,16 @@
 
 This file is the real-time construction log for the local KnowledgeOS build.
 
+## 2026-09-28 - Shared Runtime Safety Port
+
+An installed-only history guard would have been lost in a direct candidate
+replacement. Ported it to the host-schema-aware adapter, with failing-first
+tests for explicit isolation and specific approval. Missing-route recovery
+now reuses an existing profile without enlarging permissions or modifying
+historical task/run records. See [rollout boundaries](unified-runtime-rollout.md).
+The local launcher/global-rule activation is separately backed up; no private
+machine paths or migration receipts belong in the public release.
+
 ## 2026-09-28 - Lean Batch 3 Candidate Qualification
 
 The user selected candidate publication first and explicitly deferred the

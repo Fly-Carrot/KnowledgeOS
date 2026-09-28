@@ -23,12 +23,42 @@ def snapshot():
             "task_invocations": [],
             "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
             "tools": [{"name": "spawn_agent", "schema_version": "1", "input_schema": {
-                "type": "object", "properties": {"message": {"type": "string"}},
+                "type": "object", "properties": {"message": {"type": "string"}, "fork_context": {"type": "boolean"}},
                 "required": ["message"], "additionalProperties": False}}]},
                 attestation="host_attested", evidence="trusted-in-process-test-host")
 
 
 class RuntimeContractTests(unittest.TestCase):
+    def test_history_isolation_is_explicit_and_never_silently_widened(self):
+        host = snapshot()
+        self.assertIs(cli.runtime_contract(ENTRY, host)['runtime_arguments']['fork_context'], False)
+        for value in ('all', '9', '3', ''):
+            self.assertFalse(cli.runtime_contract({**ENTRY, 'fork_turns': value}, host)['runtime_callable'])
+        del host['tools'][0]['input_schema']['properties']['fork_context']
+        self.assertFalse(cli.runtime_contract(ENTRY, host)['runtime_callable'])
+        host['tools'][0]['input_schema']['properties']['fork_turns'] = {'type': 'string'}
+        self.assertEqual(cli.runtime_contract({**ENTRY, 'fork_turns': '3'}, host)['runtime_arguments']['fork_turns'], '3')
+
+    def test_full_history_requires_specific_command_backed_approval(self):
+        root = Path('/project')
+        event = {'decision_id': 'D1', 'task_id': 'T1', 'run_id': 'R1', 'kind': 'human_decision',
+                 'status': 'executed', 'evidence': 'user message explicitly approving fork_turns=all for codex-worker',
+                 'summary': 'Approve fork_turns=all for codex-worker', 'chosen': 'approve_full_history:codex-worker'}
+        with patch.object(cli, 'ensure_run_belongs_to_task', return_value=Path('/run')), \
+             patch.object(cli, 'load_decision_events', return_value=[event]), \
+             patch.object(cli, 'decision_event_has_command_event', return_value=True):
+            cli.require_full_history_approval(root, task_id='T1', run_id='R1', decision_id='D1', subagent_id='codex-worker')
+            for key, value in [('task_id', 'T2'), ('kind', 'final_decision'), ('evidence', ''), ('summary', 'Approve ordinary work')]:
+                changed = {**event, key: value}
+                with patch.object(cli, 'load_decision_events', return_value=[changed]), self.assertRaises(ValueError):
+                    cli.require_full_history_approval(root, task_id='T1', run_id='R1', decision_id='D1', subagent_id='codex-worker')
+            with patch.object(cli, 'decision_event_has_command_event', return_value=False), self.assertRaises(ValueError):
+                cli.require_full_history_approval(root, task_id='T1', run_id='R1', decision_id='D1', subagent_id='codex-worker')
+            for change in ({'summary': 'Deny fork_turns=all for codex-worker', 'chosen': 'deny'},
+                           {'summary': 'Approve fork_turns=all for codex-worker-extra', 'chosen': 'approve_full_history:codex-worker-extra'}):
+                with patch.object(cli, 'load_decision_events', return_value=[{**event, **change}]), self.assertRaises(ValueError):
+                    cli.require_full_history_approval(root, task_id='T1', run_id='R1', decision_id='D1', subagent_id='codex-worker')
+
     def test_source_label_alone_is_not_attestation(self):
         self.assertFalse(cli.valid_host_snapshot(dict(snapshot())))
 
@@ -270,7 +300,8 @@ class RuntimeContractTests(unittest.TestCase):
              patch.object(cli, "load_host_capability_snapshot", return_value=snapshot()):
             adapter = cli.build_subagent_adapter(Path('/project'), 'codex-worker')
         self.assertEqual(adapter["runtime_tool"], "spawn_agent")
-        self.assertEqual(set(adapter["runtime_arguments"]), {"message"})
+        self.assertEqual(set(adapter["runtime_arguments"]), {"message", "fork_context"})
+        self.assertIs(adapter["runtime_arguments"]["fork_context"], False)
         self.assertEqual(adapter["role_binding"], "prompt_only")
         self.assertEqual(adapter["execution_verified"], "unknown")
 
