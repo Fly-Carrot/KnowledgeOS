@@ -1,6 +1,6 @@
 SMOKE_TASK ?= KOS-T008
 
-.PHONY: doctor doctor-summary route tools dispatch guard migrate-plan reset-dry-run scenarios test smoke
+.PHONY: doctor doctor-summary route tools dispatch guard migrate-plan reset-dry-run scenarios test smoke release-project release-smoke
 
 doctor:
 	./bin/knowledgeos doctor --root . --project-root .
@@ -33,3 +33,9 @@ test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -v
 
 smoke: doctor-summary route tools dispatch guard scenarios test
+
+# Validate a distribution using fresh runtime state, never maintainer history.
+release-project:
+	bash ./examples/scenarios/run_release_smoke.sh
+
+release-smoke: release-project scenarios test

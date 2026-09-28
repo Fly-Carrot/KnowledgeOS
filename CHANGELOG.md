@@ -6,6 +6,43 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ## Unreleased
 
+### Lean Batch 3: Candidate Qualification
+
+- Add `make release-smoke` to validate a clean source export using freshly initialized runtime/project state, guardrail scenarios and all tests. Keep `make smoke` for local repository history; never fabricate missing private outputs or weaken doctor.
+- Make the doctor summary/path tests self-contained instead of dependent on the developer checkout; retain the original assertions and add a missing relative-linked schema refusal check.
+- Fix a reproduced legacy-route regression: interleaved route/dispatch checkpoints may precede context and plan within the execution envelope. Valid legacy routers remain byte-identical during audit/repair; short-route ordering and completion gates remain enforced.
+- Add clean-export, missing-source refusal and legacy checkpoint regressions, with an explicit [candidate validation report](docs/reports/lean-batch3-validation.md).
+- Publish only the reviewed candidate changes. Exact-model qualification is explicitly deferred, not inferred from deterministic tests; no automatic main merge, stable tag, installed-kernel replacement, app rebuild or bulk project migration.
+
+### Lean Batch 2: Short Entries And Launcher Isolation
+
+- Pin launcher imports to the selected checkout rather than the caller's same-named Python package, preserving working directory, arguments and exit codes.
+- Generate short global/project/startup entries from `knowledgeos.guidance` v2; load detailed guidance on demand before substantial work or any write/external effect. Missing or conflicting guidance stops affected mutation.
+- Preserve legacy client calls, in-flight bindings, custom rules, project strictness and explicit evidence reporting. Adjacent checkpoints may share a readable update; failures and skipped reasons remain visible.
+- Include workflow-route changes in the guidance fingerprint; keep compact and guided safety identical and retain guided as default.
+- Add disposable two-project/two-mode pilots, active-run history/rollback tests and launcher regressions. Global entry activation is separately backed up and scoped; no bulk kernel rollout or GitHub release occurs in this batch.
+
+### Lean Batch 1: Compatible Execution
+
+- Share route-contract validation between doctor and harness repair. Unmarked profiles retain `legacy-v1`; explicit `producer-bound-v1` profiles may omit redundant dispatch and standalone verification calls without losing completion checks.
+- Preserve valid short routes during audit/repair; unknown or malformed explicit contracts require review instead of silent conversion. Recognize command hints rather than command names embedded in prose.
+- Preserve command-backed manual dispatch decisions for unchanged legacy plans, repair missing producer checkpoints after an interrupted dispatch, and reject failed records as reuse candidates.
+- Prevent automatic postflight replay for legacy runs with prior evidence or completed status but no attempt journal. Require reconciliation or explicit pending, without rewriting the old postflight evidence.
+- Add isolated compatibility regressions and the [Batch 1 specification](docs/specs/lean-batch1.md). This batch does not replace global rules, migrate live projects, or publish a release.
+- Record a separately reproduced launcher import-precedence risk for pre-rollout follow-up; `bin/knowledgeos` is unchanged because this task's route does not authorize that path.
+
+### Correctness And Lean Orchestration Candidate
+
+- Bind a task to its explicit Spec (or explicit none), freeze the binding per run, and preserve alignment history. An unrelated project active Spec is no longer silently adopted.
+- Separate registry declarations, resolvable adapters, current host availability, and verified executions. Keep unknown states visible and suppress the unavailable stock Maestro orchestrator without deleting custom entries.
+- Generate compact and guided prompts from one versioned safety contract. Existing unmarked/custom instructions require review rather than silent replacement; model names never lower safety gates.
+- Bind evaluation evidence to declared artifacts and policy hashes. Completion rejects stale evidence after changes; legacy evaluations without a fingerprint must be rerun.
+- Serialize completion and journal postflight attempts. Successful retries reuse matching sync evidence; interrupted or failed external attempts require reconciliation instead of automatic replay.
+- Recheck recorded artifact assertions against real files at completion, including after a fresh eval, so replacing verified content with a stub cannot reuse an old effect proof.
+- Reuse fingerprinted dispatch planning while rechecking authorization. Run creation binds dispatch evidence automatically; read-only inspection does not create caches. Preflight caches stay in ignored local state.
+- Emit idempotent, command-bound route/plan/dispatch checkpoint evidence from successful producers. Review, execute, and report remain evidence-backed explicit steps; legacy manual phases remain supported.
+- Preserve standalone diagnostics and manual phase commands. This candidate does not certify GPT-5/GPT-6 model performance or change the user's installed/global configuration automatically.
+
 ### Added
 
 - `verify-subagents` now validates challenge-bound parent attestations against an immutable run catalog snapshot and emits `SUBAGENT_CATALOG_OK` only when marker, cleanup, role-contract, catalog-integrity, and native stability checks pass.

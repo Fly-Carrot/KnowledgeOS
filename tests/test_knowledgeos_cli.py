@@ -102,7 +102,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
             for entry in cli.load_tool_registry(project)
             if entry.get("kind") == "subagent"
             and entry.get("status") in cli.ACTIVE_TOOL_STATUSES
-            and cli.is_runtime_callable_subagent(entry)
+            and cli.is_adapter_resolvable_subagent(entry)
         ]
         native_ids = {item["id"] for item in cli.CODEX_NATIVE_SUBAGENTS}
         for subagent_id in registered:
@@ -140,33 +140,54 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertTrue(all(item["ok"] for item in payload), payload)
         self.assertTrue(any(item["label"] == "public_scan" for item in payload))
 
-    def test_doctor_summary_reduces_output(self):
-        full = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(ROOT))
-        summary = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(ROOT), "--summary")
-        self.assertIn("status: ok", summary.stdout)
-        self.assertIn("checks:", summary.stdout)
-        self.assertIn("failed: 0", summary.stdout)
-        self.assertNotIn("[OK]", summary.stdout)
-        self.assertLess(len(summary.stdout.splitlines()), len(full.stdout.splitlines()))
+    def doctor_fixture(self, directory):
+        project = Path(directory) / 'project'
+        runtime = Path(directory) / 'runtime'
+        project.mkdir()
+        self.run_cli('init-os', '--root', str(ROOT), '--os-root', str(runtime))
+        self.run_cli('init-project', '--root', str(ROOT), '--project-root', str(project),
+                     '--name', 'Doctor fixture', '--global-root', str(runtime / 'global-agent-fabric'),
+                     '--capability-root', str(runtime / 'capability-layer'))
+        return project, runtime
 
-        json_summary = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(ROOT), "--summary", "--json")
-        payload = json.loads(json_summary.stdout)
-        self.assertEqual(payload["status"], "ok")
-        self.assertGreater(payload["checks"], 0)
-        self.assertEqual(payload["failed"], 0)
-        self.assertEqual(payload["failed_checks"], [])
+    def test_doctor_summary_reduces_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _ = self.doctor_fixture(tmp)
+            full = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project))
+            summary = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
+            self.assertIn("status: ok", summary.stdout)
+            self.assertIn("checks:", summary.stdout)
+            self.assertIn("failed: 0", summary.stdout)
+            self.assertNotIn("[OK]", summary.stdout)
+            self.assertLess(len(summary.stdout.splitlines()), len(full.stdout.splitlines()))
+
+            json_summary = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary", "--json")
+            payload = json.loads(json_summary.stdout)
+            self.assertEqual(payload["status"], "ok")
+            self.assertGreater(payload["checks"], 0)
+            self.assertEqual(payload["failed"], 0)
+            self.assertEqual(payload["failed_checks"], [])
 
     def test_doctor_project_relative_paths_resolve_from_project_root(self):
         with tempfile.TemporaryDirectory() as tmp:
+            project, runtime = self.doctor_fixture(tmp)
+            for name in ('workspace.yaml', 'fabric-link.yaml'):
+                config = project / '.agent-os' / name
+                config.write_text(config.read_text().replace(str(runtime), '../runtime'))
             result = self.run_cli(
                 "doctor",
                 "--root",
                 str(ROOT),
                 "--project-root",
-                str(ROOT),
+                str(project),
                 "--summary",
                 cwd=tmp,
             )
+            (runtime / 'global-agent-fabric/schemas/phase-contract.md').unlink()
+            broken = self.run_cli('doctor', '--root', str(ROOT), '--project-root', str(project),
+                                  '--summary', cwd=tmp, check=False)
+            self.assertNotEqual(broken.returncode, 0)
+            self.assertIn('phase-contract.md', broken.stdout)
         self.assertIn("status: ok", result.stdout)
         self.assertIn("failed: 0", result.stdout)
 
@@ -668,7 +689,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 for entry in cli.load_tool_registry(project)
                 if entry.get("kind") == "subagent"
                 and entry.get("status") in cli.ACTIVE_TOOL_STATUSES
-                and cli.is_runtime_callable_subagent(entry)
+                and cli.is_adapter_resolvable_subagent(entry)
             ]
             missing_id = sorted(registered)[-1]
             self.seed_subagent_catalog(project, "T001", run_id, missing={missing_id}, native_attempts=1)
@@ -888,7 +909,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 for entry in cli.load_tool_registry(project)
                 if entry.get("kind") == "subagent"
                 and entry.get("status") in cli.ACTIVE_TOOL_STATUSES
-                and cli.is_runtime_callable_subagent(entry)
+                and cli.is_adapter_resolvable_subagent(entry)
             ]
             cli.ensure_subagent_catalog_snapshot(
                 project / ".agent-os" / "runs" / run_id,
@@ -1587,6 +1608,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 "--json",
             )
             spec_id = json.loads(created.stdout)["spec_id"]
+            self.run_cli("align-spec", "--project-root", str(project), "--task-id", "T001", "--spec-id", spec_id, "--json")
             started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
             run_id = json.loads(started.stdout)["run_id"]
             self.write_plan_context(project, "T001", run_id)
@@ -1610,7 +1632,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(result.returncode, 1)
-            self.assertIn("spec_drift", result.stderr)
+            self.assertRegex(result.stderr, r"spec[_ ]drift")
 
     def test_direct_spec_context_and_plan_writes_are_human_gated(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1811,6 +1833,9 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            # Evaluate against the policy actually used by the completion gate.
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id)
+
             blocked = self.run_cli(
                 "complete-task",
                 "--project-root",
@@ -1880,6 +1905,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 "effect_policy:\n  strictness: warn\n  required_for:\n    - declared_outputs\n",
                 encoding="utf-8",
             )
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id)
             completed = self.run_cli(
                 "complete-task",
                 "--project-root",
@@ -1910,6 +1936,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 "effect_policy:\n  strictness: off\n  downgrade_reason: migration grace period\n  required_for:\n    - declared_outputs\n",
                 encoding="utf-8",
             )
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", task_id, "--run-id", second_run)
             disabled = self.run_cli(
                 "complete-task",
                 "--project-root",
@@ -2563,6 +2590,8 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", task_id, "--run-id", run_id)
+
             blocked = self.run_cli(
                 "complete-task",
                 "--project-root",
@@ -2893,8 +2922,17 @@ class KnowledgeOSCliTests(unittest.TestCase):
             project = Path(tmp) / "ExampleProject"
             project.mkdir()
             self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
+            registry = project / ".agent-os/tool-registry.yaml"
+            registry.write_text(registry.read_text().replace(
+                "  - id: maestro\n", "  - id: maestro\n    source_path: custom:required-test-orchestrator\n"))
             started = self.run_cli("run-task", "--project-root", str(project), "--task-id", "T001", "--json")
             run_id = json.loads(started.stdout)["run_id"]
+            # Simulate loss of automatic dispatch evidence, not an obsolete run path.
+            run_dir = project / ".agent-os/runs" / run_id
+            for name, field in (("command-events.ndjson", "event_type"), ("phases.ndjson", "producer")):
+                ledger = run_dir / name
+                records = [json.loads(line) for line in ledger.read_text().splitlines()]
+                ledger.write_text("".join(json.dumps(row) + "\n" for row in records if row.get(field) != "dispatch-task"))
             for phase in ["route", "plan", "review", "dispatch", "execute", "report"]:
                 self.run_cli(
                     "phase-task",
@@ -3224,6 +3262,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
                 "required_phases:\n  default:\n\nskip_policy:\n  require_skip_reason: true\n",
                 encoding="utf-8",
             )
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id)
             result = self.run_cli(
                 "complete-task",
                 "--project-root",
@@ -3265,6 +3304,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.write_plan_context(project, "T001", run_id)
             fabric = project / ".agent-os" / "fabric-link.yaml"
             fabric.write_text(fabric.read_text(encoding="utf-8").replace("postflight_required: true", "postflight_required: false"), encoding="utf-8")
+            self.run_cli("eval-task", "--project-root", str(project), "--task-id", "T001", "--run-id", run_id)
             result = self.run_cli(
                 "complete-task",
                 "--project-root",
@@ -4162,7 +4202,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertEqual(payload["dispatch_marker"], "AGENT_DISPATCH_PLAN")
         self.assertIn("AGENT_DISPATCH_PLAN", payload["marker"])
         self.assertGreaterEqual(payload["dispatch_summary"]["planned_agents"], 1)
-        self.assertGreaterEqual(payload["dispatch_summary"]["runtime_callable_agents"], 1)
+        self.assertEqual(payload["dispatch_summary"]["runtime_callable_agents"], 0)
         stages = {step["stage"]: step for step in payload["steps"]}
         self.assertIn("subagent", stages)
         self.assertLessEqual(len(stages["subagent"]["tools"]), 3)
@@ -4172,9 +4212,11 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertIn("maestro-coder", subagent_ids)
         for tool in stages["subagent"]["tools"]:
             self.assertEqual(tool.get("runtime_tool"), "multi_agent_v1.spawn_agent")
-            self.assertTrue(tool.get("runtime_callable"))
-        orchestrator_ids = {tool["id"] for tool in stages["orchestrator"]["tools"]}
-        self.assertIn("maestro", orchestrator_ids)
+            self.assertFalse(tool.get("runtime_callable"))
+            self.assertTrue(tool.get("adapter_resolvable"))
+            self.assertEqual(tool.get("host_available"), "unknown")
+        orchestrator_ids = {tool["id"] for tool in stages.get("orchestrator", {}).get("tools", [])}
+        self.assertNotIn("maestro", orchestrator_ids)
         self.assertNotIn("agent-orchestrator", orchestrator_ids)
 
     def test_dispatch_task_plain_output_shows_agent_dispatch_plan(self):
@@ -4583,21 +4625,22 @@ class KnowledgeOSCliTests(unittest.TestCase):
             project.mkdir()
             self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
             result = self.run_cli("startup-prompt", "--project-root", str(project))
-            self.assertIn("trace-step", result.stdout)
+            self.assertIn("agent-guide --project-root", result.stdout)
+            self.assertIn("legacy", result.stdout)
+            self.assertIn("unavailable", result.stdout)
             self.assertIn("TRACE_OK", result.stdout)
-            self.assertIn("phase-task", result.stdout)
             self.assertIn("CHECKPOINT_OK", result.stdout)
             self.assertIn("AGENT_DISPATCH_PLAN", result.stdout)
-            self.assertIn("capability-event", result.stdout)
             self.assertIn("CAPABILITY_OK", result.stdout)
             self.assertIn("dispatch-report", result.stdout)
             self.assertIn("AGENT_DISPATCH_OK", result.stdout)
-            self.assertIn("artifact-assert", result.stdout)
             self.assertIn("EFFECT_OK", result.stdout)
-            self.assertIn("verify-effects", result.stdout)
-            self.assertIn("EFFECT_VERIFY_OK", result.stdout)
-            self.assertIn("flow-summary", result.stdout)
             self.assertIn("FLOW_OK", result.stdout)
+            # Detailed instructions are loaded once, not duplicated in every entry.
+            guide = self.run_cli("agent-guide", "--project-root", str(project)).stdout
+            for command in ("trace-step", "phase-task", "capability-event", "artifact-assert",
+                            "verify-effects", "EFFECT_VERIFY_OK", "flow-summary"):
+                self.assertIn(command, guide)
 
     def test_static_prompt_contracts_require_dispatch_report_markers(self):
         template = (ROOT / "templates" / "project-control-plane" / "AGENTS.md").read_text(encoding="utf-8")
@@ -4617,14 +4660,16 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertEqual(payload["status"], "dispatch_ready")
         stages = [step["stage"] for step in payload["steps"]]
         self.assertIn("branch_builder", stages)
-        self.assertIn("orchestrator", stages)
+        self.assertIn("subagent", stages)
+        self.assertNotIn("orchestrator", stages)
         self.assertIn("mcp", stages)
         self.assertIn("skill", stages)
-        self.assertLess(stages.index("branch_builder"), stages.index("orchestrator"))
-        self.assertLess(stages.index("orchestrator"), stages.index("mcp"))
+        self.assertLess(stages.index("branch_builder"), stages.index("subagent"))
+        self.assertLess(stages.index("subagent"), stages.index("mcp"))
         self.assertLess(stages.index("mcp"), stages.index("skill"))
         self.assertIn("execute", payload["dispatch_policy"]["consultation_checkpoints"])
         self.assertIn("complete", payload["dispatch_policy"]["consultation_checkpoints"])
+        self.assertEqual(payload["agent_opinion_required"], payload["approval_required"])
         self.assertTrue(payload["agent_opinion_required"])
         self.assertIn("Pause before execution", payload["agent_opinion_prompt"])
 
