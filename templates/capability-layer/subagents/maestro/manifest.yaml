@@ -1,0 +1,161 @@
+# Maestro adapter catalog.
+# Source of truth for adapter-backed Maestro role prompts.
+schema_version: knowledgeos.maestro-adapter.v1
+runtime_tool: multi_agent_v1.spawn_agent
+roles:
+  - id: maestro-accessibility-specialist
+    display_name: Maestro Accessibility Specialist
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-accessibility-specialist.yaml
+  - id: maestro-analytics-engineer
+    display_name: Maestro Analytics Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-analytics-engineer.yaml
+  - id: maestro-api-designer
+    display_name: Maestro Api Designer
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-api-designer.yaml
+  - id: maestro-architect
+    display_name: Maestro Architect
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-architect.yaml
+  - id: maestro-cloud-architect
+    display_name: Maestro Cloud Architect
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-cloud-architect.yaml
+  - id: maestro-cobol-engineer
+    display_name: Maestro Cobol Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-cobol-engineer.yaml
+  - id: maestro-code-reviewer
+    display_name: Maestro Code Reviewer
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-code-reviewer.yaml
+  - id: maestro-coder
+    display_name: Maestro Coder
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-coder.yaml
+  - id: maestro-compliance-reviewer
+    display_name: Maestro Compliance Reviewer
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-compliance-reviewer.yaml
+  - id: maestro-content-strategist
+    display_name: Maestro Content Strategist
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-content-strategist.yaml
+  - id: maestro-copywriter
+    display_name: Maestro Copywriter
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-copywriter.yaml
+  - id: maestro-data-engineer
+    display_name: Maestro Data Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-data-engineer.yaml
+  - id: maestro-database-administrator
+    display_name: Maestro Database Administrator
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-database-administrator.yaml
+  - id: maestro-db2-dba
+    display_name: Maestro Db2 Dba
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-db2-dba.yaml
+  - id: maestro-debugger
+    display_name: Maestro Debugger
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-debugger.yaml
+  - id: maestro-design-system-engineer
+    display_name: Maestro Design System Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-design-system-engineer.yaml
+  - id: maestro-devops-engineer
+    display_name: Maestro Devops Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-devops-engineer.yaml
+  - id: maestro-hlasm-assembler-specialist
+    display_name: Maestro Hlasm Assembler Specialist
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-hlasm-assembler-specialist.yaml
+  - id: maestro-i18n-specialist
+    display_name: Maestro I18N Specialist
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-i18n-specialist.yaml
+  - id: maestro-ibm-i-specialist
+    display_name: Maestro Ibm I Specialist
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-ibm-i-specialist.yaml
+  - id: maestro-integration-engineer
+    display_name: Maestro Integration Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-integration-engineer.yaml
+  - id: maestro-ml-engineer
+    display_name: Maestro Ml Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-ml-engineer.yaml
+  - id: maestro-mlops-engineer
+    display_name: Maestro Mlops Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-mlops-engineer.yaml
+  - id: maestro-mobile-engineer
+    display_name: Maestro Mobile Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-mobile-engineer.yaml
+  - id: maestro-observability-engineer
+    display_name: Maestro Observability Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-observability-engineer.yaml
+  - id: maestro-performance-engineer
+    display_name: Maestro Performance Engineer
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-performance-engineer.yaml
+  - id: maestro-platform-engineer
+    display_name: Maestro Platform Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-platform-engineer.yaml
+  - id: maestro-product-manager
+    display_name: Maestro Product Manager
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-product-manager.yaml
+  - id: maestro-prompt-engineer
+    display_name: Maestro Prompt Engineer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-prompt-engineer.yaml
+  - id: maestro-refactor
+    display_name: Maestro Refactor
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-refactor.yaml
+  - id: maestro-release-manager
+    display_name: Maestro Release Manager
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-release-manager.yaml
+  - id: maestro-security-engineer
+    display_name: Maestro Security Engineer
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-security-engineer.yaml
+  - id: maestro-seo-specialist
+    display_name: Maestro Seo Specialist
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-seo-specialist.yaml
+  - id: maestro-site-reliability-engineer
+    display_name: Maestro Site Reliability Engineer
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-site-reliability-engineer.yaml
+  - id: maestro-solutions-architect
+    display_name: Maestro Solutions Architect
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-solutions-architect.yaml
+  - id: maestro-technical-writer
+    display_name: Maestro Technical Writer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-technical-writer.yaml
+  - id: maestro-tester
+    display_name: Maestro Tester
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-tester.yaml
+  - id: maestro-ux-designer
+    display_name: Maestro Ux Designer
+    runtime_agent_type: worker
+    spec: capability-layer/subagents/maestro/maestro-ux-designer.yaml
+  - id: maestro-zos-sysprog
+    display_name: Maestro Zos Sysprog
+    runtime_agent_type: explorer
+    spec: capability-layer/subagents/maestro/maestro-zos-sysprog.yaml

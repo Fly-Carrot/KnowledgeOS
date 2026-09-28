@@ -1195,3 +1195,431 @@ tasks:
       - "harness-audit detects dispatch-task entries that lack --run-id as lifecycle drift"
       - "harness-audit apply upgrades all stale workflow profiles and doctor passes"
       - "Project5.5 dry-run audit reports every stale router profile consistently"
+  - id: KOS-T065
+    title: "Add composable HTML sidecar reports"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "html_report_surface"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/executable-control-plane.md"
+      - "docs/LIVE-REPORT.md"
+    acceptance:
+      - "render-html creates receipt and handoff HTML sidecars with source hash metadata"
+      - "render-html creates self-contained rich reports without remote assets"
+      - "render-html can compose fragment manifests into one HTML page"
+      - "doctor continues to trust canonical Markdown YAML and NDJSON evidence"
+  - id: KOS-T066
+    title: "Add capability effect verification gates"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "verifier_gate_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/executable-control-plane.md"
+      - "docs/LIVE-REPORT.md"
+      - "docs/route-bound-execution-guard.md"
+      - "docs/public-release-checklist.md"
+      - "docs/agent-guide.md"
+      - ".agent-os/effect-policy.yaml"
+      - ".agent-os/write-policy.yaml"
+      - ".agent-os/startup-prompt.md"
+      - "templates/project-control-plane/.agent-os/effect-policy.yaml"
+      - "templates/project-control-plane/.agent-os/write-policy.yaml"
+      - "templates/project-control-plane/.agent-os/startup-prompt.md"
+      - "templates/project-control-plane/AGENTS.md"
+      - ".agent-os/specs.yaml"
+      - ".agent-os/specs/SPEC-20260519-001/"
+      - ".agent-os/workflows/router.yaml"
+      - "docs/agentos-architecture.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "docs/quickstart.md"
+      - "docs/spec-context-plan.md"
+      - "docs/workflow-router.md"
+      - "templates/project-control-plane/.agent-os/workflows/router.yaml"
+    acceptance:
+      - "effect-policy controls observe warn enforce and off strictness modes"
+      - "artifact-assert records EFFECT_OK only after touching the real artifact"
+      - "verify-effects detects missing or forged effect assertions"
+      - "complete-task enforces or reports effect verification according to policy"
+      - "doctor and guardrail tests cover the new effect verifier contract"
+  - id: KOS-T067
+    title: "Create HTML summary for capability effect verification changes"
+    type: "report_task"
+    status: cancelled
+    complexity: "low"
+    risk: "low"
+    outputs:
+      - "reports/drafts/capability-effect-verification-summary.md"
+      - "reports/drafts/capability-effect-verification-summary.html"
+      - "reports/drafts/capability-effect-verification-summary.manifest.json"
+    acceptance:
+      - "summary explains the change set, bug roots, verification evidence, and current status"
+      - "HTML is generated as a sidecar from Markdown and includes source hash metadata"
+  - id: KOS-T068
+    title: "Create HTML summary for capability effect verification changes"
+    type: "route_bound_execution_guard"
+    status: cancelled
+    complexity: "low"
+    risk: "low"
+    outputs:
+      - ".agent-os/tasks.yaml"
+      - "reports/drafts/capability-effect-verification-summary.md"
+      - "reports/drafts/capability-effect-verification-summary.html"
+      - "reports/drafts/capability-effect-verification-summary.manifest.json"
+    acceptance:
+      - "supersede the unroutable report_task intake entry without deleting evidence"
+      - "summary explains the change set, bug roots, verification evidence, and current status"
+      - "HTML is generated as a sidecar from Markdown and includes source hash metadata"
+  - id: KOS-T069
+    title: "Create docs HTML summary for capability effect verification changes"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "low"
+    risk: "low"
+    outputs:
+      - "docs/capability-effect-verification-summary.md"
+      - "docs/capability-effect-verification-summary.html"
+      - "docs/capability-effect-verification-summary.manifest.json"
+    acceptance:
+      - "summary explains the change set, bug roots, verification evidence, and current status"
+      - "HTML is generated as a sidecar from Markdown and includes source hash metadata"
+  - id: KOS-T070
+    title: "Restore report_task route profile after HTML summary dry run"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "low"
+    risk: "router_config_regression"
+    outputs:
+      - ".agent-os/workflows/router.yaml"
+    acceptance:
+      - "doctor passes after cancelled report_task intake entries remain in task history"
+      - "report_task routes reports docs outputs and knowledge without weakening lifecycle gates"
+  - id: KOS-T071
+    title: "Add explicit effect verification marker"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "low"
+    risk: "verifier_reporting_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/executable-control-plane.md"
+      - "docs/agent-guide.md"
+      - "docs/route-bound-execution-guard.md"
+      - "docs/public-release-checklist.md"
+      - "docs/LIVE-REPORT.md"
+      - ".agent-os/startup-prompt.md"
+      - "templates/project-control-plane/.agent-os/startup-prompt.md"
+      - "templates/project-control-plane/AGENTS.md"
+    acceptance:
+      - "verify-effects plain output includes EFFECT_VERIFY_OK with status strictness assertion warning and error counts"
+      - "verify-effects --json includes effect_verify_marker and marker fields"
+      - "agent guides require relaying EFFECT_VERIFY_OK before claiming effect verification success"
+      - "tests and doctor pass"
+  - id: KOS-T072
+    title: "Audit staged diff and robustness before GitHub sync"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "guardrail_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/LIVE-REPORT.md"
+      - "docs/public-release-checklist.md"
+    acceptance:
+      - "staged and unstaged diff boundaries are reviewed before commit"
+      - "full tests and guardrail scenarios pass after any bug fix"
+      - "bug audit reports root cause reproduction fix and verification"
+  - id: KOS-T073
+    title: "Update changelog and publish staged KnowledgeOS release"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "low"
+    risk: "release_sync"
+    outputs:
+      - "CHANGELOG.md"
+    acceptance:
+      - "CHANGELOG documents capability effect verification and HTML sidecar release notes"
+      - "staged release commit is pushed to GitHub"
+  - id: KOS-T074
+    title: "Add local external-write policy overlay for Antigravity runtime migration"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "normal"
+    outputs:
+      - "knowledgeos/cli.py"
+    acceptance:
+      - "KnowledgeOS can classify explicitly whitelisted local runtime paths outside the project root without opening broad external write access; local-only policy stays under .knowledgeos-local/; doctor and tests pass."
+  - id: KOS-T075
+    title: "Migrate local Gemini CLI workflow to Antigravity CLI with KnowledgeOS compatibility"
+    type: "migration_task"
+    status: completed
+    complexity: "medium"
+    risk: "normal"
+    outputs:
+      - ".knowledgeos-local/migrations/antigravity-cli-migration-20260527.md"
+    acceptance:
+      - "Antigravity CLI installs successfully, existing workflow extensions are reconciled or replaced, and KnowledgeOS boot/sync workflow remains usable."
+  - id: KOS-T076
+    title: "Cleanly uninstall Antigravity CLI and Gemini CLI from local machine"
+    type: "migration_task"
+    status: completed
+    complexity: "medium"
+    risk: "normal"
+    outputs:
+      - ".knowledgeos-local/migrations/cli-uninstall-20260529.md"
+    acceptance:
+      - "gemini, agy, and agy-knowledgeos commands are absent; CLI-owned config/cache wrappers are removed or intentionally retained with rationale; verification evidence is recorded"
+  - id: KOS-T077
+    title: "Add Decision Graph module"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "decision_trace_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/decision-graph-module.md"
+      - "docs/executable-control-plane.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "docs/agent-guide.md"
+      - "templates/project-control-plane/AGENTS.md"
+      - "templates/project-control-plane/.agent-os/decision-policy.yaml"
+      - ".agent-os/decision-policy.yaml"
+      - ".agent-os/specs.yaml"
+      - ".agent-os/specs/"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "decision-event records DECISION_OK decision ledger entries with command evidence"
+      - "decision-query filters decision graph events by run status kind and parent"
+      - "verify-decisions validates command evidence orphan nodes and unresolved decision branches"
+      - "render-html decision-map generates self-contained HTML sidecar from decision ledger"
+      - "complete-task enforces decision verification only when decision-policy strictness is enforce"
+  - id: KOS-T078
+    title: "Add readable completion mission flow"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "normal"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/executable-control-plane.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "docs/agent-guide.md"
+      - "templates/project-control-plane/AGENTS.md"
+      - "templates/project-control-plane/.agent-os/startup-prompt.md"
+      - ".agent-os/startup-prompt.md"
+      - "CHANGELOG.md"
+      - "docs/LIVE-REPORT.md"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "flow-summary emits a readable layered Mermaid mission flow with FLOW_OK"
+      - "render-html --kind mission-flow writes a self-contained HTML sidecar"
+      - "the feature remains presentation/reporting layer, not kernel"
+      - "doctor, targeted tests, full tests, scenarios, and smoke pass"
+  - id: KOS-T079
+    title: "Add chat-level Thread Plan Ledger"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "normal"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/executable-control-plane.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "docs/agent-guide.md"
+      - "docs/thread-plan-ledger.md"
+      - "docs/public-release-checklist.md"
+      - "templates/project-control-plane/AGENTS.md"
+      - "templates/project-control-plane/.agent-os/startup-prompt.md"
+      - "templates/project-control-plane/.agent-os/write-policy.yaml"
+      - ".agent-os/startup-prompt.md"
+      - ".agent-os/write-policy.yaml"
+      - "CHANGELOG.md"
+      - "docs/LIVE-REPORT.md"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "thread-plan start creates a chat-level append-only ledger and current thread pointer"
+      - "thread-plan append, current, link-run, and render work with readable natural language output"
+      - "thread-plan does not block complete-task or lifecycle verification"
+      - "markdown, mermaid, and self-contained HTML outputs are generated from source ledger"
+      - "doctor, tests, guardrail scenarios, smoke, and diff check pass"
+  - id: KOS-T080
+    title: "Audit and harden Thread Plan Ledger before GitHub publish"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "guardrail_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/thread-plan-ledger.md"
+      - "docs/executable-control-plane.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "docs/agent-guide.md"
+      - "docs/public-release-checklist.md"
+      - "templates/project-control-plane/AGENTS.md"
+      - "templates/project-control-plane/.agent-os/startup-prompt.md"
+      - "templates/project-control-plane/.agent-os/write-policy.yaml"
+      - ".agent-os/startup-prompt.md"
+      - ".agent-os/write-policy.yaml"
+      - "CHANGELOG.md"
+      - "docs/LIVE-REPORT.md"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "bug audit reproduces any issue before fixing"
+      - "thread-plan and lifecycle tests pass"
+      - "public diff leak scan passes before push"
+      - "changes are pushed to GitHub branch"
+  - id: KOS-T081
+    title: "Loosen HTML sidecar presentation constraints"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "report_contract_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/executable-control-plane.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "docs/LIVE-REPORT.md"
+    acceptance:
+      - "render-html supports default minimal bare and fragment presentation modes"
+      - "all presentation modes preserve required source metadata and source-of-truth notice"
+      - "default mode remains backward compatible while minimal and bare avoid forced hero/sidebar layout"
+      - "tests and doctor pass"
+  - id: KOS-T082
+    title: "Add explicit agent dispatch reporting"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "report_contract_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/executable-control-plane.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "docs/LIVE-REPORT.md"
+    acceptance:
+      - "dispatch-task exposes AGENT_DISPATCH_PLAN in text and JSON output"
+      - "dispatch-report summarizes actual capability events with AGENT_DISPATCH_OK"
+      - "complete-task returns and receipts agent dispatch summary"
+      - "targeted tests, doctor, and diff checks pass"
+  - id: KOS-T083
+    title: "Make agent dispatch reporting mandatory in prompts"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "prompt_contract_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "templates/project-control-plane/AGENTS.md"
+      - "docs/agent-guide.md"
+      - ".agent-os/startup-prompt.md"
+      - "docs/LIVE-REPORT.md"
+      - "tests/test_knowledgeos_cli.py"
+    acceptance:
+      - "startup prompt and project template require AGENT_DISPATCH_PLAN and AGENT_DISPATCH_OK reporting"
+      - "agent guide documents dispatch-report as final visible marker"
+      - "tests cover the prompt contract"
+  - id: KOS-T084
+    title: "Upgrade dispatch report to full capability decision report"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "prompt_contract_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "templates/project-control-plane/AGENTS.md"
+      - ".agent-os/startup-prompt.md"
+      - "docs/agent-guide.md"
+      - "docs/LIVE-REPORT.md"
+      - "tests/test_knowledgeos_cli.py"
+    acceptance:
+      - "dispatch-report summarizes all capability kinds, skipped agents, evidence, and gaps"
+      - "startup and template prompts require every conversation to run KnowledgeOS judgment before success claims"
+      - "tests verify full capability report wording and global prompt contract"
+  - id: KOS-T085
+    title: "Publish latest KnowledgeOS update to GitHub"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "medium"
+    risk: "release"
+    outputs:
+      - ".gitignore"
+      - "CHANGELOG.md"
+      - "docs/LIVE-REPORT.md"
+      - "knowledgeos/cli.py"
+      - "templates/project-control-plane/AGENTS.md"
+      - ".agent-os/startup-prompt.md"
+      - "docs/agent-guide.md"
+      - "docs/executable-control-plane.md"
+      - "docs/knowledgeos-operating-spec.md"
+      - "tests/test_knowledgeos_cli.py"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "local-only files are ignored before staging"
+      - "security and secret scans pass before commit"
+      - "latest changes are committed and pushed to GitHub"
+  - id: KOS-T086
+    title: "Register runtime-native and Maestro adapter subagents"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "high"
+    risk: "capability_orchestration_regression"
+    outputs:
+      - ".agent-os/tool-registry.yaml"
+      - "templates/project-control-plane/.agent-os/tool-registry.yaml"
+      - "capability-layer/subagents/maestro/manifest.yaml"
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - ".agent-os/startup-prompt.md"
+      - "templates/project-control-plane/AGENTS.md"
+      - "docs/agent-guide.md"
+      - "docs/executable-control-plane.md"
+      - "docs/capability-orchestration.md"
+      - "docs/executable-control-plane.md"
+      - "CHANGELOG.md"
+      - "docs/LIVE-REPORT.md"
+      - ".agent-os/tasks.yaml"
+    acceptance:
+      - "global and template registries expose codex-default codex-explorer and codex-worker"
+      - "subagent-adapter emits SUBAGENT_ADAPTER_OK for maestro-architect"
+      - "dispatch-task limits Maestro candidates and exposes runtime callable metadata"
+      - "harness-audit can repair old projects missing runtime-native subagents"
+      - "tests doctor guardrail scenarios smoke and security scans pass"
+  - id: KOS-T087
+    title: "Repair explorer runtime lifecycle and verify all subagents"
+    type: "route_bound_execution_guard"
+    status: completed
+    complexity: "complex"
+    risk: "runtime_lifecycle_regression"
+    outputs:
+      - "knowledgeos/cli.py"
+      - "tests/test_knowledgeos_cli.py"
+      - "docs/subagent-runtime-validation.md"
+      - "docs/subagent-runtime-validation.html"
+      - "docs/subagent-runtime-validation.fragment.html"
+      - "docs/subagent-runtime-validation.manifest.json"
+      - ".agent-os/startup-prompt.md"
+      - "templates/project-control-plane/.agent-os/startup-prompt.md"
+      - "templates/project-control-plane/AGENTS.md"
+      - "docs/agent-guide.md"
+      - "docs/capability-orchestration.md"
+      - "CHANGELOG.md"
+      - "docs/LIVE-REPORT.md"
+    acceptance:
+      - "codex-explorer failure is reproduced before any fix"
+      - "native subagents pass three consecutive live lifecycle smokes"
+      - "all registered Maestro roles pass an individual live role-contract smoke"
+      - "runtime gaps remain explicit and never count as completed agents"
+      - "full tests, doctor, guardrail scenarios, privacy scan, and staged diff review pass"

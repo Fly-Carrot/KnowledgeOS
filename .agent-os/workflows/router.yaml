@@ -47,6 +47,39 @@ workflows:
     notes:
       - Inventory local state without copying secrets into public docs.
 
+  migration_task:
+    route_order:
+      - doctor --project-root .
+      - route-task --project-root . --task-id <task-id>
+      - check-route-write --project-root . --task-id <task-id> --path <planned-path>
+      - run-task --project-root . --task-id <task-id>
+      - dispatch-task --project-root . --task-id <task-id> --run-id <run-id>
+      - context-pack --project-root . --task-id <task-id> --run-id <run-id>
+      - plan-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+      - phase-task --project-root . --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>
+      - eval-task --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-context --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-lifecycle --project-root . --task-id <task-id> --run-id <run-id>
+      - verify-effects --project-root . --task-id <task-id> --run-id <run-id>
+      - complete-task --project-root . --task-id <task-id> --run-id <run-id> --summary <summary>
+    eval_profile: migration_task
+    human_gate: explicit_approval
+    allow_external_controlled: true
+    allowed_outputs:
+      - .knowledgeos-local/
+      - docs/
+      - knowledgeos/
+      - tests/
+      - global-agent-fabric/
+      - .agent-os/tool-registry.yaml
+      - .agent-os/dispatch-policy.yaml
+      - .agent-os/workflows/
+      - .agent-os/write-policy.yaml
+      - README.md
+    notes:
+      - External runtime writes stay denied by default and must flow through the local external-write overlay.
+      - Use this route for reversible local migrations such as CLI install/import work, not for broad public template changes.
+
   template_design:
     route_order:
       - doctor --root . --project-root templates/project-control-plane --template
@@ -230,6 +263,7 @@ workflows:
       - .agent-os/workspace.yaml
       - .agent-os/tool-registry.yaml
       - .agent-os/startup-prompt.md
+      - .agent-os/decision-policy.yaml
       - .agent-os/effect-policy.yaml
       - .agent-os/phase-policy.yaml
       - .agent-os/read-policy.yaml

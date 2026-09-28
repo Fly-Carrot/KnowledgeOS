@@ -2,4 +2,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" exec python3 -B -m knowledgeos "$@"
+# Pin imports to this checkout without changing the caller's project directory.
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" exec python3 -B -c \
+  'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("knowledgeos", run_name="__main__", alter_sys=True)' \
+  "$ROOT" "$@"

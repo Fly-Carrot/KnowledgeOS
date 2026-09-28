@@ -17,6 +17,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -45,6 +46,8 @@ REQUIRED_PUBLIC_FILES = [
     "docs/spec-context-plan.md",
     "docs/reset-and-migration.md",
     "docs/archive-policy.md",
+    "docs/decision-graph-module.md",
+    "docs/thread-plan-ledger.md",
     "templates/governance-core/README.md",
     "templates/governance-core/STRUCTURE-CHECK.md",
     "templates/governance-core/rules/global.md",
@@ -68,6 +71,7 @@ REQUIRED_PUBLIC_FILES = [
     "templates/governance-core/sync/import-state.json",
     "templates/capability-layer/README.md",
     "templates/capability-layer/STRUCTURE-CHECK.md",
+    "templates/capability-layer/subagents/maestro/manifest.yaml",
     "templates/project-control-plane/AGENTS.md",
     "examples/scenarios/README.md",
     "examples/scenarios/distracted-agent-guardrails.md",
@@ -78,6 +82,7 @@ REQUIRED_PUBLIC_FILES = [
     "templates/project-control-plane/.agent-os/tasks.yaml",
     "templates/project-control-plane/.agent-os/specs.yaml",
     "templates/project-control-plane/.agent-os/phase-policy.yaml",
+    "templates/project-control-plane/.agent-os/decision-policy.yaml",
     "templates/project-control-plane/.agent-os/effect-policy.yaml",
     "templates/project-control-plane/.agent-os/read-policy.yaml",
     "templates/project-control-plane/.agent-os/write-policy.yaml",
@@ -136,6 +141,11 @@ WRITE_POLICY_SECTIONS = {
     "forbidden_without_human_gate",
     "require_receipt_for",
 }
+LOCAL_EXTERNAL_WRITE_POLICY_SECTIONS = {
+    "external_controlled",
+    "external_forbidden_without_human_gate",
+    "external_require_receipt_for",
+}
 READ_POLICY_SECTIONS = {
     "default_context",
     "cold_storage",
@@ -145,8 +155,64 @@ READ_POLICY_SECTIONS = {
 
 EXPECTED_PHASE_KEYS = ["route", "plan", "review", "dispatch", "execute", "report"]
 PHASE_STATUSES = {"completed", "skipped"}
-CAPABILITY_EVENT_KINDS = {"mcp", "skill", "subagent", "orchestrator", "script", "shell", "file_read"}
+CAPABILITY_EVENT_KINDS = {
+    "app",
+    "browser",
+    "chrome",
+    "file_read",
+    "github",
+    "mcp",
+    "plugin",
+    "script",
+    "security",
+    "shell",
+    "skill",
+    "web",
+    "subagent",
+    "orchestrator",
+}
+AGENT_CAPABILITY_KINDS = {"orchestrator", "subagent"}
+SKIPPED_CAPABILITY_STATUSES = {"skipped", "skip", "not_needed", "not-needed", "timed_out", "timed-out", "timeout", "blocked", "close_failed", "close-failed", "interrupted", "orphaned", "errored", "failed", "cancelled", "canceled"}
+RUNTIME_GAP_CAPABILITY_STATUSES = {"timed_out", "timed-out", "timeout", "close_failed", "close-failed", "interrupted", "orphaned", "errored", "failed", "cancelled", "canceled"}
+SUBAGENT_SMOKE_MARKER = "SUBAGENT_SMOKE_OK"
+SUBAGENT_CATALOG_MARKER = "SUBAGENT_CATALOG_OK"
+DEFAULT_NATIVE_SUBAGENT_SUCCESSES = 3
+SUBAGENT_RUNTIME_BOUNDARY = (
+    "Runtime boundary: You are a bounded delegated subagent, not the parent orchestrator. "
+    "Work directly on the assigned scope and return findings to the parent. Do not create or reopen KnowledgeOS tasks/specs, "
+    "run completion/postflight, or recursively spawn subagents unless the parent explicitly delegates orchestration. "
+    "The parent owns lifecycle and capability evidence."
+)
 EFFECT_STRICTNESS_LEVELS = {"observe", "warn", "enforce", "off"}
+DECISION_STRICTNESS_LEVELS = {"warn", "enforce", "off"}
+DECISION_EVENT_KINDS = {
+    "plan_node",
+    "branch_opened",
+    "branch_selected",
+    "step_inserted",
+    "branch_abandoned",
+    "rollback",
+    "superseded",
+    "deferred",
+    "human_decision",
+    "risk_tradeoff",
+    "final_decision",
+}
+DECISION_EVENT_STATUSES = {
+    "planned",
+    "active",
+    "selected",
+    "executed",
+    "skipped",
+    "abandoned",
+    "rolled_back",
+    "superseded",
+    "deferred",
+    "blocked",
+}
+DECISION_EXPLANATION_REQUIRED_KINDS = {"branch_abandoned", "rollback", "superseded"}
+THREAD_PLAN_EVENT_KINDS = {"plan", "phase", "branch", "decision", "progress", "change", "summary"}
+THREAD_PLAN_MARKER = "THREAD_PLAN_OK"
 EFFECT_ASSERTION_KINDS = {
     "file_exists",
     "file_nonempty",
@@ -200,11 +266,52 @@ LIFECYCLE_COMMAND_MARKERS = [
     "verify-effects",
     "complete-task",
 ]
+LEGACY_LIFECYCLE_CONTRACT = "legacy-v1"
+PRODUCER_BOUND_LIFECYCLE_CONTRACT = "producer-bound-v1"
 TASK_STATUSES = {"backlog", "ready", "in_progress", "blocked", "completed", "cancelled"}
 RUNNABLE_TASK_STATUSES = {"ready", "in_progress"}
 TOOL_KINDS = {"mcp", "skill", "workflow", "orchestrator", "subagent", "memory"}
 TOOL_STATUSES = {"enabled", "disabled", "optional", "recommended", "configured", "indexed"}
 ACTIVE_TOOL_STATUSES = {"enabled", "recommended", "configured", "indexed"}
+CODEX_RUNTIME_TOOL = "multi_agent_v1.spawn_agent"
+CODEX_RUNTIME_AGENT_TYPES = {"default", "explorer", "worker"}
+SUBAGENT_CANDIDATE_LIMIT = 3
+CODEX_NATIVE_SUBAGENTS = [
+    {
+        "id": "codex-default",
+        "runtime_agent_type": "default",
+        "task_fit": "capability_orchestration,knowledge_structuring,report_task,documentation_task",
+        "capability_fit": "codex_native,default_agent,general_execution",
+        "scope": "codex-native-subagent",
+    },
+    {
+        "id": "codex-explorer",
+        "runtime_agent_type": "explorer",
+        "task_fit": "research_task,documentation_task,analysis_task,security_audit,architecture_design",
+        "capability_fit": "codex_native,exploration,read_only,research",
+        "scope": "codex-native-subagent",
+    },
+    {
+        "id": "codex-worker",
+        "runtime_agent_type": "worker",
+        "task_fit": "engineering_change,route_bound_execution_guard,executable_control_plane,workflow_routing,tool_registry",
+        "capability_fit": "codex_native,implementation,read_write,tests",
+        "scope": "codex-native-subagent",
+    },
+]
+SUBAGENT_PREFERENCES_BY_TASK = {
+    "analysis_task": ["codex-explorer", "maestro-analytics-engineer", "codex-default"],
+    "architecture_design": ["maestro-architect", "codex-explorer", "maestro-api-designer"],
+    "capability_orchestration": ["codex-default", "maestro-architect", "maestro-coder"],
+    "documentation_task": ["codex-explorer", "maestro-technical-writer", "codex-default"],
+    "engineering_change": ["codex-worker", "maestro-coder", "maestro-code-reviewer"],
+    "executable_control_plane": ["codex-worker", "maestro-architect", "maestro-coder"],
+    "report_task": ["codex-default", "codex-explorer", "maestro-technical-writer"],
+    "route_bound_execution_guard": ["codex-worker", "maestro-coder", "maestro-code-reviewer"],
+    "security_audit": ["maestro-security-engineer", "maestro-code-reviewer", "codex-explorer"],
+    "tool_registry": ["codex-worker", "maestro-architect", "codex-default"],
+    "workflow_routing": ["codex-worker", "maestro-architect", "maestro-coder"],
+}
 DISPATCH_POLICY_SECTIONS = {
     "default_order",
     "always_consult_before",
@@ -520,6 +627,41 @@ def validate_effect_policy(project_root: Path) -> list[CheckResult]:
     return results
 
 
+def parse_decision_policy(project_root: Path) -> dict[str, Any]:
+    policy_path = project_root / ".agent-os" / "decision-policy.yaml"
+    if not policy_path.exists():
+        return {
+            "exists": False,
+            "strictness": "warn",
+            "downgrade_reason": "",
+        }
+    scalars = parse_scalar_values(policy_path, {"strictness", "downgrade_reason"})
+    return {
+        "exists": True,
+        "strictness": (scalars.get("strictness") or "warn").lower(),
+        "downgrade_reason": scalars.get("downgrade_reason", ""),
+    }
+
+
+def validate_decision_policy(project_root: Path) -> list[CheckResult]:
+    policy = parse_decision_policy(project_root)
+    strictness = str(policy.get("strictness", "warn"))
+    results = [
+        CheckResult(
+            strictness in DECISION_STRICTNESS_LEVELS,
+            "decision_policy",
+            f"strictness={strictness}" if strictness in DECISION_STRICTNESS_LEVELS else f"invalid strictness={strictness}",
+        )
+    ]
+    if not policy.get("exists"):
+        results.append(CheckResult(True, "decision_policy", "missing decision-policy defaults to strictness=warn"))
+        return results
+    if strictness == "off":
+        reason = str(policy.get("downgrade_reason", "")).strip()
+        results.append(CheckResult(bool(reason), "decision_policy", "strictness=off requires downgrade_reason"))
+    return results
+
+
 def parse_named_blocks(path: Path) -> list[dict[str, str]]:
     blocks: list[dict[str, str]] = []
     current: dict[str, str] | None = None
@@ -655,6 +797,13 @@ def load_write_policy(project_root: Path) -> dict[str, list[str]]:
     if not policy_path.exists():
         raise FileNotFoundError(f"missing write policy: {policy_path}")
     return parse_simple_list_sections(policy_path, WRITE_POLICY_SECTIONS)
+
+
+def load_local_external_write_policy(project_root: Path) -> dict[str, list[str]]:
+    policy_path = project_root / ".knowledgeos-local" / "write-policy.local.yaml"
+    if not policy_path.exists():
+        return {section: [] for section in LOCAL_EXTERNAL_WRITE_POLICY_SECTIONS}
+    return parse_simple_list_sections(policy_path, LOCAL_EXTERNAL_WRITE_POLICY_SECTIONS)
 
 
 def load_read_policy(project_root: Path) -> dict[str, list[str]]:
@@ -806,8 +955,249 @@ def choose_tools(entries: list[dict[str, str]], kind: str, task_type: str, capab
     return chosen
 
 
-def tool_summary(entry: dict[str, str]) -> dict[str, Any]:
-    return {
+def runtime_agent_type_for_entry(entry: dict[str, str]) -> str:
+    explicit = entry.get("runtime_agent_type", "").strip()
+    if explicit in CODEX_RUNTIME_AGENT_TYPES:
+        return explicit
+    capability_fit = set(split_csv(entry.get("capability_fit", "")))
+    entry_id = entry.get("id", "")
+    if entry_id == "codex-default":
+        return "default"
+    if entry_id == "codex-explorer":
+        return "explorer"
+    if entry_id == "codex-worker":
+        return "worker"
+    if entry_id.startswith("maestro-"):
+        if "full" in capability_fit or "read_write" in capability_fit:
+            return "worker"
+        if "read_only" in capability_fit or "read_shell" in capability_fit:
+            return "explorer"
+        return "default"
+    return ""
+
+
+def is_adapter_resolvable_subagent(entry: dict[str, str]) -> bool:
+    if entry.get("kind") != "subagent":
+        return False
+    runtime_tool = entry.get("runtime_tool", "")
+    runtime_type = runtime_agent_type_for_entry(entry)
+    return runtime_tool == CODEX_RUNTIME_TOOL and runtime_type in CODEX_RUNTIME_AGENT_TYPES
+
+
+def is_runtime_callable_subagent(entry: dict[str, str]) -> bool:
+    return runtime_contract(entry, load_host_capability_snapshot())["runtime_callable"] is True
+
+
+def select_subagent_candidates(entries: list[dict[str, str]], task_type: str, limit: int = SUBAGENT_CANDIDATE_LIMIT) -> list[dict[str, str]]:
+    active = [entry for entry in entries if entry.get("kind") == "subagent" and entry.get("status") in ACTIVE_TOOL_STATUSES]
+    by_id = {entry.get("id", ""): entry for entry in active}
+    selected: list[dict[str, str]] = []
+
+    def add(entry: dict[str, str] | None) -> None:
+        if not entry:
+            return
+        if entry in selected:
+            return
+        selected.append(entry)
+
+    for preferred_id in SUBAGENT_PREFERENCES_BY_TASK.get(task_type, []):
+        add(by_id.get(preferred_id))
+        if len(selected) >= limit:
+            return selected[:limit]
+
+    fitted = choose_tools(entries, "subagent", task_type)
+    fitted.sort(
+        key=lambda item: (
+            0 if is_adapter_resolvable_subagent(item) else 1,
+            0 if item.get("id", "").startswith("codex-") else 1,
+            item.get("id", ""),
+        )
+    )
+    for entry in fitted:
+        add(entry)
+        if len(selected) >= limit:
+            return selected[:limit]
+
+    for fallback_id in ["codex-default", "maestro-architect", "codex-explorer", "codex-worker"]:
+        add(by_id.get(fallback_id))
+        if len(selected) >= limit:
+            return selected[:limit]
+    return selected[:limit]
+
+
+class HostCapabilitySnapshot(dict):
+    """In-process attestation boundary, not a serializable credential.
+
+    Only a trusted embedding host may construct host_attested snapshots. CLI file
+    imports are parent_attested observations and cannot grant authorization.
+    Neither mode authenticates a remote host or proves tool execution.
+    """
+    def __init__(self, payload: dict[str, Any], *, attestation: str, evidence: str):
+        super().__init__(payload)
+        self.attestation = attestation
+        self.evidence = evidence
+        self.expected_host = payload.get("host_id")
+        self.expected_session = payload.get("session_id")
+        self.import_digest = ""
+
+
+def import_host_capability_snapshot(path: Path, *, host_id: str, session_id: str,
+                                    expected_sha256: str, evidence: str) -> HostCapabilitySnapshot:
+    """Explicit, content-pinned parent import. SHA256 is integrity, not authentication."""
+    if not host_id or not session_id or not evidence or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise ValueError("host import requires host/session, SHA256 and parent attestation evidence")
+    raw = path.read_bytes()
+    if len(raw) > 2 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise ValueError("host snapshot size or SHA256 mismatch")
+    def unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate host snapshot field: {key}")
+            result[key] = value
+        return result
+    payload = json.loads(raw, object_pairs_hook=unique_keys)
+    if not isinstance(payload, dict) or payload.get("host_id") != host_id or payload.get("session_id") != session_id:
+        raise ValueError("host/session binding mismatch")
+    snapshot = HostCapabilitySnapshot(payload, attestation="parent_attested", evidence=evidence)
+    if not valid_host_snapshot(snapshot):
+        raise ValueError("host snapshot schema, connection or expiry is invalid")
+    snapshot.import_digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode()).hexdigest()
+    return snapshot
+
+
+def host_snapshot_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    path = getattr(args, "host_snapshot", None)
+    metadata = [getattr(args, name, "") for name in (
+        "host_id", "host_session_id", "host_snapshot_sha256", "host_attestation_evidence")]
+    if not path:
+        if any(metadata):
+            raise ValueError("host metadata requires --host-snapshot")
+        return load_host_capability_snapshot()
+    return import_host_capability_snapshot(Path(path).expanduser(), host_id=metadata[0],
+        session_id=metadata[1], expected_sha256=metadata[2], evidence=metadata[3])
+
+
+def add_host_snapshot_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--host-snapshot", help="explicit parent-attested JSON tool snapshot; not an authorization credential")
+    parser.add_argument("--host-id", default="", help="expected current host id")
+    parser.add_argument("--host-session-id", default="", help="expected current session id; required on every import")
+    parser.add_argument("--host-snapshot-sha256", default="", help="expected file digest (integrity, not authentication)")
+    parser.add_argument("--host-attestation-evidence", default="", help="reference to parent-observed tool inventory evidence")
+
+
+def load_host_capability_snapshot() -> dict[str, Any]:
+    """Host bridge seam. Never accept project files/env claims as host authority.
+
+    CLI-only execution has no authenticated host bridge yet; unknown is deliberate.
+    An embedding host must supply a fresh snapshot through this boundary.
+    """
+    return {}
+
+
+def runtime_timestamp_current(value: Any) -> bool:
+    try:
+        return datetime.fromisoformat(str(value)) > datetime.now(timezone.utc)
+    except (ValueError, TypeError):
+        return False
+
+
+def valid_host_snapshot(snapshot: Any) -> bool:
+    return bool(
+        isinstance(snapshot, HostCapabilitySnapshot)
+        and snapshot.attestation in {"host_attested", "parent_attested"} and snapshot.evidence
+        and snapshot.get("host_id") == snapshot.expected_host
+        and snapshot.get("session_id") == snapshot.expected_session
+        and (not snapshot.import_digest or snapshot.import_digest == hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode()).hexdigest())
+        and snapshot.get("schema_version") == "knowledgeos.host-capabilities.v1"
+        and snapshot.get("source") == "host_bridge"
+        and snapshot.get("host_id") and snapshot.get("session_id")
+        and snapshot.get("connected") is True
+        and runtime_timestamp_current(snapshot.get("expires_at"))
+        and isinstance(snapshot.get("tools"), list)
+        and all(isinstance(tool, dict) and isinstance(tool.get("name"), str)
+                and bool(tool["name"]) and isinstance(tool.get("schema_version"), str)
+                and bool(tool["schema_version"]) and isinstance(tool.get("input_schema"), dict)
+                for tool in snapshot["tools"])
+        and len({tool["name"] for tool in snapshot["tools"]}) == len(snapshot["tools"])
+    )
+
+
+def runtime_contract(entry: dict[str, str], snapshot: dict[str, Any]) -> dict[str, Any]:
+    resolvable = is_adapter_resolvable_subagent(entry)
+    result: dict[str, Any] = {
+        "registered": True, "adapter_resolvable": resolvable,
+        "host_available": "unknown", "execution_verified": "unknown",
+        "runtime_callable": False, "runtime_arguments": {}, "host_provenance": {},
+    }
+    if not resolvable or not valid_host_snapshot(snapshot):
+        return result
+    fingerprint = hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode()).hexdigest()
+    result["host_provenance"] = {
+        key: snapshot[key] for key in ("host_id", "session_id", "schema_version", "source", "expires_at")
+    }
+    result["host_provenance"]["fingerprint"] = fingerprint
+    result["host_provenance"].update(attestation=snapshot.attestation, evidence=snapshot.evidence,
+                                      authenticated=False, authorization_authority=snapshot.attestation == "host_attested")
+    executions = snapshot.get("executions", [])
+    for execution in executions if isinstance(executions, list) else []:
+        if (isinstance(execution, dict) and execution.get("capability_id") == entry.get("id")
+                and execution.get("host_id") == snapshot["host_id"]
+                and execution.get("session_id") == snapshot["session_id"]
+                and execution.get("terminal_status") == "completed"
+                and all(isinstance(execution.get(key), str) and execution[key]
+                        for key in ("invocation_id", "output_evidence_id"))):
+            result["execution_verified"] = True
+            result["execution_evidence"] = {**execution, "attestation": snapshot.attestation,
+                                             "verification": "attested_terminal_and_output_reference",
+                                             "cryptographically_verified": False}
+            break
+    candidates = [tool for tool in snapshot["tools"] if isinstance(tool, dict)
+                  and tool.get("name") in {entry.get("runtime_tool"), "spawn_agent", "functions.spawn_agent"}]
+    if not candidates:
+        result["host_available"] = False
+        return result
+    for tool in candidates:
+        if tool.get("available", True) is not True:
+            continue
+        schema = tool.get("input_schema", {})
+        if not tool.get("schema_version") or not isinstance(schema, dict) or schema.get("type") != "object":
+            continue
+        if set(schema) - {"type", "properties", "required", "additionalProperties", "description", "title"}:
+            continue
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        if not isinstance(properties, dict) or not isinstance(required, list):
+            continue
+        prompt_key = next((key for key in ("message", "prompt") if isinstance(properties.get(key), dict)
+                           and properties[key].get("type") == "string"), None)
+        if not prompt_key:
+            continue
+        if set(properties[prompt_key]) - {"type", "description", "title", "default"}:
+            continue
+        arguments = {prompt_key: build_default_subagent_role_prompt(entry) + "\n\n" + SUBAGENT_RUNTIME_BOUNDARY}
+        if "agent_type" in properties:
+            role_schema = properties["agent_type"]
+            role = runtime_agent_type_for_entry(entry)
+            if not isinstance(role_schema, dict) or role_schema.get("type") != "string":
+                continue
+            if set(role_schema) - {"type", "enum", "description", "title", "default"}:
+                continue
+            if "enum" in role_schema and role not in role_schema["enum"]:
+                continue
+            arguments["agent_type"] = role
+        if any(not isinstance(key, str) or key not in arguments for key in required):
+            continue
+        result.update(host_available=True, runtime_callable=True,
+                      runtime_tool=tool["name"], runtime_arguments=arguments,
+                      role_binding="native_parameter" if "agent_type" in arguments else "prompt_only")
+        result["host_provenance"]["tool_schema_version"] = tool["schema_version"]
+        break
+    return result
+
+
+def tool_summary(entry: dict[str, str], *, host_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    summary = {
         "id": entry.get("id", ""),
         "kind": entry.get("kind", ""),
         "status": entry.get("status", ""),
@@ -816,9 +1206,184 @@ def tool_summary(entry: dict[str, str]) -> dict[str, Any]:
         "human_gate": entry.get("human_gate", ""),
         "execution_mode": entry.get("execution_mode", ""),
     }
+    for key in ["runtime", "runtime_tool", "runtime_agent_type", "adapter", "adapter_role", "source_path"]:
+        value = entry.get(key, "")
+        if value:
+            summary[key] = value
+    if summary.get("kind") == "subagent" and not summary.get("runtime_agent_type"):
+        inferred = runtime_agent_type_for_entry(entry)
+        if inferred:
+            summary["runtime_agent_type"] = inferred
+    if summary.get("kind") == "subagent":
+        summary.update(runtime_contract(entry, host_snapshot if host_snapshot is not None else load_host_capability_snapshot()))
+    return summary
 
 
-def build_dispatch_plan(project_root: Path, task_id: str) -> dict[str, Any]:
+def dispatch_tool_runtime_callable(item: dict[str, Any]) -> bool:
+    return (
+        str(item.get("kind", "")) == "subagent"
+        and item.get("host_available") is True
+        and item.get("adapter_resolvable") is True
+        and item.get("runtime_callable") is True
+        and bool(item.get("host_provenance", {}).get("fingerprint"))
+        and runtime_timestamp_current(item.get("host_provenance", {}).get("expires_at"))
+    )
+
+
+def summarize_dispatch_plan(dispatch: dict[str, Any]) -> dict[str, Any]:
+    steps = dispatch.get("steps", [])
+    planned_tools: list[dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        stage = str(step.get("stage", ""))
+        for tool in step.get("tools", []) or []:
+            if not isinstance(tool, dict):
+                continue
+            planned_tools.append({**tool, "stage": stage, "required": bool(step.get("required"))})
+    planned_agents = [
+        item
+        for item in planned_tools
+        if str(item.get("kind", "")) in AGENT_CAPABILITY_KINDS or str(item.get("stage", "")) in {"branch_builder", "orchestrator", "subagent"}
+    ]
+    runtime_callable_agents = [item for item in planned_agents if dispatch_tool_runtime_callable(item)]
+    required_stages = [str(step.get("stage", "")) for step in steps if isinstance(step, dict) and step.get("required")]
+    marker = (
+        f"AGENT_DISPATCH_PLAN agents={len(planned_agents)} "
+        f"runtime_callable={len(runtime_callable_agents)} capabilities={len(planned_tools)} required={len(required_stages)}"
+    )
+    return {
+        "dispatch_marker": "AGENT_DISPATCH_PLAN",
+        "marker": marker,
+        "dispatch_summary": {
+            "planned_agents": len(planned_agents),
+            "runtime_callable_agents": len(runtime_callable_agents),
+            "planned_capabilities": len(planned_tools),
+            "required_stages": required_stages,
+            "declared_agents": [str(item.get("id", "")) for item in planned_agents if item.get("id")],
+            "planned_agent_ids": [str(item.get("id", "")) for item in planned_agents if item.get("id")],
+            "runtime_callable_agent_ids": [str(item.get("id", "")) for item in runtime_callable_agents if item.get("id")],
+        },
+    }
+
+
+def dispatch_authorization(project_root: Path, task_id: str, task: dict[str, Any],
+                           route: dict[str, Any], policy: dict[str, Any],
+                           steps: list[dict[str, Any]], host: dict[str, Any]) -> dict[str, Any]:
+    """Planning decision only, never a reusable execution permit."""
+    targets = {tool["id"] for step in steps for tool in step["tools"]
+               if dispatch_tool_runtime_callable(tool)}
+    gates = set(policy.get("human_gate_for", [])) | set(policy.get("consult_for_risks", []))
+    risk = str(task.get("risk", ""))
+    route_gate = str(route.get("human_gate", "")).lower()
+    strict = ("per_task_confirmation" in gates or risk in gates
+              or route_gate not in {"", "false", "none", "no"}
+              or risk in {"external_write", "release", "destructive_change", "sensitive_access", "paid_operation", "overlapping_write"}
+              or any(step["required"] and step["stage"] == "orchestrator" for step in steps))
+    required = bool(strict or targets)
+    reason = "current policy or task gate requires confirmation" if strict else "no scoped authoritative authorization"
+    source = ".agent-os/dispatch-policy.yaml" if strict else "none"
+    status = "confirmation_required"
+    if not strict and not targets:
+        required, reason, status = False, "no confirmed host subagent; resolve capability gap, not permission", "capability_unavailable"
+    if not strict and targets and valid_host_snapshot(host) and host.attestation == "host_attested":
+        grants = host.get("authorizations", [])
+        invocation_ledger = host.get("task_invocations")
+        ledger_valid = isinstance(invocation_ledger, list) and all(
+            isinstance(item, dict) and all(isinstance(item.get(key), str) and item[key]
+                                          for key in ("project_root", "task_id", "invocation_id"))
+            for item in invocation_ledger)
+        task_invocations = {item["invocation_id"] for item in invocation_ledger
+                            if item["project_root"] == str(project_root.resolve()) and item["task_id"] == task_id} if ledger_valid else set()
+        for grant in grants if isinstance(grants, list) else []:
+            if not isinstance(grant, dict):
+                continue
+            used = grant.get("used_invocations")
+            maximum = grant.get("max_invocations")
+            limit = host.get("max_subagents", 3)
+            grant_targets = grant.get("targets")
+            if (grant.get("source") not in {"user_message", "authoritative_policy"}
+                    or not isinstance(grant.get("evidence_id"), str) or not grant["evidence_id"]
+                    or grant.get("project_root") != str(project_root.resolve())
+                    or grant.get("task_id") != task_id
+                    or grant.get("operation") != "subagent_read_only"
+                    or grant.get("revoked") is not False
+                    or not runtime_timestamp_current(grant.get("expires_at"))
+                    or not isinstance(grant_targets, list) or not all(isinstance(v, str) for v in grant_targets)
+                    or not targets.issubset(set(grant_targets))
+                    or not isinstance(used, list) or not all(isinstance(v, str) and v for v in used)
+                    or type(maximum) is not int or type(limit) is not int
+                    or not ledger_valid
+                    or len(set(used) | task_invocations) + len(targets) > min(maximum, limit, 3)):
+                continue
+            required, reason, source, status = False, "scoped bounded read-only authorization is current", grant["evidence_id"], "authorized"
+            break
+    return {
+        "approval_required": required, "approval_reason": reason,
+        "authorization_source": source, "authorization_status": status,
+        "authorization_scope": {"operation": "subagent_read_only", "targets": sorted(targets),
+                                "recursive": False, "writes": False, "external_access": False,
+                                "additional_cost": 0, "max_total_invocations": 3},
+        "authorization_is_execution_permit": False,
+        "agent_opinion_required": required,
+        "agent_opinion_prompt": ("Pause before execution, state the scoped operation and policy tradeoff, then ask for confirmation."
+                                 if required else "State the bounded next step and any capability gaps; no repeated approval request."),
+    }
+
+
+def dispatch_cache_inputs(project_root: Path, task: dict[str, Any], route: dict[str, Any],
+                          policy: dict[str, Any], entries: list[dict[str, Any]],
+                          host: dict[str, Any], run_dir: Path | None) -> str:
+    binding_task = spec_binding_task(project_root, task["id"]) if (project_root / ".agent-os" / "tasks.yaml").exists() else task
+    binding = run_spec_binding(project_root, task["id"], run_dir) if run_dir else resolve_spec_binding(project_root, binding_task)
+    files = sorted((project_root / ".agent-os").glob("*policy*.yaml"))
+    project_policy = project_root / ".agent-os" / "project.yaml"
+    if project_policy.exists():
+        files.append(project_policy)
+    material = {
+        "contract": "knowledgeos.dispatch-plan.v2", "project_root": str(project_root.resolve()),
+        "task": {key: value for key, value in task.items() if key != "status"},
+        "spec": {key: binding.get(key, "") for key in ("spec_id", "fingerprint", "binding_source", "binding_status", "thread_id")},
+        "route": route, "policy": policy, "registry": entries,
+        "policy_files": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files},
+        "spec_constraints": parse_scalar_values(project_root / ".agent-os" / "specs.yaml",
+            {"spec_required", "allow_no_spec", "required_spec_id"}) if (project_root / ".agent-os" / "specs.yaml").exists() else {},
+        "host": host, "host_current": valid_host_snapshot(host),
+        "host_attestation": getattr(host, "attestation", "unknown"),
+        "host_evidence": getattr(host, "evidence", ""),
+    }
+    return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+
+
+def dispatch_plan_result(project_root: Path, task_id: str, task: dict[str, Any], route: dict[str, Any],
+                         policy: dict[str, Any], host: dict[str, Any], steps: list[dict[str, Any]],
+                         fingerprint: str, *, reused: bool = False, reason: str = "inputs changed or no valid cached plan") -> dict[str, Any]:
+    for step in steps:
+        if step.get("stage") == "subagent":
+            for tool in step["tools"]:
+                for key in ("message", "prompt"):
+                    if key in tool.get("runtime_arguments", {}):
+                        boundary = "This dispatch is read-only and non-recursive: no writes, sensitive access, external actions, or additional paid operations. Stay within the parent task scope."
+                        if boundary not in tool["runtime_arguments"][key]:
+                            tool["runtime_arguments"][key] += "\n" + boundary
+    consult = set(policy.get("always_consult_before", []))
+    for item in (task.get("risk", ""), route.get("human_gate", "")):
+        if item and (item in policy.get("consult_for_risks", []) or item in policy.get("human_gate_for", [])):
+            consult.add(item)
+    result = {
+        "status": "dispatch_ready", "task": task, "route": route, "steps": steps,
+        "dispatch_policy": {"default_order": policy.get("default_order", []), "consultation_checkpoints": sorted(consult)},
+        "dispatch_reuse": "reused" if reused else "recomputed", "dispatch_reuse_reason": reason,
+        "dispatch_fingerprint": fingerprint,
+        "cache_boundary": "planning only; parent-writable cache is not authorization evidence",
+    }
+    result.update(dispatch_authorization(project_root, task_id, task, route, policy, steps, host))
+    result.update(summarize_dispatch_plan(result))
+    return result
+
+
+def build_dispatch_plan(project_root: Path, task_id: str, *, run_id: str = "",
+                        host_snapshot: dict[str, Any] | None = None, persist: bool = False) -> dict[str, Any]:
     task = find_task(project_root, task_id)
     route = build_task_route(project_root, task_id, None)
     if route.get("status") != "routed":
@@ -831,6 +1396,48 @@ def build_dispatch_plan(project_root: Path, task_id: str) -> dict[str, Any]:
 
     policy = load_dispatch_policy(project_root)
     entries = load_tool_registry(project_root)
+    host_snapshot = load_host_capability_snapshot() if host_snapshot is None else host_snapshot
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id) if run_id else None
+    fingerprint = dispatch_cache_inputs(project_root, task, route, policy, entries, host_snapshot, run_dir)
+    preflight = project_root / ".knowledgeos-local" / "dispatch-preflight" / (hashlib.sha256(task_id.encode()).hexdigest() + ".json")
+    cache_path = run_dir / "dispatch-plan.json" if run_dir else preflight
+
+    def save_steps(steps: list[dict[str, Any]]) -> None:
+        if not persist or not (project_root / ".agent-os").is_dir():
+            return
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_json(cache_path, {"schema_version": "knowledgeos.dispatch-plan.v2",
+            "project_root": str(project_root.resolve()), "task_id": task_id, "run_id": run_id,
+            "fingerprint": fingerprint, "steps": steps,
+            "steps_sha256": hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest()})
+
+    for candidate in [cache_path] + ([preflight] if run_dir else []):
+        try:
+            cached = json.loads(candidate.read_text())
+            cached_steps = cached["steps"]
+            if (cached.get("schema_version") != "knowledgeos.dispatch-plan.v2"
+                    or cached.get("project_root") != str(project_root.resolve())
+                    or cached.get("task_id") != task_id
+                    or cached.get("run_id") != (run_id if candidate == cache_path else "")
+                    or cached.get("fingerprint") != fingerprint or not isinstance(cached_steps, list)
+                    or cached.get("steps_sha256") != hashlib.sha256(json.dumps(cached_steps, sort_keys=True).encode()).hexdigest()):
+                continue
+            # Refresh host observations even on reuse. No cached approval is read.
+            by_id = {entry["id"]: entry for entry in entries}
+            for step in cached_steps:
+                if not isinstance(step, dict) or not isinstance(step.get("tools"), list):
+                    raise ValueError("invalid cached step")
+                for tool in step["tools"]:
+                    if not isinstance(tool, dict) or tool.get("id") not in by_id:
+                        raise ValueError("cached capability not in current registry")
+                    fresh = tool_summary(by_id[tool["id"]], host_snapshot=host_snapshot)
+                    tool.update(fresh)
+            result = dispatch_plan_result(project_root, task_id, task, route, policy, host_snapshot,
+                cached_steps, fingerprint, reused=True, reason="matching task/spec/policy/host fingerprint; authorization rechecked")
+            save_steps(cached_steps)
+            return result
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
     task_type = task.get("type", "")
     complexity = task.get("complexity", "medium")
     risk = task.get("risk", "")
@@ -844,9 +1451,17 @@ def build_dispatch_plan(project_root: Path, task_id: str) -> dict[str, Any]:
                 "stage": stage,
                 "reason": reason,
                 "required": required,
-                "tools": [tool_summary(item) for item in (tools or [])],
+                "tools": [tool_summary(item, host_snapshot=host_snapshot) for item in (tools or [])],
             }
         )
+        if stage == "subagent":
+            for tool in steps[-1]["tools"]:
+                for key in ("message", "prompt"):
+                    if key in tool.get("runtime_arguments", {}):
+                        tool["runtime_arguments"][key] += (
+                            "\nThis dispatch is read-only and non-recursive: no writes, sensitive access, "
+                            "external actions, or additional paid operations. Stay within the parent task scope."
+                        )
 
     if "branch_builder" in default_order and (task_type in policy.get("branch_builder_task_types", []) or complexity in {"medium", "complex", "high"}):
         branch_tools = [entry for entry in entries if entry.get("id") == "branch-builder" and entry.get("status") in ACTIVE_TOOL_STATUSES]
@@ -854,13 +1469,16 @@ def build_dispatch_plan(project_root: Path, task_id: str) -> dict[str, Any]:
 
     if "orchestrator" in default_order:
         orchestrators = choose_tools(entries, "orchestrator", task_type) or [entry for entry in entries if entry.get("kind") == "orchestrator" and entry.get("status") in ACTIVE_TOOL_STATUSES]
+        orchestrators = [entry for entry in orchestrators if not (
+            entry.get("id") == "maestro" and entry.get("source_path", "") in {"", "external:maestro"}
+            and not entry.get("runtime_tool") and not entry.get("adapter"))]
         if orchestrators and (task_type in policy.get("subagent_task_types", []) or complexity in {"medium", "complex", "high"}):
-            add_step("orchestrator", "coordinate role-specific subagents with execution_mode=ask", orchestrators, required=True)
+            add_step("orchestrator", "preserve explicit custom orchestration subject to current policy", orchestrators, required=True)
 
     if "subagent" in default_order:
-        subagents = choose_tools(entries, "subagent", task_type)
+        subagents = select_subagent_candidates(entries, task_type)
         if subagents:
-            add_step("subagent", "use role-specific subagent or planning adapter when registered", subagents)
+            add_step("subagent", "use up to three role-specific runtime subagent candidates when useful", subagents)
 
     if "mcp" in default_order:
         mcp_tools = choose_tools(entries, "mcp", task_type)
@@ -875,25 +1493,9 @@ def build_dispatch_plan(project_root: Path, task_id: str) -> dict[str, Any]:
     if "script" in default_order:
         add_step("script", "prefer deterministic local commands for doctor, tests, build, package, and eval evidence")
 
-    consult = list(policy.get("always_consult_before", []))
-    risk_items = [item for item in [risk, route.get("human_gate", "")] if item]
-    for item in risk_items:
-        if item in policy.get("consult_for_risks", []) or item in policy.get("human_gate_for", []):
-            consult.append(item)
-    consult = sorted(set(consult))
-
-    return {
-        "status": "dispatch_ready",
-        "task": task,
-        "route": route,
-        "dispatch_policy": {
-            "default_order": default_order,
-            "consultation_checkpoints": consult,
-        },
-        "steps": steps,
-        "agent_opinion_required": True,
-        "agent_opinion_prompt": "Pause before execution, state your recommended next move, name the tradeoff, and ask the human whether to proceed.",
-    }
+    result = dispatch_plan_result(project_root, task_id, task, route, policy, host_snapshot, steps, fingerprint)
+    save_steps(steps)
+    return result
 
 
 def path_for_policy(project_root: Path, target: str) -> tuple[Path, str, bool]:
@@ -945,6 +1547,7 @@ def route_output_match(relative: str, allowed_outputs: list[str]) -> str | None:
 
 def classify_write(project_root: Path, target: str) -> dict[str, Any]:
     policy = load_write_policy(project_root)
+    local_external_policy = load_local_external_write_policy(project_root)
     absolute, relative, inside = path_for_policy(project_root, target)
     absolute_value = absolute.as_posix()
 
@@ -969,6 +1572,35 @@ def classify_write(project_root: Path, target: str) -> dict[str, Any]:
         }
 
     if not inside:
+        external_forbidden_match = matches_any(
+            absolute_value,
+            local_external_policy["external_forbidden_without_human_gate"],
+        )
+        if external_forbidden_match:
+            return {
+                "decision": "human_gate_required",
+                "reason": f"matches external_forbidden_without_human_gate pattern {external_forbidden_match}",
+                "path": absolute_value,
+                "inside_project": False,
+            }
+
+        external_controlled_match = matches_any(
+            absolute_value,
+            local_external_policy["external_controlled"],
+        )
+        if external_controlled_match:
+            receipt_match = matches_any(
+                absolute_value,
+                local_external_policy["external_require_receipt_for"],
+            )
+            return {
+                "decision": "allow",
+                "reason": f"matches external_controlled pattern {external_controlled_match}",
+                "path": absolute_value,
+                "inside_project": False,
+                "receipt_required": bool(receipt_match),
+                "receipt_pattern": receipt_match,
+            }
         return {
             "decision": "deny",
             "reason": "path is outside the project root and no explicit allow policy matched",
@@ -1012,6 +1644,36 @@ def classify_route_write(project_root: Path, task_id: str, target: str) -> dict[
             **write_decision,
             "task_id": task_id,
             "route_status": "blocked_by_write_policy",
+            "route": route,
+        }
+
+    binding_errors = unfinished_run_spec_errors(project_root, task_id)
+    if binding_errors:
+        return {
+            "decision": "spec_drift",
+            "reason": "unfinished task run has invalid or drifted frozen spec; align-spec --run-id before writing",
+            "task_id": task_id,
+            "path": write_decision["path"],
+            "errors": binding_errors,
+            "route": route,
+        }
+
+    if not write_decision.get("inside_project", True):
+        if str(route.get("allow_external_controlled", "")).lower() == "true":
+            return {
+                **write_decision,
+                "task_id": task_id,
+                "route_status": "allowed_by_external_route",
+                "route_output_match": "external_controlled",
+                "route": route,
+            }
+        return {
+            "decision": "route_output_denied",
+            "reason": f"path is allowed by local external write policy but task {task_id} route does not allow external controlled writes",
+            "path": write_decision["path"],
+            "inside_project": False,
+            "task_id": task_id,
+            "allowed_outputs": route.get("allowed_outputs", []),
             "route": route,
         }
 
@@ -1232,9 +1894,12 @@ def next_spec_id(project_root: Path) -> str:
 
 
 def spec_dir(project_root: Path, spec_id: str) -> Path:
-    if Path(spec_id).name != spec_id:
+    if not spec_id or spec_id in {'.', '..'} or Path(spec_id).name != spec_id or '\\' in spec_id:
         raise ValueError("spec_id must not contain path separators")
-    return specs_root(project_root) / spec_id
+    directory = specs_root(project_root) / spec_id
+    if not directory.resolve().is_relative_to(project_root.resolve()) or not directory.resolve().is_relative_to(specs_root(project_root).resolve()):
+        raise ValueError("spec path escapes project")
+    return directory
 
 
 def spec_markdown(project_root: Path, spec_id: str) -> str:
@@ -1258,10 +1923,26 @@ def find_spec(project_root: Path, spec_id: str | None = None) -> dict[str, str]:
     selected = spec_id or registry.get("active_spec", "")
     if not selected:
         raise ValueError("no active spec; run create-spec or pass --spec-id")
-    for item in registry.get("specs", []):
-        if item.get("id") == selected:
-            return item
-    raise KeyError(f"spec not found: {selected}")
+    directory = spec_dir(project_root, selected)
+    matches = [item for item in registry.get("specs", []) if item.get("id") == selected]
+    if not matches:
+        raise KeyError(f"spec not found: {selected}")
+    if len(matches) != 1:
+        raise ValueError(f"spec conflict: duplicate {selected}")
+    item = matches[0]
+    if item.get("status", "").lower() in {"revoked", "withdrawn", "deleted"}:
+        raise ValueError(f"spec revoked: {selected}")
+    if item.get("project_root") and Path(item["project_root"]).resolve() != project_root.resolve():
+        raise ValueError(f"cross-project spec: {selected}")
+    if item.get("path") and (project_root / item["path"]).resolve() != directory.resolve():
+        raise ValueError(f"spec path conflict or cross-project path: {selected}")
+    for name in ["spec.md", "acceptance.md", "non-goals.md"]:
+        path = directory / name
+        if not path.resolve().is_relative_to(directory.resolve()):
+            raise ValueError(f"spec path escapes project: {path}")
+        if not path.is_file() or not read_text(path).strip():
+            raise ValueError(f"incomplete spec: {selected}/{name}")
+    return item
 
 
 def set_active_spec(project_root: Path, spec_id: str) -> None:
@@ -1359,11 +2040,28 @@ def create_spec(
     }
 
 
-def align_spec(project_root: Path, *, task_id: str | None = None, spec_id: str | None = None, note: str = "") -> dict[str, Any]:
+def align_spec(project_root: Path, *, task_id: str | None = None, spec_id: str | None = None, note: str = "", thread_id: str = "", run_id: str = "") -> dict[str, Any]:
     ensure_safe_project_root(project_root)
+    task: dict[str, str] | None = spec_binding_task(project_root, task_id) if task_id else None
+    if not spec_id and task:
+        candidate = resolve_spec_binding(project_root, task, thread_id=thread_id)
+        if candidate["binding_status"] != "unbound":
+            spec_id = candidate["spec_id"]
+    if run_id and not task_id:
+        raise ValueError("run alignment requires task_id")
+    if run_id:
+        ensure_run_belongs_to_task(project_root, task_id, run_id)
+    if spec_id == "none":
+        if not task_id:
+            raise ValueError("explicit none requires task_id")
+        task = dict(spec_binding_task(project_root, task_id), spec_id="none")
+        resolve_spec_binding(project_root, task, thread_id=thread_id)
+        set_task_spec_binding(project_root, task_id, "none", thread_id)
+        if run_id:
+            realign_run_context(project_root, task_id, run_id, thread_id=thread_id)
+        return {"status": "aligned", "spec_id": "none", "task_id": task_id, "binding_source": "task", "binding_status": "none"}
     spec = find_spec(project_root, spec_id)
     selected = spec["id"]
-    task: dict[str, str] | None = find_task(project_root, task_id) if task_id else None
     task_acceptance = parse_task_acceptance(project_root / ".agent-os" / "tasks.yaml").get(task_id or "", [])
     task_outputs = parse_task_list_field(project_root / ".agent-os" / "tasks.yaml", "outputs").get(task_id or "", [])
     missing: list[str] = []
@@ -1374,6 +2072,8 @@ def align_spec(project_root: Path, *, task_id: str | None = None, spec_id: str |
     if not spec_markdown(project_root, selected).strip():
         missing.append("spec body is empty")
     status = "aligned" if not missing else "needs_review"
+    if task and status == "aligned":
+        resolve_spec_binding(project_root, dict(task, spec_id=selected), thread_id=thread_id)
     lines = [
         "# Alignment",
         "",
@@ -1399,7 +2099,150 @@ def align_spec(project_root: Path, *, task_id: str | None = None, spec_id: str |
     alignment_path = spec_dir(project_root, selected) / "alignment.md"
     write_text(alignment_path, "\n".join(lines).rstrip() + "\n")
     append_spec_change(project_root, selected, {"event_type": "align-spec", "task_id": task_id or "", "status": status})
+    if task and status == "aligned":
+        set_task_spec_binding(project_root, task_id, selected, thread_id)
+        if run_id:
+            realign_run_context(project_root, task_id, run_id, thread_id=thread_id)
     return {"status": status, "spec_id": selected, "task_id": task_id or "", "alignment": str(alignment_path), "findings": missing}
+
+
+def spec_binding_task(project_root: Path, task_id: str) -> dict[str, str]:
+    path = project_root / ".agent-os" / "tasks.yaml"
+    current = ""
+    seen = set()
+    for raw in read_text(path).splitlines():
+        line = raw.strip()
+        if line.startswith("- id:"):
+            current = line.split(":", 1)[1].strip().strip("\"'")
+            seen = set()
+        elif current == task_id and ":" in line:
+            key = line.split(":", 1)[0]
+            if key in {"spec_id", "thread_id"}:
+                if key in seen:
+                    raise ValueError(f"task binding conflict: duplicate {key}")
+                seen.add(key)
+    matches = [item for item in parse_named_blocks(path) if item.get("id") == task_id]
+    if len(matches) != 1:
+        raise ValueError(f"task binding conflict or missing task: {task_id}")
+    return matches[0]
+
+
+def set_task_spec_binding(project_root: Path, task_id: str, spec_id: str, thread_id: str = "") -> None:
+    path = project_root / ".agent-os" / "tasks.yaml"
+    text = read_text(path)
+    pattern = rf"(?m)^(  - id: {re.escape(task_id)}\s*\n)(.*?)(?=^  - id:|\Z)"
+    def replace(match: re.Match) -> str:
+        body = re.sub(r"(?m)^    spec_id:.*\n?", "", match[2])
+        if thread_id:
+            body = re.sub(r"(?m)^    thread_id:.*\n?", "", body)
+        fields = f"    spec_id: {yaml_scalar(spec_id)}\n"
+        if thread_id:
+            fields += f"    thread_id: {yaml_scalar(thread_id)}\n"
+        return match[1] + fields + body
+    updated, count = re.subn(pattern, replace, text, flags=re.S)
+    if count != 1:
+        raise ValueError(f"task binding conflict: {task_id}")
+    write_text(path, updated)
+
+
+def resolve_spec_binding(project_root: Path, task: dict[str, Any], *, thread_id: str = "") -> dict[str, Any]:
+    if thread_id and task.get("thread_id") and thread_id != task["thread_id"]:
+        raise ValueError("thread binding conflict")
+    thread_id = thread_id or task.get("thread_id", "")
+    thread = {}
+    if thread_id:
+        if thread_id in {".", "..", "current"} or Path(thread_id).name != thread_id:
+            raise ValueError("invalid explicit thread_id")
+        path = thread_meta_path(project_root, thread_id)
+        if not path.resolve().is_relative_to(project_root.resolve()):
+            raise ValueError("cross-project thread path")
+        thread = json.loads(read_text(path))
+        if thread.get("thread_id", thread_id) != thread_id or (thread.get("project_root") and Path(thread["project_root"]).resolve() != project_root.resolve()):
+            raise ValueError("cross-project thread binding")
+        if thread.get("status") == "revoked":
+            raise ValueError("thread binding revoked")
+    selected = task.get("spec_id", "")
+    source = "task" if selected else "thread" if thread.get("spec_id") else "none"
+    selected = selected or thread.get("spec_id", "")
+    policies = []
+    for name in ["project.yaml", "specs.yaml"]:
+        path = project_root / ".agent-os" / name
+        if path.exists():
+            policies.append(parse_scalar_values(path, {"spec_required", "allow_no_spec", "required_spec_id"}))
+    for constraints in [*policies, thread]:
+        required = str(constraints.get("spec_required", "false")).lower() == "true"
+        allows_none = str(constraints.get("allow_no_spec", "false")).lower() == "true"
+        if required and (not selected or (selected == "none" and not allows_none)):
+            raise ValueError("spec required by project/thread policy")
+        if constraints.get("required_spec_id") and selected != constraints["required_spec_id"]:
+            raise ValueError("spec binding conflicts with required spec constraint")
+    spec = find_spec(project_root, selected) if selected and selected != "none" else {}
+    body = spec_markdown(project_root, selected) if spec else "No spec bound to this task."
+    return {"spec_id": selected if spec else "none", "binding_source": source,
+            "binding_status": "bound" if spec else "none" if selected == "none" else "unbound",
+            "spec_fingerprint": content_fingerprint(body) if spec else "none",
+            "fingerprint": content_fingerprint(body) if spec else "none", "title": spec.get("title", ""),
+            "body": body, "task_id": task.get("id", ""), "thread_id": thread_id,
+            "project_root": str(project_root.resolve())}
+
+
+def run_spec_binding(project_root: Path, task_id: str, run_dir: Path, *, thread_id: str = "") -> dict[str, Any]:
+    path = run_dir / "spec-binding.json"
+    if path.exists():
+        binding = json.loads(read_text(path))
+        if binding.get("task_id") != task_id or binding.get("project_root") != str(project_root.resolve()):
+            raise ValueError("cross-project/task frozen binding")
+        if thread_id and thread_id != binding.get("thread_id"):
+            raise ValueError("frozen thread binding conflict; run align-spec")
+    elif (run_dir / "spec-snapshot.md").exists():
+        metadata = snapshot_metadata(run_dir / "spec-snapshot.md")
+        binding = {"spec_id": metadata.get("Spec ID", "none"), "fingerprint": metadata.get("Spec Fingerprint", ""),
+                   "binding_source": "legacy_snapshot", "binding_status": "legacy", "task_id": task_id,
+                   "thread_id": "", "project_root": str(project_root.resolve()), "title": metadata.get("Spec Title", ""),
+                   "body": read_text(run_dir / "spec-snapshot.md").split("## Body\n", 1)[-1].strip()}
+        binding["spec_fingerprint"] = binding["fingerprint"]
+    else:
+        binding = resolve_spec_binding(project_root, spec_binding_task(project_root, task_id), thread_id=thread_id)
+    # Recheck current constraints, but never reselect from mutable task/active pointers.
+    resolve_spec_binding(project_root, {"id": task_id, "spec_id": binding["spec_id"]}, thread_id=binding.get("thread_id", ""))
+    sid = binding["spec_id"]
+    expected = spec_fingerprint(project_root, sid) if sid not in {"", "none"} else "none"
+    if expected != binding["fingerprint"]:
+        raise ValueError("spec drift: frozen fingerprint changed; run align-spec --run-id")
+    return binding
+
+
+def unfinished_run_spec_errors(project_root: Path, task_id: str) -> list[dict[str, str]]:
+    errors = []
+    for metadata_path in sorted((project_root / ".agent-os" / "runs").glob("*/run.yaml")):
+        metadata = parse_scalar_values(metadata_path, {"task_id", "status"})
+        if metadata.get("task_id") != task_id or metadata.get("status") == "completed":
+            continue
+        run_dir = metadata_path.parent
+        if not any((run_dir / name).exists() for name in ["spec-binding.json", "spec-snapshot.md"]):
+            continue
+        try:
+            run_dir = ensure_run_belongs_to_task(project_root, task_id, run_dir.name)
+            run_spec_binding(project_root, task_id, run_dir)
+        except (ValueError, KeyError, FileNotFoundError) as exc:
+            errors.append({"run_id": metadata_path.parent.name, "detail": str(exc)})
+    return errors
+
+
+def realign_run_context(project_root: Path, task_id: str, run_id: str, *, thread_id: str = "") -> None:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    binding = resolve_spec_binding(project_root, spec_binding_task(project_root, task_id), thread_id=thread_id)
+    history = run_dir / "context-history" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    history.mkdir(parents=True, exist_ok=False)
+    for name in ["spec-binding.json", "spec-snapshot.md", "context-pack.md", "plan.md"]:
+        path = run_dir / name
+        if path.exists():
+            write_text(history / name, read_text(path))
+    write_text(run_dir / "spec-binding.json", json.dumps(binding, indent=2) + "\n")
+    if (run_dir / "plan.md").exists():
+        (run_dir / "plan.md").unlink()
+    append_command_event(run_dir, "align-spec", task_id, run_id, spec_id=binding["spec_id"], history=str(history))
+    write_context_pack(project_root, task_id, run_id, thread_id=thread_id)
 
 
 def active_spec_snapshot(project_root: Path) -> dict[str, str]:
@@ -1417,12 +2260,12 @@ def active_spec_snapshot(project_root: Path) -> dict[str, str]:
     }
 
 
-def write_context_pack(project_root: Path, task_id: str, run_id: str, *, summary: str = "") -> dict[str, Any]:
+def write_context_pack(project_root: Path, task_id: str, run_id: str, *, summary: str = "", thread_id: str = "") -> dict[str, Any]:
     task = find_task(project_root, task_id)
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     route = build_task_route(project_root, task_id, None)
     dispatch = build_dispatch_plan(project_root, task_id)
-    snapshot = active_spec_snapshot(project_root)
+    snapshot = run_spec_binding(project_root, task_id, run_dir, thread_id=thread_id)
     decisions = parse_named_blocks(project_root / ".agent-os" / "decisions.yaml")
     eval_profiles = parse_indented_profile_keys(project_root / ".agent-os" / "evals.yaml", "evals")
     spec_snapshot = [
@@ -1431,6 +2274,9 @@ def write_context_pack(project_root: Path, task_id: str, run_id: str, *, summary
         f"Spec ID: {snapshot['spec_id'] or 'none'}",
         f"Spec Title: {snapshot['title'] or 'none'}",
         f"Spec Fingerprint: {snapshot['fingerprint']}",
+        f"Binding Source: {snapshot['binding_source']}",
+        f"Binding Status: {snapshot['binding_status']}",
+        f"Thread ID: {snapshot['thread_id'] or 'none'}",
         "",
         "## Body",
         "",
@@ -1478,15 +2324,20 @@ def write_context_pack(project_root: Path, task_id: str, run_id: str, *, summary
         "- If user intent conflicts with the spec snapshot, stop and run align-spec.",
         "",
     ]
-    write_text(run_dir / "spec-snapshot.md", "\n".join(spec_snapshot).rstrip() + "\n")
+    if not (run_dir / "spec-binding.json").exists():
+        write_text(run_dir / "spec-binding.json", json.dumps(snapshot, indent=2) + "\n")
+    if snapshot["binding_source"] != "legacy_snapshot":
+        write_text(run_dir / "spec-snapshot.md", "\n".join(spec_snapshot).rstrip() + "\n")
     write_text(run_dir / "context-pack.md", "\n".join(context_lines).rstrip() + "\n")
-    append_command_event(run_dir, "context-pack", task_id, run_id, spec_id=snapshot["spec_id"] or "none", spec_fingerprint=snapshot["fingerprint"])
+    append_command_event(run_dir, "context-pack", task_id, run_id, spec_id=snapshot["spec_id"] or "none", spec_fingerprint=snapshot["fingerprint"], binding_source=snapshot["binding_source"], binding_status=snapshot["binding_status"])
     return {
         "status": "written",
         "task_id": task_id,
         "run_id": run_id,
         "spec_id": snapshot["spec_id"] or "none",
         "spec_fingerprint": snapshot["fingerprint"],
+        "binding_source": snapshot["binding_source"],
+        "binding_status": snapshot["binding_status"],
         "context_pack": str(run_dir / "context-pack.md"),
         "spec_snapshot": str(run_dir / "spec-snapshot.md"),
     }
@@ -1499,6 +2350,7 @@ def write_task_plan(project_root: Path, task_id: str, run_id: str, *, summary: s
     snapshot = run_dir / "spec-snapshot.md"
     if not context.exists() or not snapshot.exists():
         raise ValueError("context-pack.md and spec-snapshot.md are required before plan-task")
+    run_spec_binding(project_root, task_id, run_dir)
     route = build_task_route(project_root, task_id, None)
     outputs = task_declared_outputs(project_root, task_id)
     acceptance = parse_task_acceptance(project_root / ".agent-os" / "tasks.yaml").get(task_id, [])
@@ -1535,11 +2387,15 @@ def write_task_plan(project_root: Path, task_id: str, run_id: str, *, summary: s
         "- Record public lifecycle checkpoints with phase-task.",
         "- Record MCP, skill, subagent, orchestrator, or important script use with capability-event.",
         "- Complete only after eval-task, verify-lifecycle, and postflight pass.",
+        "- For medium, high, or complex tasks, include a readable FLOW_OK Mission Flow in the final answer.",
         "",
     ]
     write_text(run_dir / "plan.md", "\n".join(lines).rstrip() + "\n")
     append_command_event(run_dir, "plan-task", task_id, run_id, status="written")
-    return {"status": "written", "task_id": task_id, "run_id": run_id, "plan": str(run_dir / "plan.md")}
+    checkpoint = record_checkpoint_producer(project_root, task_id, run_id, producer="plan-task",
+                                           inputs={"task": task, "route": route, "outputs": outputs, "acceptance": acceptance, "summary": summary},
+                                           evidence_paths=["plan.md", "context-pack.md", "spec-snapshot.md"])
+    return {"status": "written", "task_id": task_id, "run_id": run_id, "plan": str(run_dir / "plan.md"), "checkpoint": checkpoint}
 
 
 def snapshot_metadata(path: Path) -> dict[str, str]:
@@ -1567,14 +2423,16 @@ def verify_context_contract(project_root: Path, task_id: str, run_id: str, *, al
         metadata = snapshot_metadata(snapshot)
         snap_spec = metadata.get("Spec ID", "")
         snap_fingerprint = metadata.get("Spec Fingerprint", "")
-        registry = load_specs_registry(project_root)
-        active = registry.get("active_spec", "") or "none"
-        if snap_spec != active and not allow_spec_drift:
-            errors.append({"label": "spec_drift", "detail": f"snapshot spec {snap_spec or 'none'} != active spec {active}"})
-        if not allow_spec_drift:
-            expected = "none" if snap_spec in {"", "none"} else spec_fingerprint(project_root, snap_spec)
-            if snap_fingerprint != expected:
-                errors.append({"label": "spec_drift", "detail": f"snapshot fingerprint {snap_fingerprint} != current {expected}"})
+        try:
+            binding = run_spec_binding(project_root, task_id, run_dir)
+            if snap_spec != binding["spec_id"] or snap_fingerprint != binding["fingerprint"]:
+                errors.append({"label": "spec_drift", "detail": "snapshot differs from frozen binding"})
+        except (ValueError, KeyError, FileNotFoundError) as exc:
+            # Legacy escape hatch can waive content drift, never invalid/revoked bindings.
+            binding_path = run_dir / "spec-binding.json"
+            legacy = not binding_path.exists() or json.loads(read_text(binding_path)).get("binding_source") == "legacy_snapshot"
+            if not (legacy and allow_spec_drift and str(exc).startswith("spec drift:")):
+                errors.append({"label": "spec_drift", "detail": str(exc)})
     return {
         "status": "passed" if not errors else "failed",
         "task_id": task_id,
@@ -1686,8 +2544,16 @@ def capability_events_path(run_dir: Path) -> Path:
     return run_dir / "capability-events.ndjson"
 
 
+def subagent_catalog_snapshot_path(run_dir: Path) -> Path:
+    return run_dir / "subagent-catalog.json"
+
+
 def effect_assertions_path(run_dir: Path) -> Path:
     return run_dir / "effect-assertions.ndjson"
+
+
+def decision_events_path(run_dir: Path) -> Path:
+    return run_dir / "decision-events.ndjson"
 
 
 def step_events_path(run_dir: Path) -> Path:
@@ -1766,6 +2632,423 @@ def load_effect_assertions(run_dir: Path) -> list[dict[str, Any]]:
             item = {"_invalid_json": raw, "_line": line_number}
         assertions.append(item)
     return assertions
+
+
+def load_decision_events(run_dir: Path) -> list[dict[str, Any]]:
+    path = decision_events_path(run_dir)
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(read_text(path).splitlines(), start=1):
+        if not raw.strip():
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            item = {"_invalid_json": raw, "_line": line_number}
+        events.append(item)
+    return events
+
+
+def threads_root(project_root: Path) -> Path:
+    return project_root / ".agent-os" / "threads"
+
+
+def current_thread_path(project_root: Path) -> Path:
+    return threads_root(project_root) / "current.json"
+
+
+def thread_dir(project_root: Path, thread_id: str) -> Path:
+    return threads_root(project_root) / thread_id
+
+
+def thread_plan_path(project_root: Path, thread_id: str) -> Path:
+    return thread_dir(project_root, thread_id) / "thread-plan.ndjson"
+
+
+def thread_command_events_path(project_root: Path, thread_id: str) -> Path:
+    return thread_dir(project_root, thread_id) / "command-events.ndjson"
+
+
+def thread_meta_path(project_root: Path, thread_id: str) -> Path:
+    return thread_dir(project_root, thread_id) / "thread.json"
+
+
+def utc_event_stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+
+
+def make_thread_id(project_root: Path, title: str) -> str:
+    base = f"THREAD-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{safe_slug(title)[:36]}"
+    candidate = base.rstrip("-")
+    suffix = 2
+    while thread_dir(project_root, candidate).exists():
+        candidate = f"{base}-{suffix}".rstrip("-")
+        suffix += 1
+    return candidate
+
+
+def append_thread_command_event(project_root: Path, thread_id: str, event_type: str, **extra: Any) -> None:
+    record = {
+        "event_type": event_type,
+        "thread_id": thread_id,
+        "generated_by": "knowledgeos",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        **extra,
+    }
+    path = thread_command_events_path(project_root, thread_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def load_thread_meta(project_root: Path, thread_id: str) -> dict[str, Any]:
+    path = thread_meta_path(project_root, thread_id)
+    if not path.exists():
+        raise FileNotFoundError(f"missing thread metadata: {path}")
+    return json.loads(read_text(path))
+
+
+def load_current_thread(project_root: Path) -> dict[str, Any]:
+    path = current_thread_path(project_root)
+    if not path.exists():
+        raise FileNotFoundError(f"missing current thread pointer: {path}")
+    current = json.loads(read_text(path))
+    thread_id = str(current.get("thread_id", ""))
+    if not thread_id:
+        raise ValueError("current thread pointer is missing thread_id")
+    if not thread_dir(project_root, thread_id).exists():
+        raise FileNotFoundError(f"current thread directory missing: {thread_id}")
+    return current
+
+
+def load_thread_events(project_root: Path, thread_id: str) -> list[dict[str, Any]]:
+    path = thread_plan_path(project_root, thread_id)
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(read_text(path).splitlines(), start=1):
+        if not raw.strip():
+            continue
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            item = {"_invalid_json": raw, "_line": line_number}
+        events.append(item)
+    return events
+
+
+def write_thread_current(project_root: Path, meta: dict[str, Any]) -> None:
+    current = {
+        "thread_id": meta.get("thread_id", ""),
+        "title": meta.get("title", ""),
+        "spec_id": meta.get("spec_id", ""),
+        "created_at": meta.get("created_at", ""),
+        "last_updated_at": meta.get("last_updated_at", ""),
+    }
+    write_text(current_thread_path(project_root), json.dumps(current, indent=2, ensure_ascii=False) + "\n")
+
+
+def update_thread_meta(project_root: Path, thread_id: str, **updates: Any) -> dict[str, Any]:
+    meta = load_thread_meta(project_root, thread_id)
+    meta.update(updates)
+    meta["last_updated_at"] = datetime.now(timezone.utc).isoformat()
+    write_text(thread_meta_path(project_root, thread_id), json.dumps(meta, indent=2, ensure_ascii=False) + "\n")
+    write_thread_current(project_root, meta)
+    return meta
+
+
+def thread_event_label(text: str, limit: int = 52) -> str:
+    cleaned = " ".join(str(text).split())
+    if len(cleaned) > limit:
+        cleaned = cleaned[: max(0, limit - 3)].rstrip() + "..."
+    return cleaned.replace('"', "'").replace("[", "(").replace("]", ")")
+
+
+def append_thread_plan_event(
+    project_root: Path,
+    *,
+    thread_id: str,
+    kind: str,
+    text: str,
+    linked_spec_id: str = "",
+    linked_task_id: str = "",
+    linked_run_id: str = "",
+    parent_event_id: str = "",
+    event_type: str = "thread-plan append",
+) -> dict[str, Any]:
+    if kind not in THREAD_PLAN_EVENT_KINDS:
+        raise ValueError(f"invalid thread-plan kind: {kind}")
+    if not text.strip():
+        raise ValueError("thread-plan text is required")
+    if not thread_dir(project_root, thread_id).exists():
+        raise FileNotFoundError(f"thread not found: {thread_id}")
+    event_id = f"TPE-{utc_event_stamp()}-{safe_slug(kind)}"
+    record = {
+        "event_id": event_id,
+        "thread_id": thread_id,
+        "kind": kind,
+        "text": text.strip(),
+        "linked_spec_id": linked_spec_id.strip(),
+        "linked_task_id": linked_task_id.strip(),
+        "linked_run_id": linked_run_id.strip(),
+        "parent_event_id": parent_event_id.strip(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "append_only": True,
+    }
+    path = thread_plan_path(project_root, thread_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    update_thread_meta(project_root, thread_id)
+    append_thread_command_event(
+        project_root,
+        thread_id,
+        event_type,
+        event_id=event_id,
+        kind=kind,
+        linked_task_id=linked_task_id.strip(),
+        linked_run_id=linked_run_id.strip(),
+        linked_spec_id=linked_spec_id.strip(),
+    )
+    render_thread_plan_markdown(project_root, thread_id)
+    marker = f"{THREAD_PLAN_MARKER} action=append thread={thread_id} kind={kind}"
+    return {
+        "status": "recorded",
+        "thread_plan_marker": THREAD_PLAN_MARKER,
+        "marker": marker,
+        "thread_id": thread_id,
+        "event_id": event_id,
+        "ledger": str(path),
+        "record": record,
+    }
+
+
+def start_thread_plan(project_root: Path, *, title: str, spec_id: str = "") -> dict[str, Any]:
+    if not title.strip():
+        raise ValueError("thread-plan title is required")
+    thread_id = make_thread_id(project_root, title)
+    created_at = datetime.now(timezone.utc).isoformat()
+    meta = {
+        "thread_id": thread_id,
+        "title": title.strip(),
+        "spec_id": spec_id.strip(),
+        "created_at": created_at,
+        "last_updated_at": created_at,
+    }
+    thread_dir(project_root, thread_id).mkdir(parents=True, exist_ok=True)
+    write_text(thread_meta_path(project_root, thread_id), json.dumps(meta, indent=2, ensure_ascii=False) + "\n")
+    write_thread_current(project_root, meta)
+    result = append_thread_plan_event(
+        project_root,
+        thread_id=thread_id,
+        kind="plan",
+        text=f"总体计划：{title.strip()}",
+        linked_spec_id=spec_id,
+        event_type="thread-plan start",
+    )
+    result.update({"status": "started", "title": title.strip(), "spec_id": spec_id.strip()})
+    result["marker"] = f"{THREAD_PLAN_MARKER} action=start thread={thread_id}"
+    return result
+
+
+def render_thread_plan_mermaid(project_root: Path, thread_id: str) -> str:
+    meta = load_thread_meta(project_root, thread_id)
+    events = [event for event in load_thread_events(project_root, thread_id) if "_invalid_json" not in event]
+    lines = ["flowchart LR"]
+    lines.append(f'  S["Start: {thread_event_label(str(meta.get("title", thread_id)))}"]')
+    previous = "S"
+    branch_anchor = "S"
+    if not events:
+        lines.append('  E["No plan notes yet"]')
+        lines.append("  S --> E")
+    for index, event in enumerate(events, start=1):
+        node = f"N{index}"
+        kind = str(event.get("kind", "summary"))
+        label = thread_event_label(str(event.get("text", "")))
+        lines.append(f'  {node}["{label}"]')
+        if kind == "branch":
+            lines.append(f"  {branch_anchor} -.-> {node}")
+        else:
+            lines.append(f"  {previous} --> {node}")
+            previous = node
+            branch_anchor = node
+    lines.extend(
+        [
+            "",
+            "  classDef start fill:#E8F3FF,stroke:#2B6CB0,color:#102A43;",
+            "  classDef plan fill:#ECFEFF,stroke:#0891B2,color:#083344;",
+            "  classDef phase fill:#E9FBEF,stroke:#2F855A,color:#123524;",
+            "  classDef branch fill:#FFF7ED,stroke:#EA580C,color:#431407;",
+            "  classDef decision fill:#F3E8FF,stroke:#6B46C1,color:#2D174D;",
+            "  classDef progress fill:#DCFCE7,stroke:#15803D,color:#052E16;",
+            "  class S start;",
+        ]
+    )
+    classes: dict[str, list[str]] = {"plan": [], "phase": [], "branch": [], "decision": [], "progress": []}
+    for index, event in enumerate(events, start=1):
+        kind = str(event.get("kind", "summary"))
+        css_kind = kind if kind in classes else ("decision" if kind in {"change", "summary"} else "plan")
+        classes.setdefault(css_kind, []).append(f"N{index}")
+    for kind, nodes in classes.items():
+        if nodes:
+            lines.append(f"  class {','.join(nodes)} {kind};")
+    return "\n".join(lines)
+
+
+def render_thread_plan_markdown(project_root: Path, thread_id: str) -> dict[str, Any]:
+    meta = load_thread_meta(project_root, thread_id)
+    events = [event for event in load_thread_events(project_root, thread_id) if "_invalid_json" not in event]
+    by_kind: dict[str, list[dict[str, Any]]] = {kind: [] for kind in THREAD_PLAN_EVENT_KINDS}
+    for event in events:
+        by_kind.setdefault(str(event.get("kind", "")), []).append(event)
+    current_line = next((event for event in reversed(events) if str(event.get("kind")) in {"progress", "phase", "decision", "change", "summary"}), None)
+    lines = [
+        f"# Thread Plan {thread_id}",
+        "",
+        f"目标：{meta.get('title', '')}",
+        "",
+        f"当前工作线：{current_line.get('text', '还没有记录进展。') if current_line else '还没有记录进展。'}",
+        "",
+        "## 总体计划",
+        "",
+    ]
+    for event in by_kind.get("plan", []):
+        lines.append(f"- {event.get('text', '')}")
+    if not by_kind.get("plan"):
+        lines.append("- 尚未记录总体计划。")
+    lines.extend(["", "## Plan A / Plan B", ""])
+    branch_events = by_kind.get("branch", [])
+    if branch_events:
+        for index, event in enumerate(branch_events, start=1):
+            label = chr(ord("A") + min(index - 1, 25))
+            lines.append(f"- Plan {label}: {event.get('text', '')}")
+    else:
+        lines.append("- 当前没有分支计划。")
+    lines.extend(["", "## Phase A / Phase B", ""])
+    phase_events = by_kind.get("phase", [])
+    if phase_events:
+        for index, event in enumerate(phase_events, start=1):
+            label = chr(ord("A") + min(index - 1, 25))
+            lines.append(f"- Phase {label}: {event.get('text', '')}")
+    else:
+        lines.append("- 当前没有阶段拆分。")
+    lines.extend(["", "## 当前选择", ""])
+    choice_events = by_kind.get("decision", []) + by_kind.get("change", [])
+    if choice_events:
+        for event in choice_events:
+            lines.append(f"- {event.get('text', '')}")
+    else:
+        lines.append("- 尚未记录改路或选择。")
+    lines.extend(["", "## 已完成", ""])
+    progress_events = by_kind.get("progress", [])
+    if progress_events:
+        for event in progress_events:
+            lines.append(f"- {event.get('text', '')}")
+    else:
+        lines.append("- 尚未记录完成项。")
+    lines.extend(["", "## 下一步", ""])
+    summary_events = by_kind.get("summary", [])
+    if summary_events:
+        lines.append(f"- {summary_events[-1].get('text', '')}")
+    else:
+        lines.append("- 等待下一轮计划推进。")
+    lines.extend(["", "## 关联证据", ""])
+    linked = [
+        event
+        for event in events
+        if event.get("linked_spec_id") or event.get("linked_task_id") or event.get("linked_run_id")
+    ]
+    if linked:
+        for event in linked:
+            parts = [str(event.get(key, "")) for key in ["linked_spec_id", "linked_task_id", "linked_run_id"] if event.get(key)]
+            lines.append(f"- {event.get('event_id', '')}: {' / '.join(parts)}")
+    else:
+        lines.append("- 尚未关联 spec/task/run。")
+    lines.extend(["", "## Mermaid", "", "```mermaid", render_thread_plan_mermaid(project_root, thread_id), "```", ""])
+    source_path = thread_dir(project_root, thread_id) / "thread-plan.md"
+    markdown = "\n".join(lines).rstrip() + "\n"
+    write_text(source_path, markdown)
+    return {
+        "status": "rendered",
+        "thread_plan_marker": THREAD_PLAN_MARKER,
+        "marker": f"{THREAD_PLAN_MARKER} action=render thread={thread_id} format=markdown",
+        "thread_id": thread_id,
+        "format": "markdown",
+        "output": str(source_path),
+        "markdown": markdown,
+        "event_count": len(events),
+    }
+
+
+def render_thread_plan_html(project_root: Path, thread_id: str) -> dict[str, Any]:
+    markdown_result = render_thread_plan_markdown(project_root, thread_id)
+    source_path = thread_plan_path(project_root, thread_id)
+    if not source_path.exists():
+        raise FileNotFoundError(source_path)
+    source_sha = sha256_file(source_path)
+    mermaid = render_thread_plan_mermaid(project_root, thread_id)
+    body_html, _title, sections = markdown_to_html_fragment(markdown_result["markdown"], anchor_prefix=safe_slug(thread_id.lower()))
+    body_html = (
+        "<details><summary>Visual plan map</summary>"
+        f"<pre><code>{html_escape(mermaid)}</code></pre>"
+        "</details>"
+        + body_html
+    )
+    output_path = thread_dir(project_root, thread_id) / "thread-map.html"
+    fragment_path = output_path.with_suffix(".fragment.html")
+    manifest_path = output_path.with_suffix(".manifest.json")
+    generated_at = datetime.now(timezone.utc).isoformat()
+    source_rel = project_relative(project_root, source_path)
+    fragment_html = build_html_fragment(
+        kind="thread-plan",
+        title=f"Thread Plan {thread_id}",
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id="not run-bound",
+        body_html=body_html,
+        sections=sections,
+        generated_at=generated_at,
+    )
+    write_text(fragment_path, fragment_html)
+    full_html = build_html_document(
+        title=f"Thread Plan {thread_id}",
+        kind="thread-plan",
+        body=fragment_html,
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id="not run-bound",
+        generated_at=generated_at,
+        theme=HTML_DEFAULT_THEME,
+    )
+    write_text(output_path, full_html)
+    manifest = {
+        "schema_version": "knowledgeos.html-report.v1",
+        "kind": "thread-plan",
+        "title": f"Thread Plan {thread_id}",
+        "thread_id": thread_id,
+        "source": source_rel,
+        "source_sha256": source_sha,
+        "output": project_relative(project_root, output_path),
+        "fragment": project_relative(project_root, fragment_path),
+        "sections": sections,
+        "generated_at": generated_at,
+        "html_source_of_truth": False,
+        "notice": HTML_SOURCE_TRUTH_NOTICE,
+    }
+    write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    return {
+        "status": "rendered",
+        "thread_plan_marker": THREAD_PLAN_MARKER,
+        "marker": f"{THREAD_PLAN_MARKER} action=render thread={thread_id} format=html",
+        "thread_id": thread_id,
+        "format": "html",
+        "output": str(output_path),
+        "manifest": str(manifest_path),
+        "source": str(source_path),
+        "source_sha256": source_sha,
+        "html_source_of_truth": False,
+    }
 
 
 def short_marker_value(value: str, limit: int = 96) -> str:
@@ -2314,6 +3597,41 @@ def archive_legacy_project(
     return {"project_root": str(project_root), "dry_run": dry_run, "plan": plan, "actions": actions}
 
 
+def evaluation_fingerprint(project_root: Path, task_id: str, run_id: str = "") -> str:
+    """Bind an eval to artifacts and effective policy, not mutable run ledgers."""
+    files: dict[str, str] = {}
+    excluded = {"runs", "receipts", "handoffs", "threads", "specs"}
+    for output in task_declared_outputs(project_root, task_id):
+        paths = list(project_root.glob(output)) if any(c in output for c in "*?[]") else [project_root / output]
+        for path in paths:
+            members = list(path.rglob("*")) if path.is_dir() else [path]
+            for member in members:
+                relative = member.relative_to(project_root)
+                if relative.parts[0] == ".agent-os" and (
+                    len(relative.parts) > 1 and relative.parts[1] in excluded
+                    or member.name in {"tasks.yaml", "specs.yaml"}
+                ):
+                    continue
+                if member.is_file():
+                    # Never follow artifact symlinks outside the declared project.
+                    member.resolve().relative_to(project_root.resolve())
+                    files[relative.as_posix()] = hashlib.sha256(member.read_bytes()).hexdigest()
+                elif not member.exists():
+                    files[relative.as_posix()] = "missing"
+    for name in ("project.yaml", "workspace.yaml", "write-policy.yaml", "read-policy.yaml",
+                 "dispatch-policy.yaml", "tool-registry.yaml", "phase-policy.yaml", "effect-policy.yaml",
+                 "decision-policy.yaml", "evals.yaml", "fabric-link.yaml", "workflows/router.yaml"):
+        path = project_root / ".agent-os" / name
+        files["policy:" + name] = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "missing"
+    task = dict(find_task(project_root, task_id))
+    task.pop("status", None)
+    binding = run_spec_binding(project_root, task_id, ensure_run_belongs_to_task(project_root, task_id, run_id)) if run_id else {}
+    return content_fingerprint(json.dumps({"files": files, "task": task,
+        "spec": {key: binding.get(key, "") for key in ("spec_id", "fingerprint", "binding_source", "binding_status")},
+        "outputs": task_declared_outputs(project_root, task_id),
+        "acceptance": parse_task_acceptance(project_root / ".agent-os/tasks.yaml").get(task_id, [])}, sort_keys=True))
+
+
 def write_task_eval(project_root: Path, task_id: str, run_id: str, notes: str = "") -> dict[str, Any]:
     task = find_task(project_root, task_id)
     run_dir = resolve_run_dir(project_root, run_id)
@@ -2354,7 +3672,8 @@ def write_task_eval(project_root: Path, task_id: str, run_id: str, notes: str = 
     if notes:
         lines.extend(["", "## Notes", "", notes])
     write_text(run_dir / "eval.md", "\n".join(lines).rstrip() + "\n")
-    append_command_event(run_dir, "eval-task", task_id, run_id, status="passed" if passed else "failed")
+    append_command_event(run_dir, "eval-task", task_id, run_id, status="passed" if passed else "failed",
+                         input_fingerprint=evaluation_fingerprint(project_root, task_id, run_id))
     return {
         "task_id": task_id,
         "run_id": run_id,
@@ -2447,6 +3766,7 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
     phases = parse_simple_list_sections(agent_os / "fabric-link.yaml", {"phase_keys"}).get("phase_keys", [])
     results.append(CheckResult(phases == EXPECTED_PHASE_KEYS, "phase_keys", f"{phases}"))
     results.extend(validate_phase_policy(project_root))
+    results.extend(validate_decision_policy(project_root))
     results.extend(validate_effect_policy(project_root))
 
     policy = load_write_policy(project_root)
@@ -2541,7 +3861,6 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
         for name, profile in sorted(profiles.items()):
             eval_profile = str(profile.get("eval_profile", ""))
             allowed_outputs = profile.get("allowed_outputs", [])
-            route_order = profile.get("route_order", [])
             results.append(CheckResult(bool(eval_profile), "workflow_router_eval", f"{name} eval_profile present"))
             if eval_profile:
                 results.append(CheckResult(eval_profile in eval_profiles, "workflow_router_eval", f"{name} eval_profile={eval_profile}"))
@@ -2552,80 +3871,11 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                     f"{name} allowed_outputs present",
                 )
             )
-            if isinstance(route_order, list):
-                has_run = any("run-task" in item for item in route_order)
-                has_dispatch_event = any("dispatch-task" in item and "--run-id" in item for item in route_order)
-                has_context = any("context-pack" in item for item in route_order)
-                has_plan = any("plan-task" in item for item in route_order)
-                has_phase = any("phase-task" in item for item in route_order)
-                has_eval = any("eval-task" in item for item in route_order)
-                has_verify_context = any("verify-context" in item for item in route_order)
-                has_verify = any("verify-lifecycle" in item for item in route_order)
-                has_verify_effects = any("verify-effects" in item for item in route_order)
-                has_complete = any("complete-task" in item for item in route_order)
-                run_index = next((idx for idx, item in enumerate(route_order) if "run-task" in item), -1)
-                dispatch_event_index = next((idx for idx, item in enumerate(route_order) if "dispatch-task" in item and "--run-id" in item), -1)
-                context_index = next((idx for idx, item in enumerate(route_order) if "context-pack" in item), -1)
-                plan_index = next((idx for idx, item in enumerate(route_order) if "plan-task" in item), -1)
-                eval_index = next((idx for idx, item in enumerate(route_order) if "eval-task" in item), -1)
-                verify_context_index = next((idx for idx, item in enumerate(route_order) if "verify-context" in item), -1)
-                verify_index = next((idx for idx, item in enumerate(route_order) if "verify-lifecycle" in item), -1)
-                verify_effects_index = next((idx for idx, item in enumerate(route_order) if "verify-effects" in item), -1)
-                complete_index = next((idx for idx, item in enumerate(route_order) if "complete-task" in item), -1)
-                results.append(CheckResult(has_run, "workflow_router_lifecycle", f"{name} includes run-task"))
-                results.append(CheckResult(has_dispatch_event, "workflow_router_lifecycle", f"{name} includes dispatch-task --run-id"))
-                results.append(CheckResult(has_context, "workflow_router_lifecycle", f"{name} includes context-pack"))
-                results.append(CheckResult(has_plan, "workflow_router_lifecycle", f"{name} includes plan-task"))
-                results.append(CheckResult(has_phase, "workflow_router_lifecycle", f"{name} includes phase-task"))
-                results.append(CheckResult(has_eval, "workflow_router_lifecycle", f"{name} includes eval-task"))
-                results.append(CheckResult(has_verify_context, "workflow_router_lifecycle", f"{name} includes verify-context"))
-                results.append(CheckResult(has_verify, "workflow_router_lifecycle", f"{name} includes verify-lifecycle"))
-                results.append(CheckResult(has_verify_effects, "workflow_router_lifecycle", f"{name} includes verify-effects"))
-                results.append(CheckResult(has_complete, "workflow_router_lifecycle", f"{name} includes complete-task"))
-                results.append(
-                    CheckResult(
-                        run_index >= 0 and context_index >= 0 and plan_index >= 0 and run_index < context_index < plan_index,
-                        "workflow_router_lifecycle",
-                        f"{name} run-task before context-pack before plan-task",
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        run_index >= 0 and dispatch_event_index >= 0 and context_index >= 0 and run_index < dispatch_event_index < context_index,
-                        "workflow_router_lifecycle",
-                        f"{name} run-task before dispatch-task --run-id before context-pack",
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        eval_index >= 0 and complete_index >= 0 and eval_index < complete_index,
-                        "workflow_router_lifecycle",
-                        f"{name} eval-task before complete-task",
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        verify_context_index >= 0 and complete_index >= 0 and verify_context_index < complete_index,
-                        "workflow_router_lifecycle",
-                        f"{name} verify-context before complete-task",
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        verify_index >= 0 and complete_index >= 0 and verify_index < complete_index,
-                        "workflow_router_lifecycle",
-                        f"{name} verify-lifecycle before complete-task",
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        verify_effects_index >= 0 and complete_index >= 0 and verify_effects_index < complete_index,
-                        "workflow_router_lifecycle",
-                        f"{name} verify-effects before complete-task",
-                    )
-                )
-            else:
-                results.append(CheckResult(False, "workflow_router_lifecycle", f"{name} route_order is not a list"))
+            lifecycle_errors = workflow_lifecycle_errors(profile)
+            results.append(CheckResult(
+                not lifecycle_errors, "workflow_router_lifecycle",
+                f"{name}: " + ("; ".join(lifecycle_errors) if lifecycle_errors else "supported lifecycle contract"),
+            ))
     else:
         results.append(CheckResult(False, "workflow_router", f"missing router file: {router_path}"))
 
@@ -2633,117 +3883,15 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
 
 
 def build_agent_guide(project_root: Path) -> str:
-    bin_path = knowledgeos_root_from_file() / "bin" / "knowledgeos"
-    return "\n".join(
-        [
-            "# KnowledgeOS Agent Guide",
-            "",
-            "Use this checklist before substantial work.",
-            "",
-            "1. Read the entry contract.",
-            "   - AGENTS.md",
-            "",
-            "2. Load project control state.",
-            "   - .agent-os/workspace.yaml",
-            "   - .agent-os/project.yaml",
-            "   - .agent-os/tasks.yaml",
-            "   - .agent-os/specs.yaml",
-            "   - .agent-os/phase-policy.yaml",
-            "   - .agent-os/effect-policy.yaml",
-            "   - .agent-os/decisions.yaml",
-            "   - .agent-os/evals.yaml",
-            "   - .agent-os/capabilities.yaml",
-            "   - .agent-os/read-policy.yaml",
-            "   - .agent-os/write-policy.yaml",
-            "",
-            "3. Run checks before acting.",
-            f"   - {bin_path} doctor --project-root {project_root} --summary",
-            f"   - {bin_path} tool-registry --project-root {project_root}",
-            f"   - {bin_path} create-spec --project-root {project_root} --title <title>  # when the user asks to create/align spec",
-            f"   - {bin_path} align-spec --project-root {project_root} --task-id <task-id>",
-            f"   - {bin_path} create-task --project-root {project_root} --title <title> --type <type> --output <path> --acceptance <check>",
-            f"   - {bin_path} route-task --project-root {project_root} --task-id <task-id>",
-            f"   - {bin_path} dispatch-task --project-root {project_root} --task-id <task-id>",
-            f"   - {bin_path} check-route-write --project-root {project_root} --task-id <task-id> --path <planned-path>",
-            "",
-            "4. Start work through a run envelope.",
-            f"   - {bin_path} run-task --project-root {project_root} --task-id <task-id>",
-            f"   - {bin_path} context-pack --project-root {project_root} --task-id <task-id> --run-id <run-id>",
-            f"   - {bin_path} plan-task --project-root {project_root} --task-id <task-id> --run-id <run-id>",
-            "",
-            "5. Never bypass write guard.",
-            "   - immutable paths are denied;",
-            "   - human-gated paths require explicit approval;",
-            "   - unclassified paths should be triaged before mutation.",
-            "   - pause at consultation checkpoints, state your recommendation, and ask before proceeding.",
-            "",
-            "6. Keep receipts and checkpoint evidence command-generated.",
-            f"   - {bin_path} dispatch-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
-            f"   - {bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note <public-trace> --evidence <evidence>; echo or relay TRACE_OK;",
-            f"   - {bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <phase> --status completed --note <public-trace> --evidence <evidence>; echo or relay CHECKPOINT_OK;",
-            f"   - {bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose <purpose> before/after MCP, skill, subagent, orchestrator, or important script use; echo or relay CAPABILITY_OK;",
-            f"   - {bin_path} artifact-assert --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --path <artifact>; echo or relay EFFECT_OK;",
-            f"   - {bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
-            f"   - {bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
-            f"   - {bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>;",
-            f"   - {bin_path} verify-effects --project-root {project_root} --task-id <task-id> --run-id <run-id>; echo or relay EFFECT_VERIFY_OK;",
-            f"   - {bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary <summary>",
-            "",
-            "7. For shared-fabric hosts, finish with canonical postflight.",
-            "   - report [SYNC_OK] only after postflight succeeds.",
-            "",
-            "8. For reset or migration requests, stay reversible first.",
-            f"   - {bin_path} reopen-task --project-root {project_root} --task-id <task-id> --reason <reason>  # same-task rerun only",
-            f"   - {bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run",
-            f"   - {bin_path} migrate-legacy-project --project-root {project_root} --write-plan",
-            f"   - {bin_path} archive-legacy-project --project-root {project_root} --write-plan",
-            "",
-        ]
-    )
+    from knowledgeos.guidance import render_guidance
+
+    return render_guidance(project_root, knowledgeos_root_from_file() / "bin" / "knowledgeos")
 
 
 def build_startup_prompt(project_root: Path) -> str:
-    bin_path = knowledgeos_root_from_file() / "bin" / "knowledgeos"
-    return "\n".join(
-        [
-            "# KnowledgeOS Startup Prompt",
-            "",
-            "Use this workspace's KnowledgeOS control plane.",
-            "",
-            f"Project root: `{project_root}`",
-            "",
-            "This prompt is only the session trigger. Durable rules live in `AGENTS.md`, `.agent-os/`, and the linked KnowledgeOS kernel/capability roots.",
-            "",
-            "Before substantial work:",
-            "",
-            "1. Read `AGENTS.md`.",
-            "2. Read `.agent-os/workspace.yaml`, `.agent-os/project.yaml`, `.agent-os/tasks.yaml`, `.agent-os/specs.yaml`, `.agent-os/phase-policy.yaml`, `.agent-os/effect-policy.yaml`, `.agent-os/decisions.yaml`, `.agent-os/evals.yaml`, `.agent-os/fabric-link.yaml`, `.agent-os/read-policy.yaml`, `.agent-os/write-policy.yaml`, `.agent-os/dispatch-policy.yaml`, and `.agent-os/tool-registry.yaml`.",
-            f"3. Run `{bin_path} doctor --project-root {project_root} --summary` and do not proceed if it fails.",
-            f"4. If the user says `create spec`, `align spec`, `对齐spec`, or equivalent, run `{bin_path} create-spec --project-root {project_root} --title \"<title>\"` or `{bin_path} align-spec --project-root {project_root} --task-id <task-id>` before execution.",
-            f"5. Select or confirm one task id from `.agent-os/tasks.yaml`; if the user asks for new work and no ready task fits, run `{bin_path} create-task --project-root {project_root} --title \"<title>\" --type <type> --output <path> --acceptance \"<check>\"`.",
-            f"6. Run `{bin_path} route-task --project-root {project_root} --task-id <task-id>`.",
-            f"7. Run `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id>` before invoking subagents, MCP tools, skills, workflows, or scripts.",
-            f"8. Before planned mutation, run `{bin_path} check-route-write --project-root {project_root} --task-id <task-id> --path <planned-path>`.",
-            f"9. Create run evidence with `{bin_path} run-task --project-root {project_root} --task-id <task-id>`; this writes `spec-snapshot.md` and `context-pack.md`.",
-            f"10. Write/update the execution context with `{bin_path} context-pack --project-root {project_root} --task-id <task-id> --run-id <run-id>` and `{bin_path} plan-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`.",
-            "11. Pause at consultation checkpoints, state your recommended next move, name the tradeoff, and ask the human whether to proceed.",
-            f"12. Record dispatch evidence with `{bin_path} dispatch-task --project-root {project_root} --task-id <task-id> --run-id <run-id>` after the run exists.",
-            f"13. Record public operational progress with `{bin_path} trace-step --project-root {project_root} --task-id <task-id> --run-id <run-id> --step <step> --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `TRACE_OK` marker.",
-            f"14. Record public phase evidence with `{bin_path} phase-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --phase <route|plan|review|dispatch|execute|report> --status completed --note \"<public trace>\" --evidence \"<command/file/user confirmation>\"`; relay the returned `CHECKPOINT_OK` marker.",
-            f"15. Record MCP, skill, subagent, orchestrator, or important script use with `{bin_path} capability-event --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --id <capability-id> --purpose \"<purpose>\"`; relay the returned `CAPABILITY_OK` marker.",
-            f"16. Verify real side effects with `{bin_path} artifact-assert --project-root {project_root} --task-id <task-id> --run-id <run-id> --kind <kind> --path <artifact>`; relay the returned `EFFECT_OK` marker.",
-            f"17. Run `{bin_path} eval-task --project-root {project_root} --task-id <task-id> --run-id <run-id>`; do not manually append eval status.",
-            f"18. Run `{bin_path} verify-context --project-root {project_root} --task-id <task-id> --run-id <run-id>`, `{bin_path} verify-lifecycle --project-root {project_root} --task-id <task-id> --run-id <run-id>`, and `{bin_path} verify-effects --project-root {project_root} --task-id <task-id> --run-id <run-id>`; relay the returned `EFFECT_VERIFY_OK` marker before claiming effect verification success.",
-            f"19. Use `{bin_path} complete-task --project-root {project_root} --task-id <task-id> --run-id <run-id> --summary \"<summary>\"`; it must enforce spec/context/plan, lifecycle, capability visibility, effect verification, and required postflight.",
-            "20. If a shared-fabric postflight hook is configured, report `[SYNC_OK]` only after `complete-task` returns `sync_status: SYNC_OK`.",
-            f"21. For reset requests, run `{bin_path} reset-project --project-root {project_root} --mode <soft|hard> --dry-run` before destructive action.",
-            f"22. For old-project reorganization requests, run `{bin_path} migrate-legacy-project --project-root {project_root} --write-plan` before moving files.",
-            f"23. For historical/superseded files that should be stored but not read by default, run `{bin_path} archive-legacy-project --project-root {project_root} --write-plan` before moving files into `archive/`.",
-            "",
-            "Never claim boot, route, dispatch, write safety, spec alignment, context pack, plan, trace, checkpoint, capability, effect, eval, completion, or sync success without command evidence.",
-            "",
-        ]
-    )
+    from knowledgeos.guidance import render_guidance
+
+    return render_guidance(project_root, knowledgeos_root_from_file() / "bin" / "knowledgeos", surface="startup")
 
 
 def redact_project_path(project_root: Path, path: Path | str, show_paths: bool) -> str:
@@ -2841,7 +3989,8 @@ RUNTIME_ADAPTER_DEFINITIONS = [
 ]
 
 
-def build_runtime_adapters_state(project_root: Path, *, show_paths: bool = False) -> dict[str, Any]:
+def build_runtime_adapters_state(project_root: Path, *, show_paths: bool = False,
+                                 host_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
     project_root = project_root.expanduser().resolve()
     adapters: list[dict[str, Any]] = []
     for definition in RUNTIME_ADAPTER_DEFINITIONS:
@@ -2866,6 +4015,32 @@ def build_runtime_adapters_state(project_root: Path, *, show_paths: bool = False
             }
         )
 
+    runtime_subagents: list[dict[str, Any]] = []
+    try:
+        registry_entries = load_tool_registry(project_root)
+    except FileNotFoundError:
+        registry_entries = []
+    for entry in registry_entries:
+        if entry.get("kind") != "subagent":
+            continue
+        if entry.get("status") not in ACTIVE_TOOL_STATUSES:
+            continue
+        if not is_adapter_resolvable_subagent(entry):
+            continue
+        runtime_subagents.append(
+            {
+                **tool_summary(entry, host_snapshot=host_snapshot),
+                "id": entry.get("id", ""),
+                "status": "registered",
+                "runtime": entry.get("runtime", "codex"),
+                "registered_runtime_tool": entry.get("runtime_tool", ""),
+                "runtime_agent_type": runtime_agent_type_for_entry(entry),
+                "adapter": entry.get("adapter", ""),
+                "execution_mode": entry.get("execution_mode", ""),
+                "human_gate": entry.get("human_gate", ""),
+            }
+        )
+
     missing_required = [item["id"] for item in adapters if item["status"] != "available" and not item["optional"]]
     available_count = sum(1 for item in adapters if item["status"] == "available")
     return {
@@ -2877,13 +4052,185 @@ def build_runtime_adapters_state(project_root: Path, *, show_paths: bool = False
         "available_count": available_count,
         "total": len(adapters),
         "adapters": adapters,
+        "runtime_subagents": sorted(runtime_subagents, key=lambda item: item["id"]),
         "policy": {
             "default_runtime": "mock",
             "real_cli_execution": "disabled_until_adapter_phase",
+            "native_subagent_execution": "delegated_to_codex_runtime_tool",
             "project_cwd_allowed": False,
             "project_mutation_allowed": False,
             "os_route_required_for_mutation": True,
         },
+    }
+
+
+def maestro_role_spec_path(subagent_id: str) -> Path:
+    root = knowledgeos_root_from_file()
+    runtime_path = root / "capability-layer" / "subagents" / "maestro" / f"{subagent_id}.yaml"
+    if runtime_path.exists():
+        return runtime_path
+    return root / "templates" / "capability-layer" / "subagents" / "maestro" / f"{subagent_id}.yaml"
+
+
+def load_maestro_role_spec(subagent_id: str) -> dict[str, str]:
+    path = maestro_role_spec_path(subagent_id)
+    if not path.exists():
+        return {}
+    keys = {"id", "display_name", "runtime_agent_type", "default_scope", "write_policy_hint", "role_prompt", "recommended_task_fit"}
+    return parse_scalar_values(path, keys)
+
+
+def build_default_subagent_role_prompt(entry: dict[str, str]) -> str:
+    subagent_id = entry.get("id", "")
+    runtime_type = runtime_agent_type_for_entry(entry) or "default"
+    if subagent_id.startswith("maestro-"):
+        readable = subagent_id.removeprefix("maestro-").replace("-", " ")
+        return (
+            f"Act as the Maestro {readable} adapter. Use the {runtime_type} Codex subagent runtime. "
+            "Return concise findings, concrete evidence, and any gaps. Do not mutate files unless the parent task route allows it."
+        )
+    return (
+        f"Act as {subagent_id} through the Codex {runtime_type} subagent runtime. "
+        "Return concise findings, concrete evidence, and any gaps."
+    )
+
+
+def active_runtime_subagent_catalog(project_root: Path) -> dict[str, str]:
+    catalog = {
+        entry.get("id", ""): runtime_agent_type_for_entry(entry)
+        for entry in load_tool_registry(project_root)
+        if entry.get("kind") == "subagent"
+        and entry.get("status") in ACTIVE_TOOL_STATUSES
+        and is_adapter_resolvable_subagent(entry)
+    }
+    catalog.pop("", None)
+    return catalog
+
+
+def standard_runtime_subagent_catalog() -> dict[str, str]:
+    catalog = {item["id"]: item["runtime_agent_type"] for item in CODEX_NATIVE_SUBAGENTS}
+    root = knowledgeos_root_from_file()
+    role_dir = root / "capability-layer" / "subagents" / "maestro"
+    if not role_dir.exists():
+        role_dir = root / "templates" / "capability-layer" / "subagents" / "maestro"
+    for path in sorted(role_dir.glob("maestro-*.yaml")):
+        values = parse_scalar_values(path, {"id", "runtime_agent_type"})
+        subagent_id = values.get("id", "")
+        runtime_type = values.get("runtime_agent_type", "")
+        if subagent_id and runtime_type in CODEX_RUNTIME_AGENT_TYPES:
+            catalog[subagent_id] = runtime_type
+    return catalog
+
+
+def subagent_catalog_sha256(catalog: dict[str, str]) -> str:
+    payload = json.dumps(catalog, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def subagent_snapshot_integrity_sha256(snapshot: dict[str, Any]) -> str:
+    payload = {key: value for key, value in snapshot.items() if key != "snapshot_integrity_sha256"}
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def ensure_subagent_catalog_snapshot(run_dir: Path, task_id: str, run_id: str, catalog: dict[str, str]) -> dict[str, Any]:
+    path = subagent_catalog_snapshot_path(run_dir)
+    if path.exists():
+        snapshot = json.loads(read_text(path))
+        return snapshot
+    required_catalog = standard_runtime_subagent_catalog()
+    expected_catalog = dict(required_catalog)
+    expected_catalog.update({subagent_id: runtime_type for subagent_id, runtime_type in catalog.items() if subagent_id not in expected_catalog})
+    snapshot = {
+        "schema_version": "knowledgeos.subagent-catalog.v1",
+        "task_id": task_id,
+        "run_id": run_id,
+        "roles": dict(sorted(expected_catalog.items())),
+        "catalog_sha256": subagent_catalog_sha256(expected_catalog),
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "evidence_model": "parent_attested_runtime",
+    }
+    snapshot["snapshot_integrity_sha256"] = subagent_snapshot_integrity_sha256(snapshot)
+    path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    append_command_event(
+        run_dir,
+        "subagent-catalog-snapshot",
+        task_id,
+        run_id,
+        status="recorded",
+        catalog_sha256=snapshot["catalog_sha256"],
+        role_count=len(expected_catalog),
+    )
+    return snapshot
+
+
+def build_subagent_adapter(project_root: Path, subagent_id: str, *, task_id: str = "", run_id: str = "", purpose: str = "",
+                           host_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    entries = load_tool_registry(project_root)
+    entry = next((item for item in entries if item.get("id") == subagent_id), None)
+    if not entry:
+        raise KeyError(f"unknown subagent id: {subagent_id}")
+    if entry.get("kind") != "subagent":
+        raise ValueError(f"{subagent_id} is not a subagent entry")
+    runtime_type = runtime_agent_type_for_entry(entry)
+    if runtime_type not in CODEX_RUNTIME_AGENT_TYPES:
+        raise ValueError(f"{subagent_id} does not declare a supported runtime_agent_type")
+    runtime_tool = entry.get("runtime_tool", "")
+    if runtime_tool != CODEX_RUNTIME_TOOL:
+        raise ValueError(f"{subagent_id} is not backed by {CODEX_RUNTIME_TOOL}")
+    role_spec = load_maestro_role_spec(subagent_id) if subagent_id.startswith("maestro-") else {}
+    role_prompt = role_spec.get("role_prompt") or build_default_subagent_role_prompt(entry)
+    role_prompt = f"{role_prompt}\n\n{SUBAGENT_RUNTIME_BOUNDARY}"
+    contract = runtime_contract(entry, load_host_capability_snapshot() if host_snapshot is None else host_snapshot)
+    arguments = contract["runtime_arguments"]
+    for prompt_key in ("message", "prompt"):
+        if prompt_key in arguments:
+            arguments[prompt_key] = role_prompt
+    capability_event_suggestion = (
+        f"knowledgeos capability-event --project-root . --task-id {task_id or '<task-id>'} "
+        f"--run-id {run_id or '<run-id>'} --kind subagent --id {subagent_id} "
+        f"--purpose \"{purpose or 'Codex runtime subagent delegated work'}\""
+    )
+    runtime_challenge = ""
+    catalog_sha256 = ""
+    if run_id and task_id:
+        run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+        snapshot = ensure_subagent_catalog_snapshot(run_dir, task_id, run_id, active_runtime_subagent_catalog(project_root))
+        catalog_sha256 = str(snapshot.get("catalog_sha256", ""))
+        challenge_source = f"{task_id}:{run_id}:{subagent_id}:{time.time_ns()}:{os.urandom(16).hex()}"
+        runtime_challenge = hashlib.sha256(challenge_source.encode("utf-8")).hexdigest()[:24]
+        append_command_event(
+            run_dir,
+            "subagent-adapter",
+            task_id,
+            run_id,
+            status="ready",
+            subagent_id=subagent_id,
+            runtime_tool=runtime_tool,
+            runtime_agent_type=runtime_type,
+            runtime_challenge=runtime_challenge,
+            catalog_sha256=catalog_sha256,
+        )
+    return {
+        **contract,
+        "status": "ready",
+        "subagent_adapter_marker": "SUBAGENT_ADAPTER_OK",
+        "marker": f"SUBAGENT_ADAPTER_OK id={subagent_id} runtime_agent_type={runtime_type}",
+        "id": subagent_id,
+        "runtime": entry.get("runtime", "codex"),
+        "runtime_tool": contract.get("runtime_tool", runtime_tool),
+        "runtime_agent_type": runtime_type,
+        "runtime_challenge": runtime_challenge,
+        "catalog_sha256": catalog_sha256,
+        "evidence_model": "parent_attested_runtime",
+        "host_runtime_verified": False,
+        "adapter": entry.get("adapter", ""),
+        "adapter_role": entry.get("adapter_role", ""),
+        "role_prompt": role_prompt,
+        "role_spec": f"capability-layer/subagents/maestro/{subagent_id}.yaml" if subagent_id.startswith("maestro-") else "",
+        "capability_event_suggestion": capability_event_suggestion,
+        "actual_execution": ("use runtime_arguments with the current host tool; recheck authorization before invocation"
+                             if contract["runtime_callable"] else "adapter resolved only; current host execution is unconfirmed"),
     }
 
 
@@ -3348,7 +4695,8 @@ def build_workbench_preview_handler(
     return WorkbenchPreviewHandler
 
 
-def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run: bool = False, force: bool = False) -> dict[str, Any]:
+def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run: bool = False, force: bool = False,
+                        *, host_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
     task = find_task(project_root, task_id)
     task_status = task.get("status", "")
     if task_status not in RUNNABLE_TASK_STATUSES and not force:
@@ -3356,6 +4704,7 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
     route = build_task_route(project_root, task_id, None)
     if route.get("status") != "routed":
         raise ValueError(f"task {task_id} is not runnable because routing failed: {route.get('reason', 'unknown route failure')}")
+    binding = resolve_spec_binding(project_root, spec_binding_task(project_root, task_id))
     run_id = next_run_id(project_root, task_id)
     run_dir = project_root / ".agent-os" / "runs" / run_id
     created = [
@@ -3367,9 +4716,12 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
         run_dir / "handoff.md",
         run_dir / "spec-snapshot.md",
         run_dir / "context-pack.md",
+        run_dir / "spec-binding.json",
+        run_dir / "dispatch-plan.json",
     ]
     if not dry_run:
         run_dir.mkdir(parents=True, exist_ok=False)
+        write_text(run_dir / "spec-binding.json", json.dumps(binding, indent=2) + "\n")
         write_text(
             run_dir / "run.yaml",
             "\n".join(
@@ -3381,6 +4733,7 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
                     f"task_status_at_start: {task_status}",
                     f"status: started",
                     f"route_status: {route.get('status', '')}",
+                    f"route_contract: {route.get('lifecycle_contract', LEGACY_LIFECYCLE_CONTRACT)}",
                     f"eval_profile: {route.get('eval_profile', '')}",
                     f"human_gate: {route.get('human_gate', '')}",
                     f"created_at: {datetime.now(timezone.utc).isoformat()}",
@@ -3398,9 +4751,14 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
         write_text(run_dir / "handoff.md", f"# Handoff\n\nCurrent run: {run_id}\n\nNext agent should inspect `run.yaml` and `receipt.md`.\n")
         append_command_event(run_dir, "run-task", task_id, run_id, status="started", lifecycle_contract="capability-visible-v1")
         write_context_pack(project_root, task_id, run_id, summary=summary)
+        dispatch = build_dispatch_plan(project_root, task_id, run_id=run_id, host_snapshot=host_snapshot, persist=True)
         write_text(project_root / ".agent-os" / "receipts" / "latest.md", receipt)
         write_text(project_root / ".agent-os" / "handoffs" / "current.md", f"# Current Handoff\n\nCurrent run: {run_id}\n\nTask: {task_id}\n")
-    return {"run_id": run_id, "task": task, "route": route, "created": [str(p) for p in created], "dry_run": dry_run}
+        checkpoint = record_checkpoint_producer(project_root, task_id, run_id, producer="run-task",
+                                               inputs={"task": task, "route": route, "summary": summary}, evidence_paths=["prompt.md"])
+        dispatch_event = record_dispatch_event(project_root, task_id, run_id, dispatch)
+    return {"run_id": run_id, "task": task, "route": route, "created": [str(p) for p in created], "dry_run": dry_run,
+            **({"checkpoint": checkpoint, "dispatch": dispatch, "dispatch_event": dispatch_event} if not dry_run else {})}
 
 
 def next_run_id(project_root: Path, task_id: str) -> str:
@@ -3425,6 +4783,93 @@ def ensure_run_belongs_to_task(project_root: Path, task_id: str, run_id: str) ->
     if metadata.get("task_id") != task_id:
         raise ValueError(f"run {run_id} belongs to task {metadata.get('task_id')!r}, not {task_id!r}")
     return run_dir
+
+
+def checkpoint_digest(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def checkpoint_artifact_digest(path: Path) -> str:
+    # Generated timestamps are presentation, not changed plan/context inputs.
+    content = re.sub(r"(?m)^Generated At: .*\n?", "", read_text(path))
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def record_checkpoint_producer(project_root: Path, task_id: str, run_id: str, *,
+                               producer: str, inputs: dict[str, Any], evidence_paths: list[str]) -> dict[str, Any]:
+    supported = {"run-task": ("route", "started"), "plan-task": ("plan", "written"),
+                 "dispatch-task": ("dispatch", "dispatch_ready")}
+    if producer not in supported:
+        raise ValueError(f"unsupported checkpoint producer: {producer}")
+    phase, success = supported[producer]
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    sources = [event for event in load_command_events(run_dir)
+               if event.get("generated_by") == "knowledgeos" and event.get("event_type") == producer
+               and event.get("task_id") == task_id and event.get("run_id") == run_id]
+    if not sources or sources[-1].get("status") != success:
+        raise ValueError(f"checkpoint requires successful {producer} command evidence")
+    artifacts = {}
+    for name in evidence_paths:
+        path = (run_dir / name).resolve()
+        if not path.is_relative_to(run_dir.resolve()) or not path.is_file():
+            raise ValueError(f"invalid checkpoint evidence path: {name}")
+        artifacts[name] = checkpoint_artifact_digest(path)
+    policy_inputs = {}
+    for name in ("phase-policy.yaml", "write-policy.yaml", "dispatch-policy.yaml", "workflow-router.yaml"):
+        path = project_root / ".agent-os" / name
+        policy_inputs[name] = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+    snapshot = {"inputs": inputs, "artifacts": artifacts, "policies": policy_inputs}
+    fingerprint = checkpoint_digest(snapshot)
+    identity = checkpoint_digest([task_id, run_id, producer, phase, fingerprint])
+    for record in load_phase_records(run_dir):
+        if record.get("idempotency_id") == identity and checkpoint_producer_valid(run_dir, record):
+            return {"status": "reused", "checkpoint_marker": "CHECKPOINT_OK",
+                    "marker": f"CHECKPOINT_OK phase={phase} status=completed producer={producer} reused=true", "record": record}
+    record = {"task_id": task_id, "run_id": run_id, "phase": phase, "status": "completed",
+              "producer": producer, "producer_version": "checkpoint-v1", "input_fingerprint": fingerprint,
+              "idempotency_id": identity, "command_event_id": checkpoint_digest(sources[-1]),
+              "note": f"Successful {producer} recorded {phase}", "evidence": ", ".join(evidence_paths) or "command-events.ndjson",
+              "skip_reason": "", "timestamp": datetime.now(timezone.utc).isoformat()}
+    append_command_event(run_dir, "checkpoint-producer", task_id, run_id,
+                         checkpoint=record, input_snapshot=snapshot)
+    with (run_dir / "phases.ndjson").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return {"status": "recorded", "checkpoint_marker": "CHECKPOINT_OK",
+            "marker": f"CHECKPOINT_OK phase={phase} status=completed producer={producer} evidence={record['evidence']}",
+            "record": record, "ledger": str(run_dir / "phases.ndjson")}
+
+
+def checkpoint_producer_valid(run_dir: Path, record: dict[str, Any], *, current_artifacts: bool = False) -> bool:
+    supported = {"run-task": ("route", "started"), "plan-task": ("plan", "written"),
+                 "dispatch-task": ("dispatch", "dispatch_ready")}
+    producer = record.get("producer")
+    if producer not in supported or record.get("producer_version") != "checkpoint-v1":
+        return False
+    phase, success = supported[producer]
+    if record.get("phase") != phase or record.get("status") != "completed":
+        return False
+    events = [e for e in load_command_events(run_dir) if e.get("generated_by") == "knowledgeos"
+              and e.get("task_id") == record.get("task_id") and e.get("run_id") == record.get("run_id")]
+    if not any(e.get("event_type") == producer and e.get("status") == success
+               and checkpoint_digest(e) == record.get("command_event_id") for e in events):
+        return False
+    for event in events:
+        if event.get("event_type") != "checkpoint-producer" or event.get("checkpoint") != record:
+            continue
+        snapshot = event.get("input_snapshot")
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("artifacts"), dict):
+            continue
+        fingerprint = checkpoint_digest(snapshot)
+        if fingerprint != record.get("input_fingerprint") or checkpoint_digest(
+                [record.get("task_id"), record.get("run_id"), producer, phase, fingerprint]) != record.get("idempotency_id"):
+            continue
+        if current_artifacts:
+            for name, expected in snapshot["artifacts"].items():
+                path = (run_dir / name).resolve()
+                if not path.is_relative_to(run_dir.resolve()) or not path.is_file() or checkpoint_artifact_digest(path) != expected:
+                    return False
+        return True
+    return False
 
 
 def record_task_phase(
@@ -3470,15 +4915,62 @@ def record_task_phase(
 def record_dispatch_event(project_root: Path, task_id: str, run_id: str, dispatch: dict[str, Any]) -> dict[str, Any]:
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     required_stages = [step.get("stage", "") for step in dispatch.get("steps", []) if step.get("required")]
-    append_command_event(
-        run_dir,
-        "dispatch-task",
-        task_id,
-        run_id,
-        status=str(dispatch.get("status", "")),
-        required_stages=required_stages,
-    )
-    return {"run_id": run_id, "required_stages": required_stages, "command_events": str(command_events_path(run_dir))}
+    planned_tools: list[dict[str, str]] = []
+    for step in dispatch.get("steps", []):
+        stage = str(step.get("stage", ""))
+        for tool in step.get("tools", []) or []:
+            if isinstance(tool, dict):
+                planned_tools.append(
+                    {
+                        "stage": stage,
+                        "kind": str(tool.get("kind", "")),
+                        "id": str(tool.get("id", "")),
+                        "required": str(bool(step.get("required"))).lower(),
+                        "runtime_tool": str(tool.get("runtime_tool", "")),
+                        "runtime_agent_type": str(tool.get("runtime_agent_type", "")),
+                        "runtime_callable": str(bool(tool.get("runtime_callable"))).lower(),
+                    }
+                )
+    previous = [event for event in load_command_events(run_dir)
+                if event.get("generated_by") == "knowledgeos" and event.get("event_type") == "dispatch-task"
+                and event.get("task_id") == task_id and event.get("run_id") == run_id]
+    prior = previous[-1] if previous else {}
+    same_plan = (prior.get("status") == "dispatch_ready"
+                 and dispatch.get("status") == "dispatch_ready"
+                 and prior.get("required_stages") == required_stages
+                 and prior.get("planned_tools") == planned_tools
+                 and (not prior.get("dispatch_fingerprint")
+                      or prior["dispatch_fingerprint"] == dispatch.get("dispatch_fingerprint")))
+    reused = bool(same_plan and dispatch.get("dispatch_reuse") == "reused"
+                  and prior.get("dispatch_fingerprint") == dispatch.get("dispatch_fingerprint"))
+    phases = [p for p in load_phase_records(run_dir) if p.get("phase") == "dispatch"
+              and p.get("task_id") == task_id and p.get("run_id") == run_id]
+    latest = phases[-1] if phases else {}
+    manual_valid = (latest and "producer" not in latest and latest.get("status") in PHASE_STATUSES
+                    and (latest.get("status") != "skipped" or str(latest.get("skip_reason", "")).strip())
+                    and has_command_event(run_dir, "phase-task", task_id, run_id,
+                                          phase="dispatch", status=latest.get("status")))
+    if not reused:
+        append_command_event(
+            run_dir, "dispatch-task", task_id, run_id,
+            status=str(dispatch.get("status", "")), required_stages=required_stages,
+            planned_tools=planned_tools, dispatch_fingerprint=dispatch.get("dispatch_fingerprint", ""),
+            dispatch_reuse=dispatch.get("dispatch_reuse", "recomputed"),
+        )
+    # A same-plan replay must not overwrite a public manual skip. Conversely,
+    # a cached command alone is insufficient after a crash before phase append.
+    if same_plan and (manual_valid or (reused and checkpoint_producer_valid(run_dir, latest))):
+        return {"run_id": run_id, "required_stages": required_stages,
+                "record_reuse": "reused" if reused else "recorded",
+                "checkpoint_reuse": "manual" if manual_valid else "producer",
+                "command_events": str(command_events_path(run_dir))}
+    checkpoint = {}
+    if dispatch.get("status") == "dispatch_ready":
+        checkpoint = record_checkpoint_producer(project_root, task_id, run_id, producer="dispatch-task",
+                                               inputs={"dispatch": dispatch}, evidence_paths=[])
+    return {"run_id": run_id, "required_stages": required_stages, "command_events": str(command_events_path(run_dir)),
+            "record_reuse": "reused" if reused else "recorded",
+            **({"checkpoint": checkpoint} if checkpoint else {})}
 
 
 def record_capability_event(
@@ -3491,6 +4983,8 @@ def record_capability_event(
     purpose: str,
     status: str = "completed",
     evidence: str = "",
+    invocation_id: str = "",
+    recovers_event_id: str = "",
 ) -> dict[str, Any]:
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     if kind not in CAPABILITY_EVENT_KINDS:
@@ -3516,6 +5010,10 @@ def record_capability_event(
         "evidence": evidence.strip(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    if invocation_id.strip():
+        record["invocation_id"] = invocation_id.strip()
+    if recovers_event_id.strip():
+        record["recovers_event_id"] = recovers_event_id.strip()
     event_path = capability_events_path(run_dir)
     with event_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
@@ -3537,6 +5035,520 @@ def record_capability_event(
         "marker": marker,
         "ledger": str(event_path),
         "record": record,
+    }
+
+
+def verify_subagent_catalog(
+    project_root: Path,
+    task_id: str,
+    run_id: str,
+    *,
+    native_min_successes: int = DEFAULT_NATIVE_SUBAGENT_SUCCESSES,
+) -> dict[str, Any]:
+    if native_min_successes < DEFAULT_NATIVE_SUBAGENT_SUCCESSES:
+        raise ValueError(
+            f"--native-min-successes cannot be lower than {DEFAULT_NATIVE_SUBAGENT_SUCCESSES}"
+        )
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    current_catalog = active_runtime_subagent_catalog(project_root)
+    snapshot_path = subagent_catalog_snapshot_path(run_dir)
+    snapshot: dict[str, Any] = {}
+    snapshot_error = ""
+    if snapshot_path.exists():
+        try:
+            snapshot = json.loads(read_text(snapshot_path))
+        except (json.JSONDecodeError, OSError) as exc:
+            snapshot_error = f"invalid_catalog_snapshot: {exc}"
+    else:
+        snapshot_error = "missing_catalog_snapshot"
+    registered = {
+        str(subagent_id): str(runtime_type)
+        for subagent_id, runtime_type in (snapshot.get("roles", {}) if isinstance(snapshot.get("roles", {}), dict) else {}).items()
+    }
+    snapshot_sha256 = str(snapshot.get("catalog_sha256", ""))
+    validation_started_at = str(snapshot.get("captured_at", ""))
+    expected_snapshot_sha256 = subagent_catalog_sha256(registered) if registered else ""
+    required_snapshot_fields = {
+        "schema_version": "knowledgeos.subagent-catalog.v1",
+        "task_id": task_id,
+        "run_id": run_id,
+    }
+    for field, expected in required_snapshot_fields.items():
+        if snapshot and snapshot.get(field) != expected:
+            snapshot_error = f"catalog_snapshot_{field}_mismatch"
+            break
+    if snapshot and not validation_started_at:
+        snapshot_error = "catalog_snapshot_missing_captured_at"
+    elif snapshot and snapshot.get("evidence_model") != "parent_attested_runtime":
+        snapshot_error = "catalog_snapshot_evidence_model_mismatch"
+    elif snapshot and not snapshot_sha256:
+        snapshot_error = "catalog_snapshot_missing_hash"
+    elif snapshot_sha256 != expected_snapshot_sha256:
+        snapshot_error = "catalog_snapshot_hash_mismatch"
+    elif snapshot:
+        try:
+            captured_at = datetime.fromisoformat(validation_started_at)
+            if captured_at.tzinfo is None:
+                raise ValueError("timezone required")
+        except ValueError:
+            snapshot_error = "catalog_snapshot_invalid_captured_at"
+    if snapshot and not snapshot_error:
+        observed_integrity = str(snapshot.get("snapshot_integrity_sha256", ""))
+        if not observed_integrity:
+            snapshot_error = "catalog_snapshot_missing_integrity"
+        elif observed_integrity != subagent_snapshot_integrity_sha256(snapshot):
+            snapshot_error = "catalog_snapshot_integrity_mismatch"
+    required_catalog = standard_runtime_subagent_catalog()
+    missing_standard_roles = sorted(set(required_catalog) - set(registered))
+    standard_type_mismatches = {
+        subagent_id: {"expected": runtime_type, "observed": registered.get(subagent_id, "")}
+        for subagent_id, runtime_type in required_catalog.items()
+        if registered.get(subagent_id) != runtime_type
+    }
+    catalog_drift = bool(registered) and current_catalog != registered
+    native_ids = {
+        item["id"]
+        for item in CODEX_NATIVE_SUBAGENTS
+        if item["id"] in registered
+    }
+    adapter_role_ids: set[str] = set()
+    adapter_mismatches: list[dict[str, str]] = []
+    adapter_challenges: dict[str, set[str]] = {subagent_id: set() for subagent_id in registered}
+    for event in load_command_events(run_dir):
+        if event.get("generated_by") != "knowledgeos" or event.get("event_type") != "subagent-adapter":
+            continue
+        if event.get("task_id") != task_id or event.get("run_id") != run_id or event.get("status") != "ready":
+            continue
+        if validation_started_at and str(event.get("timestamp", "")) <= validation_started_at:
+            continue
+        subagent_id = str(event.get("subagent_id", ""))
+        if subagent_id not in registered:
+            continue
+        observed_type = str(event.get("runtime_agent_type", ""))
+        event_catalog_sha256 = str(event.get("catalog_sha256", ""))
+        runtime_challenge = str(event.get("runtime_challenge", ""))
+        if observed_type == registered[subagent_id] and event_catalog_sha256 == snapshot_sha256 and runtime_challenge:
+            adapter_role_ids.add(subagent_id)
+            adapter_challenges[subagent_id].add(runtime_challenge)
+        else:
+            adapter_mismatches.append(
+                {
+                    "id": subagent_id,
+                    "expected_runtime_agent_type": registered[subagent_id],
+                    "observed_runtime_agent_type": observed_type,
+                    "catalog_sha256": event_catalog_sha256,
+                }
+            )
+    missing_adapter_role_ids = sorted(set(registered) - adapter_role_ids)
+    success_nonces: dict[str, set[str]] = {subagent_id: set() for subagent_id in registered}
+    invalid_events: list[dict[str, str]] = []
+    consumed_challenges: set[str] = set()
+    ignored_reused_challenge_count = 0
+    for event in load_capability_events(run_dir):
+        if "_invalid_json" in event or event.get("kind") != "subagent":
+            continue
+        if validation_started_at and str(event.get("timestamp", "")) <= validation_started_at:
+            continue
+        evidence = str(event.get("evidence", ""))
+        if SUBAGENT_SMOKE_MARKER not in evidence:
+            continue
+        subagent_id = str(event.get("id", ""))
+        reason = ""
+        if subagent_id not in registered:
+            reason = "unknown_runtime_subagent"
+        elif str(event.get("status", "")).strip().lower() != "completed":
+            reason = "status_not_completed"
+        else:
+            marker_match = re.search(
+                rf"(?:^|;\s*){re.escape(SUBAGENT_SMOKE_MARKER)} id={re.escape(subagent_id)}(?: round=\d+)? nonce=([A-Za-z0-9._-]+)(?:;|$)",
+                evidence,
+            )
+            ordered_tokens = [token.strip() for token in evidence.split(";")]
+            tokens = set(ordered_tokens)
+            challenge_tokens = [token for token in ordered_tokens if token.startswith("adapter_challenge=")]
+            observed_challenge = challenge_tokens[0].partition("=")[2] if len(challenge_tokens) == 1 else ""
+            if not marker_match:
+                reason = "marker_or_role_id_mismatch"
+            elif "cleanup=completed" not in tokens:
+                reason = "missing_cleanup" if not any(token.startswith("cleanup=") for token in tokens) else "cleanup_not_completed"
+            elif "role_contract=passed" not in tokens:
+                reason = "missing_role_contract" if not any(token.startswith("role_contract=") for token in tokens) else "role_contract_not_passed"
+            elif not challenge_tokens:
+                reason = "missing_adapter_challenge"
+            elif len(challenge_tokens) != 1 or not observed_challenge:
+                reason = "duplicate_or_malformed_adapter_challenge"
+            elif observed_challenge not in adapter_challenges.get(subagent_id, set()):
+                reason = "adapter_challenge_mismatch"
+            elif observed_challenge in consumed_challenges:
+                ignored_reused_challenge_count += 1
+            else:
+                consumed_challenges.add(observed_challenge)
+                success_nonces[subagent_id].add(marker_match.group(1))
+        if reason:
+            invalid_events.append(
+                {
+                    "capability_event_id": str(event.get("capability_event_id", "")),
+                    "id": subagent_id,
+                    "reason": reason,
+                }
+            )
+
+    covered_role_ids = sorted(subagent_id for subagent_id, nonces in success_nonces.items() if nonces)
+    missing_role_ids = sorted(set(registered) - set(covered_role_ids))
+    success_counts = {subagent_id: len(success_nonces[subagent_id]) for subagent_id in sorted(registered)}
+    native_shortfalls = {
+        subagent_id: success_counts[subagent_id]
+        for subagent_id in sorted(native_ids)
+        if success_counts[subagent_id] < native_min_successes
+    }
+    catalog_empty = not registered
+    passed = (
+        not catalog_empty
+        and not snapshot_error
+        and not catalog_drift
+        and not missing_standard_roles
+        and not standard_type_mismatches
+        and not missing_adapter_role_ids
+        and not adapter_mismatches
+        and not missing_role_ids
+        and not native_shortfalls
+        and not invalid_events
+    )
+    marker_name = SUBAGENT_CATALOG_MARKER if passed else "SUBAGENT_CATALOG_FAIL"
+    marker = (
+        f"{marker_name} roles={len(covered_role_ids)}/{len(registered)} "
+        f"native_min={native_min_successes} invalid={len(invalid_events)}"
+    )
+    return {
+        "schema_version": "knowledgeos.verify-subagents.v1",
+        "status": "passed" if passed else "failed",
+        "subagent_catalog_marker": SUBAGENT_CATALOG_MARKER if passed else "",
+        "marker": marker,
+        "task_id": task_id,
+        "run_id": run_id,
+        "registered_role_count": len(registered),
+        "covered_role_count": len(covered_role_ids),
+        "registered_role_ids": sorted(registered),
+        "catalog_empty": catalog_empty,
+        "catalog_snapshot": str(snapshot_path),
+        "catalog_sha256": snapshot_sha256,
+        "validation_started_at": validation_started_at,
+        "catalog_snapshot_error": snapshot_error,
+        "catalog_drift": catalog_drift,
+        "current_role_ids": sorted(current_catalog),
+        "missing_standard_roles": missing_standard_roles,
+        "standard_type_mismatches": standard_type_mismatches,
+        "evidence_model": "parent_attested_runtime",
+        "host_runtime_verified": False,
+        "adapter_role_ids": sorted(adapter_role_ids),
+        "missing_adapter_role_ids": missing_adapter_role_ids,
+        "adapter_mismatches": adapter_mismatches,
+        "covered_role_ids": covered_role_ids,
+        "missing_role_ids": missing_role_ids,
+        "success_counts": success_counts,
+        "native_role_ids": sorted(native_ids),
+        "native_min_successes": native_min_successes,
+        "native_shortfalls": native_shortfalls,
+        "invalid_events": invalid_events,
+        "ignored_reused_challenge_count": ignored_reused_challenge_count,
+        "ledger": str(capability_events_path(run_dir)),
+    }
+
+
+def build_dispatch_report(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    events = [event for event in load_capability_events(run_dir) if "_invalid_json" not in event]
+    # Keep the original event stream for recovery evidence; count actual invocations.
+    invocation_events: dict[tuple[str, str], dict[str, Any]] = {}
+    for index, event in enumerate(events):
+        key = (str(event.get("kind", "")), str(event.get("invocation_id") or f"legacy-event-{index}"))
+        invocation_events[key] = event
+    counted_events = list(invocation_events.values())
+    invoked_events = [
+        event
+        for event in counted_events
+        if str(event.get("status", "completed")).strip().lower() not in SKIPPED_CAPABILITY_STATUSES
+    ]
+    skipped_events = [
+        event
+        for event in counted_events
+        if str(event.get("status", "completed")).strip().lower() in SKIPPED_CAPABILITY_STATUSES
+    ]
+    agent_events = [event for event in invoked_events if str(event.get("kind", "")) in AGENT_CAPABILITY_KINDS]
+    skipped_agent_events = [event for event in skipped_events if str(event.get("kind", "")) in AGENT_CAPABILITY_KINDS]
+    unique_agent_keys = {(str(event.get("kind", "")), str(event.get("invocation_id") or event.get("id", ""))) for event in agent_events}
+    unique_skipped_agent_keys = {(str(event.get("kind", "")), str(event.get("invocation_id") or event.get("id", ""))) for event in skipped_agent_events}
+    invocation_status_counts: dict[str, int] = {}
+    for event in counted_events:
+        status = str(event.get("status", "unknown"))
+        invocation_status_counts[status] = invocation_status_counts.get(status, 0) + 1
+    observed_runtime_gap_events = [
+        event
+        for event in events
+        if str(event.get("kind", "")) in AGENT_CAPABILITY_KINDS
+        if str(event.get("status", "")).strip().lower() in RUNTIME_GAP_CAPABILITY_STATUSES
+    ]
+    runtime_gap_events: list[dict[str, Any]] = []
+    resolved_runtime_gaps: list[dict[str, Any]] = []
+    consumed_recovery_event_ids: set[str] = set()
+    for gap_event in observed_runtime_gap_events:
+        gap_status = str(gap_event.get("status", "")).strip().lower().replace("-", "_")
+        if gap_status in {"timeout", "timed_out"}:
+            gap_status = "timed_out"
+        recovery = next(
+            (
+                event
+                for event in agent_events
+                if event.get("kind") == gap_event.get("kind")
+                and event.get("id") == gap_event.get("id")
+                and event.get("invocation_id") == gap_event.get("invocation_id")
+                and event.get("purpose") == gap_event.get("purpose")
+                and str(event.get("status", "")).strip().lower() == "completed"
+                and str(event.get("timestamp", "")) > str(gap_event.get("timestamp", ""))
+                and event.get("recovers_event_id") == gap_event.get("capability_event_id")
+                and str(event.get("capability_event_id", "")) not in consumed_recovery_event_ids
+            ),
+            None,
+        )
+        if recovery:
+            consumed_recovery_event_ids.add(str(recovery.get("capability_event_id", "")))
+            resolved_runtime_gaps.append({"gap": gap_event, "recovery": recovery})
+        else:
+            runtime_gap_events.append(gap_event)
+    counts_by_kind: dict[str, int] = {kind: 0 for kind in sorted(CAPABILITY_EVENT_KINDS)}
+    for event in invoked_events:
+        kind = str(event.get("kind", "unknown")) or "unknown"
+        counts_by_kind[kind] = counts_by_kind.get(kind, 0) + 1
+    skipped_by_kind: dict[str, int] = {kind: 0 for kind in sorted(CAPABILITY_EVENT_KINDS)}
+    for event in skipped_events:
+        kind = str(event.get("kind", "unknown")) or "unknown"
+        skipped_by_kind[kind] = skipped_by_kind.get(kind, 0) + 1
+    command_events = load_command_events(run_dir)
+    dispatch_events = [
+        event
+        for event in command_events
+        if event.get("generated_by") == "knowledgeos"
+        and event.get("event_type") == "dispatch-task"
+        and event.get("task_id") == task_id
+        and event.get("run_id") == run_id
+    ]
+    latest_dispatch_event = dispatch_events[-1] if dispatch_events else {}
+    required_stages = [str(item) for item in latest_dispatch_event.get("required_stages", []) or []]
+    planned_tools = latest_dispatch_event.get("planned_tools", []) or []
+    def normalized_token(value: str) -> str:
+        return value.strip().lower().replace("_", "-")
+
+    recorded_stage_tokens = {
+        normalized_token(str(event.get("kind", "")))
+        for event in events
+    } | {
+        normalized_token(str(event.get("id", "")))
+        for event in events
+    }
+    planned_tools_by_stage: dict[str, list[dict[str, Any]]] = {}
+    for item in planned_tools:
+        if isinstance(item, dict):
+            planned_tools_by_stage.setdefault(str(item.get("stage", "")), []).append(item)
+    def required_stage_has_record(stage: str) -> bool:
+        normalized_stage = normalized_token(stage)
+        if normalized_stage in recorded_stage_tokens:
+            return True
+        for item in planned_tools_by_stage.get(stage, []):
+            if normalized_token(str(item.get("kind", ""))) in recorded_stage_tokens:
+                return True
+            if normalized_token(str(item.get("id", ""))) in recorded_stage_tokens:
+                return True
+        return any(normalized_stage in normalized_token(str(event.get("purpose", ""))) for event in events)
+
+    required_without_record = [
+        stage
+        for stage in required_stages
+        if stage and not required_stage_has_record(stage)
+    ]
+    gaps: list[str] = []
+    if not events:
+        gaps.append("no capability-event records were written; report no external capability use with an explicit reason")
+    if required_without_record:
+        gaps.append("required dispatch stages without capability-event or skip reason: " + ", ".join(required_without_record))
+    if runtime_gap_events:
+        gaps.append(
+            "runtime subagent gaps: "
+            + ", ".join(
+                f"{event.get('id', '')}={event.get('status', '')}"
+                for event in runtime_gap_events
+            )
+        )
+    if not gaps:
+        gaps.append("none")
+    marker = f"AGENT_DISPATCH_OK agents={len(unique_agent_keys)} capabilities={len(invoked_events)} skipped_agents={len(unique_skipped_agent_keys)} run={run_id}"
+    report_path = run_dir / "dispatch-report.md"
+    lines = [
+        "# Full Capability Dispatch Report",
+        "",
+        f"Run: {run_id}",
+        "",
+        f"Task: {task_id}",
+        "",
+        f"Marker: {marker}",
+        "",
+        "Meaning: AGENT_DISPATCH_OK summarizes all recorded external and mounted capabilities, not only subagents.",
+        "",
+        f"Agents Invoked: {len(unique_agent_keys)} unique agents across {len(agent_events)} events",
+        "",
+        f"Agents Skipped Or Gapped: {len(unique_skipped_agent_keys)} unique agents across {len(skipped_agent_events)} events",
+        "",
+        f"Capabilities Invoked: {len(invoked_events)}",
+        "",
+        f"Capabilities Skipped: {len(skipped_events)}",
+        "",
+        f"Evidence: `{project_relative(project_root, capability_events_path(run_dir))}`, `{project_relative(project_root, command_events_path(run_dir))}`",
+        "",
+        "## By Kind",
+        "",
+    ]
+    for kind, count in sorted(counts_by_kind.items()):
+        skipped = skipped_by_kind.get(kind, 0)
+        lines.append(f"- {kind}: used={count}, skipped={skipped}")
+    lines.extend(["", "## Used Capabilities", ""])
+    if invoked_events:
+        for event in invoked_events:
+            kind = str(event.get("kind", "unknown"))
+            capability_id = str(event.get("id", ""))
+            purpose = str(event.get("purpose", ""))
+            status = str(event.get("status", "completed"))
+            lines.append(f"- {kind}: {capability_id} ({status}) - {purpose}")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Skipped Or Not Needed", ""])
+    if skipped_events:
+        for event in skipped_events:
+            kind = str(event.get("kind", "unknown"))
+            capability_id = str(event.get("id", ""))
+            purpose = str(event.get("purpose", ""))
+            evidence = str(event.get("evidence", ""))
+            suffix = f" Evidence: {evidence}" if evidence else ""
+            lines.append(f"- {kind}: {capability_id} ({event.get('status', 'skipped')}) - {purpose}.{suffix}")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Dispatch Plan Evidence", ""])
+    if planned_tools:
+        for item in planned_tools:
+            if isinstance(item, dict):
+                lines.append(f"- {item.get('stage', '')}: {item.get('kind', '')}/{item.get('id', '')} required={item.get('required', '')}")
+    else:
+        lines.append("- no run-bound dispatch plan was recorded")
+    lines.extend(["", "## Gaps", ""])
+    for gap in gaps:
+        lines.append(f"- {gap}")
+    lines.extend(["", "## Resolved Runtime Gaps", ""])
+    if resolved_runtime_gaps:
+        for item in resolved_runtime_gaps:
+            gap_event = item["gap"]
+            lines.append(f"- {gap_event.get('id', '')}: {gap_event.get('status', '')} -> completed")
+    else:
+        lines.append("- none")
+    write_text(report_path, "\n".join(lines) + "\n")
+    append_command_event(
+        run_dir,
+        "dispatch-report",
+        task_id,
+        run_id,
+        status="reported",
+        agent_count=len(unique_agent_keys),
+        agent_event_count=len(agent_events),
+        capability_count=len(invoked_events),
+        skipped_count=len(skipped_events),
+        skipped_agent_count=len(unique_skipped_agent_keys),
+        skipped_agent_event_count=len(skipped_agent_events),
+        runtime_gap_count=len(runtime_gap_events),
+        resolved_runtime_gap_count=len(resolved_runtime_gaps),
+    )
+    return {
+        "status": "reported",
+        "dispatch_report_marker": "AGENT_DISPATCH_OK",
+        "marker": marker,
+        "full_capability_report": True,
+        "raw_event_count": len(events),
+        "invocation_count": len(counted_events),
+        "invocation_status_counts": invocation_status_counts,
+        "invocation_counting": "invocation_id when present; legacy records remain event-based",
+        "agent_count": len(unique_agent_keys),
+        "agent_event_count": len(agent_events),
+        "skipped_agent_count": len(unique_skipped_agent_keys),
+        "skipped_agent_event_count": len(skipped_agent_events),
+        "runtime_gap_count": len(runtime_gap_events),
+        "resolved_runtime_gap_count": len(resolved_runtime_gaps),
+        "capability_count": len(invoked_events),
+        "skipped_count": len(skipped_events),
+        "counts_by_kind": counts_by_kind,
+        "skipped_by_kind": skipped_by_kind,
+        "required_stages": required_stages,
+        "required_without_record": required_without_record,
+        "gaps": gaps,
+        "evidence": {
+            "capability_events": str(capability_events_path(run_dir)),
+            "command_events": str(command_events_path(run_dir)),
+            "dispatch_report": str(report_path),
+        },
+        "agents": [
+            {
+                "kind": str(event.get("kind", "")),
+                "id": str(event.get("id", "")),
+                "purpose": str(event.get("purpose", "")),
+                "status": str(event.get("status", "completed")),
+            }
+            for event in agent_events
+        ],
+        "skipped_agents": [
+            {
+                "kind": str(event.get("kind", "")),
+                "id": str(event.get("id", "")),
+                "purpose": str(event.get("purpose", "")),
+                "status": str(event.get("status", "skipped")),
+                "evidence": str(event.get("evidence", "")),
+            }
+            for event in skipped_agent_events
+        ],
+        "runtime_gaps": [
+            {
+                "kind": str(event.get("kind", "")),
+                "id": str(event.get("id", "")),
+                "purpose": str(event.get("purpose", "")),
+                "status": str(event.get("status", "")),
+                "evidence": str(event.get("evidence", "")),
+            }
+            for event in runtime_gap_events
+        ],
+        "resolved_runtime_gaps": [
+            {
+                "id": str(item["gap"].get("id", "")),
+                "purpose": str(item["gap"].get("purpose", "")),
+                "status": str(item["gap"].get("status", "")),
+                "recovery_status": str(item["recovery"].get("status", "completed")),
+                "recovery_evidence": str(item["recovery"].get("evidence", "")),
+            }
+            for item in resolved_runtime_gaps
+        ],
+        "events": [
+            {
+                "kind": str(event.get("kind", "")),
+                "id": str(event.get("id", "")),
+                "purpose": str(event.get("purpose", "")),
+                "status": str(event.get("status", "completed")),
+            }
+            for event in invoked_events
+        ],
+        "skipped": [
+            {
+                "kind": str(event.get("kind", "")),
+                "id": str(event.get("id", "")),
+                "purpose": str(event.get("purpose", "")),
+                "status": str(event.get("status", "skipped")),
+                "evidence": str(event.get("evidence", "")),
+            }
+            for event in skipped_events
+        ],
+        "report": str(report_path),
     }
 
 
@@ -3570,6 +5582,264 @@ def record_trace_step(
     append_command_event(run_dir, "trace-step", task_id, run_id, step=step, status=record["status"])
     marker = f"TRACE_OK step={step} status={record['status']} evidence={short_marker_value(evidence or note)}"
     return {"status": "recorded", "trace_marker": "TRACE_OK", "marker": marker, "ledger": str(event_path), "record": record}
+
+
+def effect_assertion_id_exists(run_dir: Path, assertion_id: str, task_id: str, run_id: str) -> bool:
+    return any(
+        assertion.get("assertion_id") == assertion_id
+        and assertion.get("task_id") == task_id
+        and assertion.get("run_id") == run_id
+        and assertion.get("status") == "passed"
+        for assertion in load_effect_assertions(run_dir)
+        if "_invalid_json" not in assertion
+    )
+
+
+def record_decision_event(
+    project_root: Path,
+    task_id: str,
+    run_id: str,
+    *,
+    kind: str,
+    status: str,
+    title: str,
+    summary: str,
+    reason: str,
+    evidence: str,
+    parent_id: str = "",
+    options: list[str] | None = None,
+    chosen: str = "",
+    linked_step: str = "",
+    linked_capability_event_id: str = "",
+    linked_effect_assertion_id: str = "",
+) -> dict[str, Any]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    if kind not in DECISION_EVENT_KINDS:
+        raise ValueError(f"invalid decision kind {kind!r}; expected one of {sorted(DECISION_EVENT_KINDS)}")
+    if status not in DECISION_EVENT_STATUSES:
+        raise ValueError(f"invalid decision status {status!r}; expected one of {sorted(DECISION_EVENT_STATUSES)}")
+    for label, value in [("--title", title), ("--summary", summary), ("--reason", reason), ("--evidence", evidence)]:
+        if not value.strip():
+            raise ValueError(f"{label} is required")
+    if linked_step and linked_step not in OPERATIONAL_TRACE_STEPS:
+        raise ValueError(f"invalid linked step {linked_step!r}; expected one of {OPERATIONAL_TRACE_STEPS}")
+    capability_link = linked_capability_event_id.strip()
+    if capability_link and not capability_event_id_exists(run_dir, capability_link, task_id, run_id):
+        raise ValueError(f"capability event not found for decision: {capability_link}")
+    effect_link = linked_effect_assertion_id.strip()
+    if effect_link and not effect_assertion_id_exists(run_dir, effect_link, task_id, run_id):
+        raise ValueError(f"effect assertion not found for decision: {effect_link}")
+
+    decision_id = (
+        "DEC-"
+        + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        + "-"
+        + safe_slug(f"{kind}-{title.strip()}")[:48]
+    )
+    clean_options = [item.strip() for item in (options or []) if item.strip()]
+    record = {
+        "decision_id": decision_id,
+        "parent_id": parent_id.strip(),
+        "task_id": task_id,
+        "run_id": run_id,
+        "kind": kind,
+        "status": status,
+        "title": title.strip(),
+        "summary": summary.strip(),
+        "reason": reason.strip(),
+        "options": clean_options,
+        "chosen": chosen.strip(),
+        "evidence": evidence.strip(),
+        "linked_step": linked_step.strip(),
+        "linked_capability_event_id": capability_link,
+        "linked_effect_assertion_id": effect_link,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    event_path = decision_events_path(run_dir)
+    with event_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    append_command_event(
+        run_dir,
+        "decision-event",
+        task_id,
+        run_id,
+        decision_id=decision_id,
+        kind=kind,
+        status=status,
+    )
+    marker = f"DECISION_OK kind={kind} status={status} title={short_marker_value(title)}"
+    return {
+        "status": "recorded",
+        "decision_marker": "DECISION_OK",
+        "decision_id": decision_id,
+        "marker": marker,
+        "ledger": str(event_path),
+        "record": record,
+    }
+
+
+def query_decision_events(
+    project_root: Path,
+    *,
+    run_id: str,
+    task_id: str = "",
+    kind: str = "",
+    status: str = "",
+    parent_id: str = "",
+) -> dict[str, Any]:
+    run_dir = resolve_run_dir(project_root, run_id)
+    events = [event for event in load_decision_events(run_dir) if "_invalid_json" not in event]
+    if task_id:
+        events = [event for event in events if event.get("task_id") == task_id]
+    if kind:
+        events = [event for event in events if event.get("kind") == kind]
+    if status:
+        events = [event for event in events if event.get("status") == status]
+    if parent_id:
+        events = [event for event in events if event.get("parent_id") == parent_id]
+    return {
+        "status": "ok",
+        "run_id": run_id,
+        "count": len(events),
+        "events": events,
+        "ledger": str(decision_events_path(run_dir)),
+    }
+
+
+def decision_event_has_command_event(run_dir: Path, event: dict[str, Any], task_id: str, run_id: str) -> bool:
+    return has_command_event(
+        run_dir,
+        "decision-event",
+        task_id,
+        run_id,
+        decision_id=str(event.get("decision_id", "")),
+        kind=str(event.get("kind", "")),
+        status=str(event.get("status", "")),
+    )
+
+
+def build_decision_verify_marker(result: dict[str, Any]) -> str:
+    return (
+        "DECISION_VERIFY_OK "
+        f"status={result.get('status', '')} "
+        f"strictness={result.get('strictness', '')} "
+        f"decisions={len(result.get('events', []))} "
+        f"warnings={len(result.get('warnings', []))} "
+        f"errors={len(result.get('errors', []))}"
+    )
+
+
+def verify_decisions(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
+    policy = parse_decision_policy(project_root)
+    strictness = str(policy.get("strictness", "warn"))
+    if strictness not in DECISION_STRICTNESS_LEVELS:
+        raise ValueError(f"invalid decision strictness: {strictness}")
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    if strictness == "off":
+        reason = str(policy.get("downgrade_reason", "")).strip()
+        if not reason:
+            errors.append({"label": "missing_downgrade_reason", "detail": "strictness=off requires downgrade_reason"})
+        result = {
+            "status": "failed" if errors else "disabled",
+            "task_id": task_id,
+            "run_id": run_id,
+            "strictness": strictness,
+            "downgrade_reason": reason,
+            "events": [],
+            "errors": errors,
+            "warnings": warnings,
+            "ledger": str(decision_events_path(run_dir)),
+        }
+        result["decision_verify_marker"] = "DECISION_VERIFY_OK"
+        result["marker"] = build_decision_verify_marker(result)
+        append_command_event(
+            run_dir,
+            "verify-decisions",
+            task_id,
+            run_id,
+            status=str(result["status"]),
+            strictness=strictness,
+            decision_verify_marker=result["decision_verify_marker"],
+            marker=result["marker"],
+        )
+        return result
+
+    raw_events = load_decision_events(run_dir)
+    valid_events: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    duplicate_ids: set[str] = set()
+    parent_ids: set[str] = set()
+    for event in raw_events:
+        if "_invalid_json" in event:
+            errors.append({"label": "invalid_decision_event", "detail": f"line {event.get('_line')} is not JSON"})
+            continue
+        if event.get("task_id") != task_id or event.get("run_id") != run_id:
+            errors.append({"label": "decision_scope_mismatch", "detail": event})
+            continue
+        decision_id = str(event.get("decision_id", "")).strip()
+        if not decision_id:
+            errors.append({"label": "decision_missing_id", "detail": event.get("title", "")})
+            continue
+        if decision_id in seen_ids:
+            duplicate_ids.add(decision_id)
+        seen_ids.add(decision_id)
+        for field in ["title", "summary", "reason", "evidence"]:
+            if not str(event.get(field, "")).strip():
+                errors.append({"label": f"decision_missing_{field}", "detail": decision_id})
+        kind = str(event.get("kind", ""))
+        status = str(event.get("status", ""))
+        if kind not in DECISION_EVENT_KINDS:
+            errors.append({"label": "invalid_decision_kind", "detail": kind})
+        if status not in DECISION_EVENT_STATUSES:
+            errors.append({"label": "invalid_decision_status", "detail": status})
+        if (kind in DECISION_EXPLANATION_REQUIRED_KINDS or status in {"abandoned", "rolled_back", "superseded"}) and not str(event.get("reason", "")).strip():
+            errors.append({"label": "decision_missing_explanation", "detail": decision_id})
+        if not decision_event_has_command_event(run_dir, event, task_id, run_id):
+            errors.append({"label": "decision_missing_command_event", "detail": decision_id})
+        parent = str(event.get("parent_id", "")).strip()
+        if parent:
+            parent_ids.add(parent)
+        valid_events.append(event)
+    for decision_id in sorted(duplicate_ids):
+        errors.append({"label": "decision_duplicate_id", "detail": decision_id})
+    for parent in sorted(parent_ids):
+        if parent not in seen_ids:
+            errors.append({"label": "decision_orphan_parent", "detail": parent})
+
+    if not valid_events:
+        if strictness == "enforce":
+            errors.append({"label": "no_decision_events", "detail": "decision-policy strictness=enforce requires decision evidence"})
+        else:
+            warnings.append({"label": "no_decision_events", "detail": "no decision graph events were recorded"})
+
+    status = "failed" if errors else ("warning" if warnings else "passed")
+    result = {
+        "status": status,
+        "task_id": task_id,
+        "run_id": run_id,
+        "strictness": strictness,
+        "downgrade_reason": str(policy.get("downgrade_reason", "")).strip(),
+        "events": valid_events,
+        "errors": errors,
+        "warnings": warnings,
+        "ledger": str(decision_events_path(run_dir)),
+    }
+    result["decision_verify_marker"] = "DECISION_VERIFY_OK"
+    result["marker"] = build_decision_verify_marker(result)
+    append_command_event(
+        run_dir,
+        "verify-decisions",
+        task_id,
+        run_id,
+        status=status,
+        strictness=strictness,
+        decision_verify_marker=result["decision_verify_marker"],
+        marker=result["marker"],
+    )
+    return result
 
 
 def get_json_key(data: Any, key_path: str) -> Any:
@@ -3606,6 +5876,7 @@ def run_artifact_assertion(
     before_sha: str = "",
     json_key: str = "",
     capability_event_id: str = "",
+    _verify_only: bool = False,
 ) -> dict[str, Any]:
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     if kind not in EFFECT_ASSERTION_KINDS:
@@ -3672,6 +5943,9 @@ def run_artifact_assertion(
         if html_has_remote_dependency(text):
             raise ValueError(f"artifact assertion failed: {relative} references remote assets")
         evidence = f"{relative} has no remote scripts/fonts/assets"
+
+    if _verify_only:
+        return {"status": "passed", "evidence": evidence}
 
     assertion_id = "EFFECT-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + f"-{safe_slug(kind)}"
     record = {
@@ -3835,6 +6109,16 @@ def verify_effects(project_root: Path, task_id: str, run_id: str) -> dict[str, A
         if capability_link and not capability_event_id_exists(run_dir, capability_link, task_id, run_id):
             errors.append({"label": "effect_missing_capability_event", "detail": capability_link})
             continue
+        try:
+            # Replay the assertion, not the tool side effect or its ledger write.
+            run_artifact_assertion(project_root, task_id, run_id,
+                kind=str(assertion["kind"]), target_path=str(assertion.get("path", "")),
+                expect=str(assertion.get("expect", "")), before_sha=str(assertion.get("before_sha", "")),
+                json_key=str(assertion.get("json_key", "")), capability_event_id=capability_link,
+                _verify_only=True)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            errors.append({"label": "effect_artifact_changed", "detail": str(exc)})
+            continue
         valid_assertions.append(assertion)
 
     if "declared_outputs" in policy.get("required_for", []):
@@ -3973,6 +6257,10 @@ def verify_lifecycle(project_root: Path, task_id: str, run_id: str) -> dict[str,
             continue
         if status == "skipped" and require_skip_reason and not str(record.get("skip_reason", "")).strip():
             errors.append({"label": "skipped_phase_missing_reason", "detail": phase})
+        if any(key in record for key in ("producer", "producer_version", "command_event_id", "idempotency_id", "input_fingerprint")):
+            if not checkpoint_producer_valid(run_dir, record):
+                errors.append({"label": "invalid_checkpoint_producer", "detail": phase})
+                continue
         latest_by_phase[phase] = record
 
     missing = [phase for phase in required if phase not in latest_by_phase]
@@ -3982,14 +6270,15 @@ def verify_lifecycle(project_root: Path, task_id: str, run_id: str) -> dict[str,
         phase
         for phase in required
         if phase in latest_by_phase
-        and not has_command_event(
+        and not (checkpoint_producer_valid(run_dir, latest_by_phase[phase], current_artifacts=True)
+                 if "producer" in latest_by_phase[phase] else has_command_event(
             run_dir,
             "phase-task",
             task_id,
             run_id,
             phase=phase,
             status=str(latest_by_phase[phase].get("status", "")),
-        )
+        ))
     ]
     if missing_command_events:
         errors.append({"label": "missing_phase_command_events", "detail": missing_command_events})
@@ -4240,49 +6529,76 @@ def fill_missing_control_plane_files(
     return actions
 
 
-def route_order_needs_lifecycle_upgrade(route_order: list[str]) -> bool:
-    run_index = next((idx for idx, item in enumerate(route_order) if "run-task" in item), -1)
-    dispatch_event_index = next((idx for idx, item in enumerate(route_order) if "dispatch-task" in item and "--run-id" in item), -1)
-    context_index = next((idx for idx, item in enumerate(route_order) if "context-pack" in item), -1)
-    plan_index = next((idx for idx, item in enumerate(route_order) if "plan-task" in item), -1)
-    phase_index = next((idx for idx, item in enumerate(route_order) if "phase-task" in item), -1)
-    eval_index = next((idx for idx, item in enumerate(route_order) if "eval-task" in item), -1)
-    verify_context_index = next((idx for idx, item in enumerate(route_order) if "verify-context" in item), -1)
-    verify_index = next((idx for idx, item in enumerate(route_order) if "verify-lifecycle" in item), -1)
-    verify_effects_index = next((idx for idx, item in enumerate(route_order) if "verify-effects" in item), -1)
-    complete_index = next((idx for idx, item in enumerate(route_order) if "complete-task" in item), -1)
+def lifecycle_route_tokens(item: str) -> list[str]:
+    """Recognize command hints, not command names mentioned in prose or echo."""
+    try:
+        tokens = shlex.split(item, comments=True)
+    except ValueError:
+        return []
+    if tokens and Path(tokens[0]).name == "knowledgeos":
+        tokens = tokens[1:]
+    return tokens
 
-    required_indices = [
-        run_index,
-        dispatch_event_index,
-        context_index,
-        plan_index,
-        phase_index,
-        eval_index,
-        verify_context_index,
-        verify_index,
-        verify_effects_index,
-        complete_index,
-    ]
-    if any(index < 0 for index in required_indices):
-        return True
-    if not run_index < dispatch_event_index < context_index < plan_index:
-        return True
-    return not (
-        eval_index < complete_index
-        and verify_context_index < complete_index
-        and verify_index < complete_index
-        and verify_effects_index < complete_index
-    )
+
+def workflow_lifecycle_errors(profile: dict[str, Any]) -> list[str]:
+    """Shared static contract check; runtime evidence still gates completion."""
+    contract = profile.get("lifecycle_contract", LEGACY_LIFECYCLE_CONTRACT)
+    if contract not in (LEGACY_LIFECYCLE_CONTRACT, PRODUCER_BOUND_LIFECYCLE_CONTRACT):
+        return [f"unsupported lifecycle_contract: {contract!r}"]
+    route = profile.get("route_order", [])
+    if not isinstance(route, list) or not all(isinstance(item, str) for item in route):
+        return ["route_order must be a list of command hints"]
+    parsed = [lifecycle_route_tokens(item) for item in route]
+    positions = {name: [i for i, tokens in enumerate(parsed) if tokens and tokens[0] == name]
+                 for name in ["run-task", *LIFECYCLE_COMMAND_MARKERS]}
+    required = ["run-task", "context-pack", "plan-task", "phase-task", "eval-task", "complete-task"]
+    diagnostics = ["verify-context", "verify-lifecycle", "verify-effects"]
+    if contract == LEGACY_LIFECYCLE_CONTRACT:
+        required += ["dispatch-task", *diagnostics]
+    errors = [f"missing {name}" for name in required if not positions[name]]
+    chain = ["run-task", "context-pack", "plan-task", "phase-task", "eval-task", "complete-task"]
+    if contract == LEGACY_LIFECYCLE_CONTRACT:
+        # Legacy agents may record route/dispatch before context and plan.
+        chain.remove("phase-task")
+        for index in positions["phase-task"]:
+            if positions["run-task"] and index <= positions["run-task"][-1]:
+                errors.append("run-task must precede phase-task")
+            if positions["eval-task"] and index >= positions["eval-task"][0]:
+                errors.append("phase-task must precede eval-task")
+    for before, after in zip(chain, chain[1:]):
+        if positions[before] and positions[after] and positions[before][-1] >= positions[after][0]:
+            errors.append(f"{before} must precede {after}")
+    bound_dispatches = []
+    for index in positions["dispatch-task"]:
+        tokens = parsed[index]
+        if not any(t == "--run-id" or t.startswith("--run-id=") for t in tokens):
+            # Preflight inspection is allowed, but is not run-bound evidence.
+            if positions["run-task"] and index >= positions["run-task"][0]:
+                errors.append("dispatch-task after run-task requires --run-id")
+            continue
+        bound_dispatches.append(index)
+        if positions["run-task"] and positions["context-pack"]:
+            if not positions["run-task"][-1] < index < positions["context-pack"][0]:
+                errors.append("run-task before dispatch-task --run-id before context-pack")
+    if contract == LEGACY_LIFECYCLE_CONTRACT and not bound_dispatches:
+        errors.append("missing dispatch-task --run-id")
+    for name in diagnostics:
+        if positions[name] and positions["complete-task"] and positions[name][-1] >= positions["complete-task"][0]:
+            errors.append(f"{name} must precede complete-task")
+    return errors
+
+
+def route_order_needs_lifecycle_upgrade(route_order: list[str], lifecycle_contract: str = LEGACY_LIFECYCLE_CONTRACT) -> bool:
+    return bool(workflow_lifecycle_errors({"route_order": route_order, "lifecycle_contract": lifecycle_contract}))
 
 
 def normalize_route_order(route_order: list[str]) -> list[str]:
     cleaned = [
         item
         for item in route_order
-        if not any(marker in item for marker in LIFECYCLE_COMMAND_MARKERS)
+        if not (lifecycle_route_tokens(item) and lifecycle_route_tokens(item)[0] in LIFECYCLE_COMMAND_MARKERS)
     ]
-    run_index = next((idx for idx, item in enumerate(cleaned) if "run-task" in item), -1)
+    run_index = next((idx for idx, item in enumerate(cleaned) if lifecycle_route_tokens(item)[:1] == ["run-task"]), -1)
     if run_index < 0:
         cleaned.append("run-task --project-root . --task-id <task-id>")
         run_index = len(cleaned) - 1
@@ -4320,13 +6636,21 @@ def upgrade_workflow_router_file(project_root: Path, *, apply: bool, backup_name
     if not path.exists():
         return None
     profiles = parse_workflow_profiles(path)
+    # Never guess a migration for a new/unknown contract, or rewrite another
+    # profile in the same file while one requires human review.
+    review = {name: workflow_lifecycle_errors(profile) for name, profile in profiles.items()
+              if profile.get("lifecycle_contract", LEGACY_LIFECYCLE_CONTRACT) != LEGACY_LIFECYCLE_CONTRACT
+              and workflow_lifecycle_errors(profile)}
+    if review:
+        return {"action": "review_workflow_router", "path": str(path), "profiles": list(review),
+                "errors": review, "backup": ""}
     changed = False
     upgraded_profiles: list[str] = []
     for name, profile in profiles.items():
         route_order = profile.get("route_order", [])
         if not isinstance(route_order, list):
             route_order = [str(route_order)]
-        if route_order_needs_lifecycle_upgrade(route_order):
+        if route_order_needs_lifecycle_upgrade(route_order, profile.get("lifecycle_contract", LEGACY_LIFECYCLE_CONTRACT)):
             profile["route_order"] = normalize_route_order(route_order)
             changed = True
             upgraded_profiles.append(name)
@@ -4372,6 +6696,81 @@ def ensure_archive_write_guard(project_root: Path, *, apply: bool, backup_name: 
     return action
 
 
+def registry_block_from_entry(entry: dict[str, str]) -> str:
+    ordered_keys = [
+        "kind",
+        "status",
+        "scope",
+        "invocation",
+        "task_fit",
+        "capability_fit",
+        "runtime",
+        "runtime_tool",
+        "runtime_agent_type",
+        "adapter",
+        "adapter_role",
+        "human_gate",
+        "execution_mode",
+        "source_path",
+        "notes",
+    ]
+    lines = [f"  - id: {entry['id']}"]
+    for key in ordered_keys:
+        value = entry.get(key, "")
+        if value != "":
+            lines.append(f"    {key}: {value}")
+    return "\n".join(lines)
+
+
+def codex_native_registry_entries() -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for item in CODEX_NATIVE_SUBAGENTS:
+        entries.append(
+            {
+                "id": item["id"],
+                "kind": "subagent",
+                "status": "recommended",
+                "scope": item["scope"],
+                "invocation": "via_codex_runtime_spawn_agent",
+                "task_fit": item["task_fit"],
+                "capability_fit": item["capability_fit"],
+                "runtime": "codex",
+                "runtime_tool": CODEX_RUNTIME_TOOL,
+                "runtime_agent_type": item["runtime_agent_type"],
+                "human_gate": "true",
+                "execution_mode": "ask",
+                "source_path": f"codex-runtime:{CODEX_RUNTIME_TOOL}",
+                "notes": "Codex native runtime subagent. Dispatch plan generates intent; actual spawn happens through Codex runtime.",
+            }
+        )
+    return entries
+
+
+def ensure_runtime_native_subagents(project_root: Path, *, apply: bool, backup_name: str) -> dict[str, Any] | None:
+    registry_path = project_root / ".agent-os" / "tool-registry.yaml"
+    if not registry_path.exists():
+        return None
+    existing_ids = {entry.get("id", "") for entry in load_tool_registry(project_root)}
+    missing = [entry for entry in codex_native_registry_entries() if entry["id"] not in existing_ids]
+    if not missing:
+        return None
+    action: dict[str, Any] = {
+        "action": "add_runtime_native_subagents",
+        "path": str(registry_path),
+        "missing_ids": [entry["id"] for entry in missing],
+        "backup": "",
+    }
+    if apply:
+        backup = backup_project_file(project_root, registry_path, backup_name)
+        action["backup"] = str(backup)
+        addition = "\n\n  # Codex native runtime subagents. Actual spawn is performed by Codex runtime tools.\n" + "\n\n".join(
+            registry_block_from_entry(entry) for entry in missing
+        )
+        current = read_text(registry_path).rstrip()
+        write_text(registry_path, current + addition + "\n")
+    return action
+
+
 def audit_project_mount(
     project_root: Path,
     root: Path,
@@ -4397,8 +6796,14 @@ def audit_project_mount(
     )
     current_governance = fabric.get("governance_root", "")
     current_capability = fabric.get("capability_root") or fabric.get("implementation_root", "")
-    if "Antigravity_Skills" in current_governance:
-        issues.append("legacy_antigravity_governance_root")
+    current_governance_path = Path(current_governance).expanduser() if current_governance else None
+    if (
+        current_governance_path
+        and project_root != root
+        and current_governance_path.name == "global-agent-fabric"
+        and current_governance_path != governance_root
+    ):
+        issues.append("legacy_preos_governance_root")
     if current_governance and Path(current_governance).expanduser() != governance_root and project_root != root:
         issues.append("noncanonical_governance_root")
     if current_capability and Path(current_capability).expanduser() != capability_root and project_root != root:
@@ -4417,9 +6822,12 @@ def audit_project_mount(
     archive_action = ensure_archive_write_guard(project_root, apply=False, backup_name=backup_name)
     if archive_action:
         issues.append("missing_archive_write_guard")
+    native_subagents_action = ensure_runtime_native_subagents(project_root, apply=False, backup_name=backup_name)
+    if native_subagents_action:
+        issues.append("missing_runtime_native_subagents")
 
     should_rewrite_mount = project_root != root and (
-        "legacy_antigravity_governance_root" in issues
+        "legacy_preos_governance_root" in issues
         or "noncanonical_governance_root" in issues
         or "noncanonical_capability_root" in issues
         or "postflight_hook_missing_or_not_executable" in issues
@@ -4454,6 +6862,9 @@ def audit_project_mount(
     archive_action = ensure_archive_write_guard(project_root, apply=apply, backup_name=backup_name)
     if archive_action:
         actions.append(archive_action)
+    native_subagents_action = ensure_runtime_native_subagents(project_root, apply=apply, backup_name=backup_name)
+    if native_subagents_action:
+        actions.append(native_subagents_action)
 
     # Re-read after optional repair so the reported final status reflects the
     # actual mount state rather than the pre-repair state.
@@ -4489,7 +6900,52 @@ def postflight_environment_for_hook(hook: Path, run_dir: Path) -> dict[str, str]
     return env
 
 
+def atomic_json(path: Path, value: dict[str, Any]) -> None:
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, sort_keys=True)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
 def run_postflight_gate(project_root: Path, run_dir: Path, summary: str, allow_pending_reason: str = "") -> dict[str, Any]:
+    """Never replay an ambiguous external effect after a crash or failed hook."""
+    hook = resolve_postflight_hook(project_root, fabric_contract(project_root))
+    if hook is None or not hook.is_file() or not os.access(hook, os.X_OK):
+        return _run_postflight_gate(project_root, run_dir, summary, allow_pending_reason)
+    task_id = parse_scalar_values(run_dir / "run.yaml", {"task_id"}).get("task_id", "")
+    fingerprint = content_fingerprint(json.dumps({"hook": str(hook.resolve()),
+        "hook_sha": hashlib.sha256(hook.read_bytes()).hexdigest(), "summary": summary,
+        "inputs": evaluation_fingerprint(project_root, task_id, run_dir.name)}, sort_keys=True))
+    journal = run_dir / "postflight-attempt.json"
+    evidence = run_dir / "postflight.md"
+    if not journal.exists() and (evidence.exists() or parse_scalar_values(run_dir / "run.yaml", {"status"}).get("status") == "completed"):
+        detail = "legacy postflight evidence or completed run has no attempt journal; reconcile its real side effect before retrying"
+        if allow_pending_reason.strip():
+            return {"sync_status": "PENDING", "status_marker": "", "postflight": str(evidence),
+                    "pending_reason": detail + ": " + allow_pending_reason.strip()}
+        raise ValueError(detail)
+    if journal.exists():
+        previous = json.loads(read_text(journal))
+        evidence = run_dir / "postflight.md"
+        if (previous.get("status") == "succeeded" and previous.get("fingerprint") == fingerprint
+                and evidence.is_file() and previous.get("evidence_sha") == hashlib.sha256(evidence.read_bytes()).hexdigest()):
+            return previous["result"]
+        detail = "postflight attempt already exists; reconcile its real side effect before retrying"
+        if allow_pending_reason.strip():
+            return {"sync_status": "PENDING", "status_marker": "", "postflight": str(evidence),
+                    "pending_reason": detail + ": " + allow_pending_reason.strip()}
+        raise ValueError(detail)
+    atomic_json(journal, {"status": "started", "fingerprint": fingerprint})
+    result = _run_postflight_gate(project_root, run_dir, summary, allow_pending_reason)
+    if result.get("sync_status") == "SYNC_OK":
+        atomic_json(journal, {"status": "succeeded", "fingerprint": fingerprint, "result": result,
+                             "evidence_sha": hashlib.sha256((run_dir / "postflight.md").read_bytes()).hexdigest()})
+    return result
+
+
+def _run_postflight_gate(project_root: Path, run_dir: Path, summary: str, allow_pending_reason: str = "") -> dict[str, Any]:
     fabric = fabric_contract(project_root)
     if fabric and fabric.get("postflight_required", "").lower() != "true":
         raise ValueError("runtime contract requires postflight_required: true before completion")
@@ -4592,7 +7048,7 @@ def run_postflight_gate(project_root: Path, run_dir: Path, summary: str, allow_p
     raise ValueError(f"postflight hook failed or did not emit [SYNC_OK]: {hook}")
 
 
-def complete_task(
+def _complete_task_locked(
     project_root: Path,
     task_id: str,
     run_id: str,
@@ -4623,6 +7079,14 @@ def complete_task(
         raise ValueError("eval.md must be generated by `knowledgeos eval-task` before completion")
     if not (allow_missing_eval or allow_manual_eval) and not has_command_event(run_dir, "eval-task", task_id, run_id, status="passed"):
         raise ValueError("eval.md must have matching `knowledgeos eval-task` command evidence before completion")
+    if not (allow_missing_eval or allow_manual_eval):
+        events = [event for event in load_command_events(run_dir)
+                  if event.get("event_type") == "eval-task" and event.get("task_id") == task_id
+                  and event.get("run_id") == run_id]
+        latest = events[-1] if events else {}
+        recorded = latest.get("input_fingerprint")
+        if not recorded or latest.get("status") != "passed" or recorded != evaluation_fingerprint(project_root, task_id, run_id):
+            raise ValueError("stale eval: declared outputs or effective policy changed; rerun eval-task")
     if not allow_missing_outputs:
         missing_outputs = missing_declared_outputs(project_root, task_id)
         if missing_outputs:
@@ -4637,8 +7101,20 @@ def complete_task(
     effects = verify_effects(project_root, task_id, run_id)
     if effects.get("status") == "failed":
         raise ValueError("effect verification failed: " + json.dumps(effects.get("errors", []), ensure_ascii=False))
+    decisions = verify_decisions(project_root, task_id, run_id)
+    if decisions.get("status") == "failed":
+        raise ValueError("decision verification failed: " + json.dumps(decisions.get("errors", []), ensure_ascii=False))
 
+    dispatch_report = build_dispatch_report(project_root, task_id, run_id)
     postflight = run_postflight_gate(project_root, run_dir, summary, allow_pending_postflight)
+    mission_flow: dict[str, Any] | None = None
+    if task.get("complexity", "medium") in MISSION_FLOW_COMPLEXITIES:
+        mission_flow = write_mission_flow_markdown(
+            project_root,
+            task_id,
+            run_id,
+            sync_status=str(postflight.get("sync_status", "")),
+        )
     completed_at = datetime.now(timezone.utc).isoformat()
     receipt_lines = [
         "# Receipt",
@@ -4661,6 +7137,24 @@ def complete_task(
         "",
         f"Effect Verify Marker: {effects.get('marker', '')}",
         "",
+        f"Decision Verification Status: {decisions.get('status')}",
+        "",
+        f"Decision Verify Marker: {decisions.get('marker', '')}",
+        "",
+        f"Agent Dispatch Status: {dispatch_report.get('dispatch_report_marker', '')}",
+        "",
+        f"Agent Dispatch Marker: {dispatch_report.get('marker', '')}",
+        "",
+        f"Agents Invoked: {dispatch_report.get('agent_count', 0)}",
+        "",
+        f"Capabilities Invoked: {dispatch_report.get('capability_count', 0)}",
+        "",
+        f"Agent Dispatch Report: {dispatch_report.get('report', '')}",
+        "",
+        f"Mission Flow Marker: {mission_flow.get('marker', '') if mission_flow else 'not required'}",
+        "",
+        f"Mission Flow: {mission_flow.get('source', '') if mission_flow else 'not required for simple task'}",
+        "",
         f"Sync Status: {postflight.get('sync_status')}",
         "",
     ]
@@ -4679,6 +7173,24 @@ def complete_task(
                 "Effect Warnings:",
                 "",
                 json.dumps(effects.get("warnings", []), ensure_ascii=False),
+                "",
+            ]
+        )
+    if decisions.get("strictness") == "off":
+        receipt_lines.extend(
+            [
+                "DECISION_STRICTNESS_DOWNGRADED:",
+                "",
+                str(decisions.get("downgrade_reason", "")),
+                "",
+            ]
+        )
+    if decisions.get("warnings"):
+        receipt_lines.extend(
+            [
+                "Decision Warnings:",
+                "",
+                json.dumps(decisions.get("warnings", []), ensure_ascii=False),
                 "",
             ]
         )
@@ -4726,6 +7238,17 @@ def complete_task(
         "context_contract_status": context_contract.get("status"),
         "effect_status": effects.get("status"),
         "effect_verify_marker": effects.get("marker", ""),
+        "decision_status": decisions.get("status"),
+        "decision_verify_marker": decisions.get("marker", ""),
+        "agent_dispatch_status": dispatch_report.get("dispatch_report_marker", ""),
+        "agent_dispatch_marker": dispatch_report.get("marker", ""),
+        "agents_invoked": dispatch_report.get("agent_count", 0),
+        "capabilities_invoked": dispatch_report.get("capability_count", 0),
+        "dispatch_report": dispatch_report.get("report", ""),
+        "flow_marker": mission_flow.get("flow_marker", "") if mission_flow else "",
+        "flow_summary_marker": mission_flow.get("marker", "") if mission_flow else "",
+        "flow_mermaid": mission_flow.get("mermaid", "") if mission_flow else "",
+        "flow_source": mission_flow.get("source", "") if mission_flow else "",
         "sync_status": postflight.get("sync_status"),
         "status_marker": postflight.get("status_marker", ""),
         "postflight": postflight.get("postflight", ""),
@@ -4734,9 +7257,31 @@ def complete_task(
     }
 
 
-HTML_REPORT_KINDS = {"receipt", "handoff", "rich-report"}
+def complete_task(project_root: Path, task_id: str, run_id: str, summary: str,
+                  allow_missing_eval: bool = False, allow_manual_eval: bool = False,
+                  allow_missing_outputs: bool = False, allow_pending_postflight: str = "",
+                  override_reason: str = "") -> dict[str, Any]:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    lock = run_dir / "completion.lock"
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        raise ValueError("completion is already running or interrupted; inspect completion.lock before recovery") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as handle:
+            handle.write(str(os.getpid()))
+        return _complete_task_locked(project_root, task_id, run_id, summary, allow_missing_eval,
+                                     allow_manual_eval, allow_missing_outputs, allow_pending_postflight, override_reason)
+    finally:
+        lock.unlink()
+
+
+HTML_REPORT_KINDS = {"receipt", "handoff", "rich-report", "decision-map", "mission-flow"}
 HTML_DEFAULT_THEME = "knowledgeos-default"
+HTML_PRESENTATION_MODES = {"default", "minimal", "bare", "fragment"}
+HTML_DEFAULT_PRESENTATION = "default"
 HTML_SOURCE_TRUTH_NOTICE = "HTML is presentation, not source of truth."
+MISSION_FLOW_COMPLEXITIES = {"medium", "high", "complex"}
 
 
 def sha256_file(path: Path) -> str:
@@ -4764,6 +7309,42 @@ def resolve_project_artifact(project_root: Path, value: str) -> Path:
 
 def html_escape(text: Any) -> str:
     return html_lib.escape(str(text), quote=True)
+
+
+def parse_reporting_policy(project_root: Path) -> dict[str, Any]:
+    project_yaml = project_root / ".agent-os" / "project.yaml"
+    if not project_yaml.exists():
+        return {
+            "html_sidecars": True,
+            "html_source_of_truth": False,
+            "html_presentation_default": HTML_DEFAULT_PRESENTATION,
+            "html_required_metadata": True,
+        }
+    scalars = parse_scalar_values(
+        project_yaml,
+        {
+            "html_sidecars",
+            "html_source_of_truth",
+            "html_presentation_default",
+            "html_required_metadata",
+        },
+    )
+    presentation = (scalars.get("html_presentation_default") or HTML_DEFAULT_PRESENTATION).lower()
+    return {
+        "html_sidecars": scalars.get("html_sidecars", "true").lower() != "false",
+        "html_source_of_truth": scalars.get("html_source_of_truth", "false").lower() == "true",
+        "html_presentation_default": presentation,
+        "html_required_metadata": scalars.get("html_required_metadata", "true").lower() != "false",
+    }
+
+
+def resolve_html_presentation(project_root: Path, requested: str = "") -> str:
+    presentation = (requested or "").strip().lower()
+    if not presentation:
+        presentation = str(parse_reporting_policy(project_root).get("html_presentation_default") or HTML_DEFAULT_PRESENTATION)
+    if presentation not in HTML_PRESENTATION_MODES:
+        raise ValueError(f"unsupported HTML presentation mode: {presentation}")
+    return presentation
 
 
 def markdown_heading_anchor(title: str, used: set[str]) -> str:
@@ -4915,6 +7496,20 @@ details {{ margin-top: 20px; padding: 14px 16px; border: 1px solid var(--kos-lin
 summary {{ cursor: pointer; font-weight: 800; }}
 .kos-footer {{ margin-top: 28px; color: var(--kos-muted); font-size: 0.9rem; text-align: center; }}
 .kos-notice {{ color: var(--kos-warn); font-weight: 800; }}
+.kos-flow {{ display: grid; gap: 14px; margin: 20px 0; }}
+.kos-flow-card {{
+  border: 1px solid var(--kos-line);
+  border-radius: 18px;
+  padding: 16px 18px;
+  background: #f8fbff;
+}}
+.kos-flow-card h3 {{ margin: 0 0 6px; }}
+.kos-flow-card p {{ margin: 0; }}
+.kos-flow-intent {{ background: #e8f3ff; border-color: #b8d9ff; }}
+.kos-flow-guard {{ background: #fff7df; border-color: #f3d58a; }}
+.kos-flow-work {{ background: #eafbf0; border-color: #b8e7c7; }}
+.kos-flow-proof {{ background: #f3e8ff; border-color: #d8b4fe; }}
+.kos-flow-done {{ background: #dcfce7; border-color: #86efac; }}
 @media (max-width: 860px) {{
   .kos-shell {{ padding: 28px 14px; }}
   .kos-grid {{ grid-template-columns: 1fr; }}
@@ -4935,6 +7530,7 @@ def build_html_fragment(
     body_html: str,
     sections: list[dict[str, Any]],
     generated_at: str,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
 ) -> str:
     section_items = "\n".join(
         f'<li><a href="#{html_escape(item["id"])}">{html_escape(item["title"])}</a></li>' for item in sections[:12]
@@ -4950,6 +7546,20 @@ def build_html_fragment(
     meta_html = "\n".join(
         f"<div><dt>{html_escape(label)}</dt><dd>{html_escape(value)}</dd></div>" for label, value in metadata
     )
+    if presentation != "default":
+        return f"""
+<section class="kos-fragment kos-fragment-{html_escape(presentation)}" data-kos-fragment="true" data-kind="{html_escape(kind)}" data-source-sha256="{html_escape(source_sha)}">
+  {body_html}
+  <footer class="kos-evidence-footer">
+    <details open>
+      <summary>Evidence metadata</summary>
+      <dl class="kos-meta">{meta_html}</dl>
+      <p class="kos-notice">{HTML_SOURCE_TRUTH_NOTICE}</p>
+      <nav class="kos-nav" aria-label="Report sections">{section_nav}</nav>
+    </details>
+  </footer>
+</section>
+""".strip()
     return f"""
 <article class="kos-report-fragment" data-kos-fragment="true" data-kind="{html_escape(kind)}" data-source-sha256="{html_escape(source_sha)}">
   <div class="kos-eyebrow">{html_escape(kind)}</div>
@@ -4974,7 +7584,30 @@ def build_html_document(
     run_id: str,
     generated_at: str,
     theme: str,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
 ) -> str:
+    if presentation == "minimal":
+        return build_minimal_html_document(
+            title=title,
+            kind=kind,
+            body=body,
+            source_rel=source_rel,
+            source_sha=source_sha,
+            run_id=run_id,
+            generated_at=generated_at,
+            theme=theme,
+        )
+    if presentation == "bare":
+        return build_bare_html_document(
+            title=title,
+            kind=kind,
+            body=body,
+            source_rel=source_rel,
+            source_sha=source_sha,
+            run_id=run_id,
+            generated_at=generated_at,
+            theme=theme,
+        )
     nav_hint = "Composable sidecar report"
     subtitle = (
         "A self-contained KnowledgeOS HTML sidecar generated from canonical Markdown, YAML, or NDJSON evidence. "
@@ -5023,6 +7656,107 @@ def build_html_document(
 """
 
 
+def build_minimal_html_document(
+    *,
+    title: str,
+    kind: str,
+    body: str,
+    source_rel: str,
+    source_sha: str,
+    run_id: str,
+    generated_at: str,
+    theme: str,
+) -> str:
+    meta_rows = [
+        ("Kind", kind),
+        ("Run ID", run_id or "not run-bound"),
+        ("Source", source_rel),
+        ("Source SHA-256", source_sha),
+        ("Generated", generated_at),
+        ("Theme", theme),
+        ("Presentation", "minimal"),
+    ]
+    meta_html = "\n".join(
+        f"<div><dt>{html_escape(label)}</dt><dd>{html_escape(value)}</dd></div>" for label, value in meta_rows
+    )
+    css = """
+* { box-sizing: border-box; }
+body { margin: 0; color: #172033; background: #fbfcfe; font-family: Georgia, "Times New Roman", serif; line-height: 1.68; }
+main { max-width: 880px; margin: 0 auto; padding: 42px 22px; }
+h1, h2, h3 { line-height: 1.18; color: #101827; }
+a { color: #155eef; }
+pre { overflow: auto; padding: 14px; border: 1px solid #d8dee9; border-radius: 10px; background: #f3f6fb; }
+blockquote { margin: 18px 0; padding: 12px 16px; border-left: 4px solid #94a3b8; background: #f8fafc; }
+.kos-evidence-footer, .kos-page-evidence { margin-top: 34px; padding-top: 18px; border-top: 1px solid #d8dee9; font-size: 0.92rem; }
+.kos-meta { display: grid; gap: 8px; margin: 0; }
+.kos-meta div { overflow-wrap: anywhere; }
+.kos-meta dt { color: #64748b; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.kos-meta dd { margin: 2px 0 0; font-weight: 700; }
+.kos-notice { color: #92400e; font-weight: 700; }
+""".strip()
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="knowledgeos-source-sha256" content="{html_escape(source_sha)}">
+  <meta name="knowledgeos-source-path" content="{html_escape(source_rel)}">
+  <meta name="knowledgeos-presentation" content="minimal">
+  <title>{html_escape(title)}</title>
+  <style>{css}</style>
+</head>
+<body>
+  <main>
+    {body}
+    <footer class="kos-page-evidence">
+      <h2>Evidence Metadata</h2>
+      <dl class="kos-meta">{meta_html}</dl>
+      <p class="kos-notice">{HTML_SOURCE_TRUTH_NOTICE}</p>
+    </footer>
+  </main>
+</body>
+</html>
+"""
+
+
+def build_bare_html_document(
+    *,
+    title: str,
+    kind: str,
+    body: str,
+    source_rel: str,
+    source_sha: str,
+    run_id: str,
+    generated_at: str,
+    theme: str,
+) -> str:
+    metadata = (
+        f"kind={html_escape(kind)} | run={html_escape(run_id or 'not run-bound')} | "
+        f"source={html_escape(source_rel)} | sha256={html_escape(source_sha)} | "
+        f"generated={html_escape(generated_at)} | theme={html_escape(theme)} | presentation=bare"
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="knowledgeos-source-sha256" content="{html_escape(source_sha)}">
+  <meta name="knowledgeos-source-path" content="{html_escape(source_rel)}">
+  <meta name="knowledgeos-presentation" content="bare">
+  <title>{html_escape(title)}</title>
+  <style>body{{margin:2rem auto;max-width:76ch;padding:0 1rem;line-height:1.6;font-family:serif}}pre{{overflow:auto}}.kos-evidence-footer,.kos-page-evidence{{border-top:1px solid #ccc;margin-top:2rem;padding-top:1rem;font-size:.9rem}}.kos-notice{{font-weight:700}}</style>
+</head>
+<body>
+  {body}
+  <footer class="kos-page-evidence">
+    <p>{metadata}</p>
+    <p class="kos-notice">{HTML_SOURCE_TRUTH_NOTICE}</p>
+  </footer>
+</body>
+</html>
+"""
+
+
 def render_html_sidecar(
     project_root: Path,
     *,
@@ -5031,6 +7765,7 @@ def render_html_sidecar(
     output_path: Path,
     run_id: str = "",
     theme: str = HTML_DEFAULT_THEME,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
 ) -> dict[str, Any]:
     if kind not in HTML_REPORT_KINDS:
         raise ValueError(f"unsupported render kind: {kind}")
@@ -5060,32 +7795,40 @@ def render_html_sidecar(
         body_html=body_html,
         sections=sections,
         generated_at=generated_at,
+        presentation=presentation,
     )
     write_text(fragment_path, fragment_html)
-    full_html = build_html_document(
-        title=title,
-        kind=kind,
-        body=fragment_html,
-        source_rel=source_rel,
-        source_sha=source_sha,
-        run_id=run_id,
-        generated_at=generated_at,
-        theme=theme,
-    )
-    write_text(output_path, full_html)
+    if presentation == "fragment":
+        output_rel = ""
+    else:
+        full_html = build_html_document(
+            title=title,
+            kind=kind,
+            body=fragment_html,
+            source_rel=source_rel,
+            source_sha=source_sha,
+            run_id=run_id,
+            generated_at=generated_at,
+            theme=theme,
+            presentation=presentation,
+        )
+        write_text(output_path, full_html)
+        output_rel = project_relative(project_root, output_path)
     manifest = {
         "schema_version": "knowledgeos.html-report.v1",
         "kind": kind,
         "title": title,
         "theme": theme,
+        "presentation": presentation,
         "run_id": run_id,
         "source": source_rel,
         "source_sha256": source_sha,
-        "output": project_relative(project_root, output_path),
+        "output": output_rel,
         "fragment": project_relative(project_root, fragment_path),
         "sections": sections,
         "generated_at": generated_at,
         "html_source_of_truth": False,
+        "html_required_metadata": True,
         "notice": HTML_SOURCE_TRUTH_NOTICE,
     }
     write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
@@ -5093,12 +7836,486 @@ def render_html_sidecar(
         "status": "rendered",
         "kind": kind,
         "title": title,
-        "output": str(output_path),
+        "output": str(output_path) if presentation != "fragment" else "",
         "fragment": str(fragment_path),
         "manifest": str(manifest_path),
         "source": str(source_path),
         "source_sha256": source_sha,
         "run_id": run_id,
+        "presentation": presentation,
+        "html_source_of_truth": False,
+    }
+
+
+def decision_events_to_markdown(run_id: str, events: list[dict[str, Any]]) -> str:
+    lines = [
+        f"# KnowledgeOS Decision Map {run_id}",
+        "",
+        "This sidecar summarizes public Decision Graph events. It is not hidden chain-of-thought.",
+        "",
+        "## Main Path",
+        "",
+    ]
+    main_statuses = {"planned", "active", "selected", "executed"}
+    main_events = [event for event in events if str(event.get("status", "")) in main_statuses]
+    branch_events = [event for event in events if event not in main_events]
+    if not main_events:
+        lines.append("- No selected or executed decision path recorded.")
+    for event in main_events:
+        lines.append(
+            f"- {event.get('decision_id', '')}: {event.get('title', '')} "
+            f"({event.get('kind', '')}, {event.get('status', '')})"
+        )
+        if event.get("summary"):
+            lines.append(f"- Summary: {event.get('summary')}")
+        if event.get("reason"):
+            lines.append(f"- Reason: {event.get('reason')}")
+        if event.get("chosen"):
+            lines.append(f"- Chosen: {event.get('chosen')}")
+    lines.extend(["", "## Abandoned Deferred And Recovery Branches", ""])
+    if not branch_events:
+        lines.append("- No abandoned, deferred, superseded, blocked, or rollback branches recorded.")
+    for event in branch_events:
+        lines.append(
+            f"- {event.get('decision_id', '')}: {event.get('title', '')} "
+            f"({event.get('kind', '')}, {event.get('status', '')})"
+        )
+        if event.get("parent_id"):
+            lines.append(f"- Parent: {event.get('parent_id')}")
+        if event.get("reason"):
+            lines.append(f"- Reason: {event.get('reason')}")
+        if event.get("evidence"):
+            lines.append(f"- Evidence: {event.get('evidence')}")
+    lines.extend(["", "## Full Decision Ledger", ""])
+    for event in events:
+        options = ", ".join(str(item) for item in event.get("options", []) if str(item).strip())
+        lines.append(f"- ID: {event.get('decision_id', '')}")
+        lines.append(f"- Parent: {event.get('parent_id', '') or 'root'}")
+        lines.append(f"- Title: {event.get('title', '')}")
+        lines.append(f"- Kind: {event.get('kind', '')}")
+        lines.append(f"- Status: {event.get('status', '')}")
+        if options:
+            lines.append(f"- Options: {options}")
+        if event.get("linked_capability_event_id"):
+            lines.append(f"- Linked Capability: {event.get('linked_capability_event_id')}")
+        if event.get("linked_effect_assertion_id"):
+            lines.append(f"- Linked Effect: {event.get('linked_effect_assertion_id')}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_decision_map_sidecar(
+    project_root: Path,
+    *,
+    run_id: str,
+    output_path: Path,
+    theme: str = HTML_DEFAULT_THEME,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
+) -> dict[str, Any]:
+    run_dir = resolve_run_dir(project_root, run_id)
+    source_path = decision_events_path(run_dir)
+    if not source_path.exists():
+        raise FileNotFoundError(source_path)
+    events = [event for event in load_decision_events(run_dir) if "_invalid_json" not in event]
+    source_sha = sha256_file(source_path)
+    markdown = decision_events_to_markdown(run_id, events)
+    anchor_prefix = safe_slug(f"decision-map-{source_sha[:12]}")
+    body_html, title, sections = markdown_to_html_fragment(markdown, anchor_prefix=anchor_prefix)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    source_rel = project_relative(project_root, source_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fragment_path = output_path.with_suffix(".fragment.html")
+    manifest_path = output_path.with_suffix(".manifest.json")
+    fragment_html = build_html_fragment(
+        kind="decision-map",
+        title=title,
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id=run_id,
+        body_html=body_html,
+        sections=sections,
+        generated_at=generated_at,
+        presentation=presentation,
+    )
+    write_text(fragment_path, fragment_html)
+    if presentation == "fragment":
+        output_rel = ""
+    else:
+        full_html = build_html_document(
+            title=title,
+            kind="decision-map",
+            body=fragment_html,
+            source_rel=source_rel,
+            source_sha=source_sha,
+            run_id=run_id,
+            generated_at=generated_at,
+            theme=theme,
+            presentation=presentation,
+        )
+        write_text(output_path, full_html)
+        output_rel = project_relative(project_root, output_path)
+    manifest = {
+        "schema_version": "knowledgeos.html-report.v1",
+        "kind": "decision-map",
+        "title": title,
+        "theme": theme,
+        "presentation": presentation,
+        "run_id": run_id,
+        "source": source_rel,
+        "source_sha256": source_sha,
+        "output": output_rel,
+        "fragment": project_relative(project_root, fragment_path),
+        "sections": sections,
+        "decision_count": len(events),
+        "generated_at": generated_at,
+        "html_source_of_truth": False,
+        "html_required_metadata": True,
+        "notice": HTML_SOURCE_TRUTH_NOTICE,
+    }
+    write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    return {
+        "status": "rendered",
+        "kind": "decision-map",
+        "title": title,
+        "output": str(output_path) if presentation != "fragment" else "",
+        "fragment": str(fragment_path),
+        "manifest": str(manifest_path),
+        "source": str(source_path),
+        "source_sha256": source_sha,
+        "run_id": run_id,
+        "decision_count": len(events),
+        "presentation": presentation,
+        "html_source_of_truth": False,
+    }
+
+
+def mermaid_label(value: str, limit: int = 58) -> str:
+    cleaned = " ".join(str(value).split())
+    if len(cleaned) > limit:
+        cleaned = cleaned[: max(0, limit - 3)].rstrip() + "..."
+    return cleaned.replace('"', "'").replace("[", "(").replace("]", ")")
+
+
+def latest_phase_records_by_phase(run_dir: Path) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for record in load_phase_records(run_dir):
+        if "_invalid_json" in record:
+            continue
+        phase = str(record.get("phase", ""))
+        if phase:
+            latest[phase] = record
+    return latest
+
+
+def count_valid_records(records: list[dict[str, Any]], status: str = "") -> int:
+    count = 0
+    for record in records:
+        if "_invalid_json" in record:
+            continue
+        if status and str(record.get("status", "")) != status:
+            continue
+        count += 1
+    return count
+
+
+def mission_flow_stage_summary(project_root: Path, task_id: str, run_id: str, sync_status: str = "") -> dict[str, Any]:
+    task = find_task(project_root, task_id)
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    run_meta = parse_scalar_values(run_dir / "run.yaml", {"route_status", "status", "task_title", "task_type"})
+    phase_latest = latest_phase_records_by_phase(run_dir)
+    phase_done = [phase for phase in EXPECTED_PHASE_KEYS if phase_latest.get(phase, {}).get("status") in {"completed", "skipped"}]
+    capability_count = count_valid_records(load_capability_events(run_dir))
+    effect_count = count_valid_records(load_effect_assertions(run_dir), status="passed")
+    decision_count = count_valid_records(load_decision_events(run_dir))
+    has_plan = (run_dir / "plan.md").exists() and (run_dir / "context-pack.md").exists()
+    eval_ok = eval_has_passed(run_dir / "eval.md")
+    postflight_text = read_text(run_dir / "postflight.md") if (run_dir / "postflight.md").exists() else ""
+    synced = sync_status == "SYNC_OK" or "[SYNC_OK]" in postflight_text
+    task_title = task.get("title") or run_meta.get("task_title") or task_id
+    proof_label = f"{effect_count} real check" + ("" if effect_count == 1 else "s")
+    tool_label = f"{capability_count} tool note" + ("" if capability_count == 1 else "s")
+    decision_label = f"{decision_count} decision" + ("" if decision_count == 1 else "s")
+    checkpoint_label = f"{len(phase_done)}/6 checkpoints"
+    return {
+        "task": task,
+        "run_dir": run_dir,
+        "title": task_title,
+        "complexity": task.get("complexity", "medium"),
+        "stages": [
+            {
+                "id": "A",
+                "name": "Goal",
+                "kind": "intent",
+                "label": f"Goal: {task_title}",
+                "detail": "What the user wanted us to finish.",
+                "status": "set",
+            },
+            {
+                "id": "B",
+                "name": "Health Check",
+                "kind": "guard",
+                "label": "Health check: OK",
+                "detail": "The project control plane was checked before work.",
+                "status": "ok",
+            },
+            {
+                "id": "C",
+                "name": "Task & Plan",
+                "kind": "intent",
+                "label": "Task and plan: ready" if has_plan else "Task and plan: missing",
+                "detail": "The run has a context pack and a short working plan." if has_plan else "The run is missing plan/context files.",
+                "status": "ok" if has_plan else "attention",
+            },
+            {
+                "id": "D",
+                "name": "Safe Writes",
+                "kind": "guard",
+                "label": "Safe writes: routed" if run_meta.get("route_status") == "routed" else "Safe writes: review needed",
+                "detail": "Planned file changes stayed inside the task route.",
+                "status": "ok" if run_meta.get("route_status") == "routed" else "attention",
+            },
+            {
+                "id": "E",
+                "name": "Work Done",
+                "kind": "work",
+                "label": "Work done: recorded" if "execute" in phase_done else "Work done: not recorded",
+                "detail": "Implementation or analysis steps were recorded as public checkpoints.",
+                "status": "ok" if "execute" in phase_done else "attention",
+            },
+            {
+                "id": "F",
+                "name": "Tools Used",
+                "kind": "work",
+                "label": f"Tools used: {tool_label}",
+                "detail": "Important shell, script, subagent, MCP, or skill use was made visible.",
+                "status": "ok" if capability_count else "quiet",
+            },
+            {
+                "id": "G",
+                "name": "Proof",
+                "kind": "proof",
+                "label": f"Proof: {proof_label}",
+                "detail": "Real artifacts were checked after the work landed.",
+                "status": "ok" if effect_count else "quiet",
+            },
+            {
+                "id": "H",
+                "name": "Decisions",
+                "kind": "proof",
+                "label": f"Decisions: {decision_label}",
+                "detail": "Route changes or important choices were summarized for humans.",
+                "status": "ok" if decision_count else "quiet",
+            },
+            {
+                "id": "I",
+                "name": "Finish",
+                "kind": "done",
+                "label": "Finish: synced" if synced else ("Finish: checked" if eval_ok else "Finish: pending"),
+                "detail": f"Review status: {'passed' if eval_ok else 'pending'}; {checkpoint_label}.",
+                "status": "ok" if synced or eval_ok else "attention",
+            },
+        ],
+        "counts": {
+            "capability_events": capability_count,
+            "effect_assertions": effect_count,
+            "decision_events": decision_count,
+            "phases_recorded": len(phase_done),
+        },
+        "synced": synced,
+        "eval_passed": eval_ok,
+    }
+
+
+def build_mission_flow_mermaid(summary: dict[str, Any]) -> str:
+    stages = summary["stages"]
+    lines = ["flowchart LR"]
+    for stage in stages:
+        lines.append(f'  {stage["id"]}["{mermaid_label(stage["label"])}"]')
+    for left, right in zip(stages, stages[1:]):
+        lines.append(f'  {left["id"]} --> {right["id"]}')
+    lines.extend(
+        [
+            "",
+            "  classDef intent fill:#E8F3FF,stroke:#2B6CB0,color:#102A43;",
+            "  classDef guard fill:#FFF4D6,stroke:#B7791F,color:#3D2B00;",
+            "  classDef work fill:#E9FBEF,stroke:#2F855A,color:#123524;",
+            "  classDef proof fill:#F3E8FF,stroke:#6B46C1,color:#2D174D;",
+            "  classDef done fill:#DCFCE7,stroke:#15803D,color:#052E16;",
+        ]
+    )
+    by_kind: dict[str, list[str]] = {"intent": [], "guard": [], "work": [], "proof": [], "done": []}
+    for stage in stages:
+        by_kind.setdefault(stage["kind"], []).append(stage["id"])
+    for kind, ids in by_kind.items():
+        if ids:
+            lines.append(f"  class {','.join(ids)} {kind};")
+    return "\n".join(lines)
+
+
+def build_mission_flow_markdown(project_root: Path, task_id: str, run_id: str, sync_status: str = "") -> dict[str, Any]:
+    summary = mission_flow_stage_summary(project_root, task_id, run_id, sync_status=sync_status)
+    mermaid = build_mission_flow_mermaid(summary)
+    lines = [
+        f"# Mission Flow {run_id}",
+        "",
+        "FLOW_OK",
+        "",
+        "A human-readable map of how this task moved from request to finish.",
+        "",
+        "## Flow",
+        "",
+        "```mermaid",
+        mermaid,
+        "```",
+        "",
+        "## Plain Summary",
+        "",
+    ]
+    for stage in summary["stages"]:
+        lines.append(f"- {stage['name']}: {stage['label']}. {stage['detail']}")
+    lines.extend(
+        [
+            "",
+            "## Counts",
+            "",
+            f"- Tools made visible: {summary['counts']['capability_events']}",
+            f"- Artifact checks: {summary['counts']['effect_assertions']}",
+            f"- Decision notes: {summary['counts']['decision_events']}",
+            f"- Checkpoints recorded: {summary['counts']['phases_recorded']}/6",
+            "",
+            "HTML is presentation, not source of truth.",
+        ]
+    )
+    return {
+        "status": "generated",
+        "flow_marker": "FLOW_OK",
+        "marker": f"FLOW_OK run={run_id} stages={len(summary['stages'])} synced={'yes' if summary['synced'] else 'no'}",
+        "task_id": task_id,
+        "run_id": run_id,
+        "complexity": summary["complexity"],
+        "mermaid": mermaid,
+        "markdown": "\n".join(lines).rstrip() + "\n",
+        "counts": summary["counts"],
+        "stages": summary["stages"],
+    }
+
+
+def write_mission_flow_markdown(project_root: Path, task_id: str, run_id: str, sync_status: str = "") -> dict[str, Any]:
+    result = build_mission_flow_markdown(project_root, task_id, run_id, sync_status=sync_status)
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    source_path = run_dir / "mission-flow.md"
+    write_text(source_path, result["markdown"])
+    result["source"] = str(source_path)
+    return result
+
+
+def mission_flow_cards_html(stages: list[dict[str, Any]]) -> str:
+    cards = []
+    for stage in stages:
+        cards.append(
+            '<section class="kos-flow-card kos-flow-{kind}">'
+            "<h3>{name}</h3>"
+            "<p><strong>{label}</strong></p>"
+            "<p>{detail}</p>"
+            "</section>".format(
+                kind=html_escape(stage["kind"]),
+                name=html_escape(stage["name"]),
+                label=html_escape(stage["label"]),
+                detail=html_escape(stage["detail"]),
+            )
+        )
+    return '<div class="kos-flow">' + "\n".join(cards) + "</div>"
+
+
+def render_mission_flow_sidecar(
+    project_root: Path,
+    *,
+    task_id: str,
+    run_id: str,
+    output_path: Path,
+    theme: str = HTML_DEFAULT_THEME,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
+) -> dict[str, Any]:
+    flow = write_mission_flow_markdown(project_root, task_id, run_id)
+    source_path = Path(flow["source"])
+    source_sha = sha256_file(source_path)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    source_rel = project_relative(project_root, source_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fragment_path = output_path.with_suffix(".fragment.html")
+    manifest_path = output_path.with_suffix(".manifest.json")
+    body_html = "\n".join(
+        [
+            f"<h1>Mission Flow {html_escape(run_id)}</h1>",
+            "<p>A friendly map of how the task moved from request to finish.</p>",
+            mission_flow_cards_html(flow["stages"]),
+            "<details><summary>Mermaid source</summary>",
+            f"<pre><code>{html_escape(flow['mermaid'])}</code></pre>",
+            "</details>",
+        ]
+    )
+    sections = [{"id": "mission-flow", "title": "Mission Flow", "level": 1}]
+    fragment_html = build_html_fragment(
+        kind="mission-flow",
+        title=f"Mission Flow {run_id}",
+        source_rel=source_rel,
+        source_sha=source_sha,
+        run_id=run_id,
+        body_html=body_html,
+        sections=sections,
+        generated_at=generated_at,
+        presentation=presentation,
+    )
+    write_text(fragment_path, fragment_html)
+    if presentation == "fragment":
+        output_rel = ""
+    else:
+        full_html = build_html_document(
+            title=f"Mission Flow {run_id}",
+            kind="mission-flow",
+            body=fragment_html,
+            source_rel=source_rel,
+            source_sha=source_sha,
+            run_id=run_id,
+            generated_at=generated_at,
+            theme=theme,
+            presentation=presentation,
+        )
+        write_text(output_path, full_html)
+        output_rel = project_relative(project_root, output_path)
+    manifest = {
+        "schema_version": "knowledgeos.html-report.v1",
+        "kind": "mission-flow",
+        "title": f"Mission Flow {run_id}",
+        "theme": theme,
+        "presentation": presentation,
+        "run_id": run_id,
+        "task_id": task_id,
+        "source": source_rel,
+        "source_sha256": source_sha,
+        "output": output_rel,
+        "fragment": project_relative(project_root, fragment_path),
+        "sections": sections,
+        "generated_at": generated_at,
+        "flow_marker": "FLOW_OK",
+        "html_source_of_truth": False,
+        "html_required_metadata": True,
+        "notice": HTML_SOURCE_TRUTH_NOTICE,
+    }
+    write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
+    return {
+        "status": "rendered",
+        "kind": "mission-flow",
+        "title": f"Mission Flow {run_id}",
+        "output": str(output_path) if presentation != "fragment" else "",
+        "fragment": str(fragment_path),
+        "manifest": str(manifest_path),
+        "source": str(source_path),
+        "source_sha256": source_sha,
+        "run_id": run_id,
+        "task_id": task_id,
+        "flow_marker": "FLOW_OK",
+        "presentation": presentation,
         "html_source_of_truth": False,
     }
 
@@ -5119,7 +8336,10 @@ def compose_html_reports(
     compose_manifest_path: Path,
     output_path: Path,
     theme: str = HTML_DEFAULT_THEME,
+    presentation: str = HTML_DEFAULT_PRESENTATION,
 ) -> dict[str, Any]:
+    if presentation == "fragment":
+        raise ValueError("render-html --compose does not support fragment presentation")
     if not compose_manifest_path.exists():
         raise FileNotFoundError(compose_manifest_path)
     compose_manifest = json.loads(read_text(compose_manifest_path))
@@ -5166,6 +8386,7 @@ def compose_html_reports(
         run_id=str(compose_manifest.get("run_id") or ""),
         generated_at=generated_at,
         theme=str(compose_manifest.get("theme") or theme),
+        presentation=presentation,
     )
     write_text(output_path, full_html)
     manifest_path = output_path.with_suffix(".manifest.json")
@@ -5173,6 +8394,7 @@ def compose_html_reports(
         "schema_version": "knowledgeos.html-composition.v1",
         "title": title,
         "theme": str(compose_manifest.get("theme") or theme),
+        "presentation": presentation,
         "source": project_relative(project_root, compose_manifest_path),
         "source_sha256": compose_source_sha,
         "output": project_relative(project_root, output_path),
@@ -5180,6 +8402,7 @@ def compose_html_reports(
         "reports": child_manifests,
         "generated_at": generated_at,
         "html_source_of_truth": False,
+        "html_required_metadata": True,
         "notice": HTML_SOURCE_TRUTH_NOTICE,
     }
     write_text(manifest_path, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
@@ -5190,6 +8413,7 @@ def compose_html_reports(
         "report_count": len(child_manifests),
         "source": str(compose_manifest_path),
         "source_sha256": compose_source_sha,
+        "presentation": presentation,
         "html_source_of_truth": False,
     }
 
@@ -5344,6 +8568,13 @@ def build_task_route(project_root: Path, task_id: str | None, task_type: str | N
             "recommended_action": "add a route profile under .agent-os/workflows/router.yaml before mutation",
         }
 
+    if "lifecycle_contract" in profile:
+        errors = workflow_lifecycle_errors(profile)
+        if errors:
+            return {"status": "human_triage_required", "task_id": task_id, "task_type": task_type,
+                    "reason": "; ".join(errors),
+                    "recommended_action": "review the declared lifecycle contract; do not silently downgrade it"}
+
     return {
         "status": "routed",
         "task_id": task_id,
@@ -5352,8 +8583,10 @@ def build_task_route(project_root: Path, task_id: str | None, task_type: str | N
         "route_order": profile.get("route_order", []),
         "eval_profile": profile.get("eval_profile", ""),
         "human_gate": profile.get("human_gate", ""),
+        "allow_external_controlled": profile.get("allow_external_controlled", ""),
         "allowed_outputs": profile.get("allowed_outputs", []),
         "notes": profile.get("notes", []),
+        **({"lifecycle_contract": profile["lifecycle_contract"]} if "lifecycle_contract" in profile else {}),
     }
 
 
@@ -5434,7 +8667,8 @@ def cmd_check_route_write(args: argparse.Namespace) -> int:
 def cmd_run_task(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
-        result = create_run_envelope(project_root, args.task_id, args.summary, dry_run=args.dry_run, force=args.force)
+        result = create_run_envelope(project_root, args.task_id, args.summary, dry_run=args.dry_run, force=args.force,
+                                     host_snapshot=host_snapshot_from_args(args))
     except (FileNotFoundError, KeyError, FileExistsError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -5485,7 +8719,7 @@ def cmd_create_spec(args: argparse.Namespace) -> int:
 def cmd_align_spec(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
-        result = align_spec(project_root, task_id=args.task_id, spec_id=args.spec_id, note=args.note or "")
+        result = align_spec(project_root, task_id=args.task_id, spec_id=args.spec_id, note=args.note or "", thread_id=args.thread_id or "", run_id=args.run_id or "")
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -5615,6 +8849,8 @@ def cmd_capability_event(args: argparse.Namespace) -> int:
             purpose=args.purpose,
             status=args.status,
             evidence=args.evidence,
+            invocation_id=args.invocation_id,
+            recovers_event_id=args.recovers_event_id,
         )
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
@@ -5650,6 +8886,55 @@ def cmd_trace_step(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_decision_event(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = record_decision_event(
+            project_root,
+            args.task_id,
+            args.run_id,
+            kind=args.kind,
+            status=args.status,
+            title=args.title,
+            summary=args.summary,
+            reason=args.reason,
+            evidence=args.evidence,
+            parent_id=args.parent_id or "",
+            options=args.option or [],
+            chosen=args.chosen or "",
+            linked_step=args.linked_step or "",
+            linked_capability_event_id=args.linked_capability_event_id or "",
+            linked_effect_assertion_id=args.linked_effect_assertion_id or "",
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
+    return 0
+
+
+def cmd_decision_query(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = query_decision_events(
+            project_root,
+            run_id=args.run_id,
+            task_id=args.task_id or "",
+            kind=args.kind or "",
+            status=args.status or "",
+            parent_id=args.parent_id or "",
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    emit(result, args.json)
+    return 0
+
+
 def cmd_artifact_assert(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
@@ -5678,7 +8963,7 @@ def cmd_artifact_assert(args: argparse.Namespace) -> int:
 def cmd_context_pack(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
-        result = write_context_pack(project_root, args.task_id, args.run_id, summary=args.summary or "")
+        result = write_context_pack(project_root, args.task_id, args.run_id, summary=args.summary or "", thread_id=args.thread_id or "")
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -5723,6 +9008,25 @@ def cmd_verify_effects(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
         result = verify_effects(project_root, args.task_id, args.run_id)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
+        if result.get("warnings"):
+            print(f"warnings: {len(result['warnings'])}")
+        if result.get("errors"):
+            print(f"errors: {len(result['errors'])}")
+    return 2 if result.get("status") == "failed" else 0
+
+
+def cmd_verify_decisions(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = verify_decisions(project_root, args.task_id, args.run_id)
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -5796,19 +9100,72 @@ def cmd_tool_registry(args: argparse.Namespace) -> int:
 def cmd_dispatch_task(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
-        result = build_dispatch_plan(project_root, args.task_id)
+        result = build_dispatch_plan(project_root, args.task_id, run_id=args.run_id or "",
+                                     host_snapshot=host_snapshot_from_args(args), persist=True)
         if args.run_id and result.get("status") == "dispatch_ready":
             result["dispatch_event"] = record_dispatch_event(project_root, args.task_id, args.run_id, result)
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    emit(result, args.json)
+    if args.json:
+        emit(result, True)
+    else:
+        if result.get("dispatch_marker"):
+            summary = result.get("dispatch_summary", {})
+            print(result.get("marker", ""))
+            print(f"planned_agents: {summary.get('planned_agents', 0)}")
+            print(f"planned_capabilities: {summary.get('planned_capabilities', 0)}")
+            if summary.get("planned_agent_ids"):
+                print("planned_agent_ids: " + ", ".join(summary.get("planned_agent_ids", [])))
+        emit(result, False)
     return 0 if result.get("status") == "dispatch_ready" or args.allow_unrouted else 2
+
+
+def cmd_dispatch_report(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = build_dispatch_report(project_root, args.task_id, args.run_id)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print("Full Capability Dispatch Report")
+        print(f"agents: {result['agent_count']}")
+        print(f"skipped_agents: {result.get('skipped_agent_count', 0)}")
+        print(f"runtime_gaps: {result.get('runtime_gap_count', 0)}")
+        print(f"capabilities: {result['capability_count']}")
+        print(f"skipped: {result.get('skipped_count', 0)}")
+        print("by_kind:")
+        for kind, count in sorted(result.get("counts_by_kind", {}).items()):
+            skipped = result.get("skipped_by_kind", {}).get(kind, 0)
+            print(f"- {kind}: used={count}, skipped={skipped}")
+        if result.get("events"):
+            print("used_capabilities:")
+            for event in result["events"]:
+                print(f"- {event['kind']}: {event['id']} ({event['status']}) - {event['purpose']}")
+        if result.get("skipped"):
+            print("skipped_or_not_needed:")
+            for event in result["skipped"]:
+                print(f"- {event['kind']}: {event['id']} ({event['status']}) - {event['purpose']}")
+        if result.get("runtime_gaps"):
+            print("runtime_gap_details:")
+            for event in result["runtime_gaps"]:
+                print(f"- {event['kind']}: {event['id']} ({event['status']}) - {event['evidence']}")
+        if result.get("gaps"):
+            print("gaps:")
+            for gap in result["gaps"]:
+                print(f"- {gap}")
+        print(f"report: {result['report']}")
+    return 0
 
 
 def cmd_render_html(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
+        presentation = resolve_html_presentation(project_root, args.presentation)
         if args.compose:
             if not args.output:
                 raise ValueError("render-html --compose requires --output")
@@ -5817,6 +9174,7 @@ def cmd_render_html(args: argparse.Namespace) -> int:
                 compose_manifest_path=resolve_project_artifact(project_root, args.compose),
                 output_path=resolve_project_artifact(project_root, args.output),
                 theme=args.theme,
+                presentation=presentation,
             )
             emit(result, args.json)
             return 0
@@ -5836,6 +9194,35 @@ def cmd_render_html(args: argparse.Namespace) -> int:
                 output_path=output_path,
                 run_id=args.run_id,
                 theme=args.theme,
+                presentation=presentation,
+            )
+        elif args.kind == "decision-map":
+            if not args.run_id:
+                raise ValueError("render-html --kind decision-map requires --run-id")
+            run_dir = resolve_run_dir(project_root, args.run_id)
+            output_path = resolve_project_artifact(project_root, args.output) if args.output else run_dir / "decision-map.html"
+            result = render_decision_map_sidecar(
+                project_root,
+                run_id=args.run_id,
+                output_path=output_path,
+                theme=args.theme,
+                presentation=presentation,
+            )
+        elif args.kind == "mission-flow":
+            if not args.run_id:
+                raise ValueError("render-html --kind mission-flow requires --run-id")
+            run_dir = resolve_run_dir(project_root, args.run_id)
+            task_id = args.task_id or parse_scalar_values(run_dir / "run.yaml", {"task_id"}).get("task_id", "")
+            if not task_id:
+                raise ValueError("could not resolve task id for mission-flow")
+            output_path = resolve_project_artifact(project_root, args.output) if args.output else run_dir / "mission-flow.html"
+            result = render_mission_flow_sidecar(
+                project_root,
+                task_id=task_id,
+                run_id=args.run_id,
+                output_path=output_path,
+                theme=args.theme,
+                presentation=presentation,
             )
         elif args.kind == "rich-report":
             if not args.input:
@@ -5848,6 +9235,7 @@ def cmd_render_html(args: argparse.Namespace) -> int:
                 source_path=source_path,
                 output_path=output_path,
                 theme=args.theme,
+                presentation=presentation,
             )
         else:
             raise ValueError(f"unsupported render kind: {args.kind}")
@@ -5855,6 +9243,120 @@ def cmd_render_html(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     emit(result, args.json)
+    return 0
+
+
+def cmd_flow_summary(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        run_dir = resolve_run_dir(project_root, args.run_id)
+        task_id = args.task_id or parse_scalar_values(run_dir / "run.yaml", {"task_id"}).get("task_id", "")
+        if not task_id:
+            raise ValueError("could not resolve task id for flow-summary")
+        result = write_mission_flow_markdown(project_root, task_id, args.run_id)
+        append_command_event(
+            run_dir,
+            "flow-summary",
+            task_id,
+            args.run_id,
+            status="generated",
+            source=project_relative(project_root, Path(result["source"])),
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        if args.format == "markdown":
+            print(result["markdown"])
+        else:
+            print("```mermaid")
+            print(result["mermaid"])
+            print("```")
+            print(f"source: {result['source']}")
+    return 0
+
+
+def cmd_thread_plan(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        if args.thread_action == "start":
+            result = start_thread_plan(project_root, title=args.title, spec_id=args.spec_id or "")
+        elif args.thread_action == "current":
+            current = load_current_thread(project_root)
+            result = {
+                "status": "ok",
+                "thread_plan_marker": THREAD_PLAN_MARKER,
+                "marker": f"{THREAD_PLAN_MARKER} action=current thread={current['thread_id']}",
+                "current": current,
+            }
+        elif args.thread_action == "append":
+            result = append_thread_plan_event(
+                project_root,
+                thread_id=args.thread_id,
+                kind=args.kind,
+                text=args.text,
+                linked_spec_id=args.spec_id or "",
+                linked_task_id=args.task_id or "",
+                linked_run_id=args.run_id or "",
+                parent_event_id=args.parent_event_id or "",
+            )
+        elif args.thread_action == "link-run":
+            ensure_run_belongs_to_task(project_root, args.task_id, args.run_id)
+            text = args.text or f"已关联执行记录：任务 {args.task_id} / 运行 {args.run_id}。"
+            result = append_thread_plan_event(
+                project_root,
+                thread_id=args.thread_id,
+                kind="progress",
+                text=text,
+                linked_task_id=args.task_id,
+                linked_run_id=args.run_id,
+                event_type="thread-plan link-run",
+            )
+            result["status"] = "linked"
+            result["marker"] = f"{THREAD_PLAN_MARKER} action=link-run thread={args.thread_id} run={args.run_id}"
+        elif args.thread_action == "render":
+            if args.format == "markdown":
+                result = render_thread_plan_markdown(project_root, args.thread_id)
+            elif args.format == "html":
+                result = render_thread_plan_html(project_root, args.thread_id)
+            elif args.format == "mermaid":
+                mermaid = render_thread_plan_mermaid(project_root, args.thread_id)
+                result = {
+                    "status": "rendered",
+                    "thread_plan_marker": THREAD_PLAN_MARKER,
+                    "marker": f"{THREAD_PLAN_MARKER} action=render thread={args.thread_id} format=mermaid",
+                    "thread_id": args.thread_id,
+                    "format": "mermaid",
+                    "mermaid": mermaid,
+                }
+            else:
+                raise ValueError(f"unsupported thread-plan render format: {args.format}")
+            append_thread_command_event(project_root, args.thread_id, "thread-plan render", format=args.format)
+        else:
+            raise ValueError(f"unsupported thread-plan action: {args.thread_action}")
+    except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result.get("marker", f"{THREAD_PLAN_MARKER} action={args.thread_action}"))
+        if args.thread_action == "current":
+            current = result.get("current", {})
+            print(f"thread_id: {current.get('thread_id', '')}")
+            print(f"title: {current.get('title', '')}")
+            print(f"spec_id: {current.get('spec_id', '')}")
+        elif args.thread_action == "render" and args.format == "mermaid":
+            print("```mermaid")
+            print(result["mermaid"])
+            print("```")
+        elif result.get("output"):
+            print(f"output: {result['output']}")
+        elif result.get("ledger"):
+            print(f"ledger: {result['ledger']}")
     return 0
 
 
@@ -5872,12 +9374,22 @@ def cmd_receipt(args: argparse.Namespace) -> int:
 
 
 def cmd_agent_guide(args: argparse.Namespace) -> int:
+    from knowledgeos.guidance import merge_generated
+
     project_root = Path(args.project_root).expanduser().resolve()
     missing = [path for path in REQUIRED_AGENT_GUIDE_FILES if not (project_root / path).exists()]
     if missing:
         print(f"cannot build guide; missing required files: {', '.join(missing)}", file=sys.stderr)
         return 1
-    guide = build_agent_guide(project_root)
+    try:
+        guide = build_agent_guide(project_root)
+        if args.output:
+            target = Path(args.output).expanduser().resolve()
+            if target.exists():
+                guide = merge_generated(target.read_text(encoding="utf-8"), guide)
+    except ValueError as exc:
+        print(f"cannot build guide: {exc}", file=sys.stderr)
+        return 1
     if args.output:
         target = Path(args.output).expanduser().resolve()
         write_text(target, guide)
@@ -5888,12 +9400,22 @@ def cmd_agent_guide(args: argparse.Namespace) -> int:
 
 
 def cmd_startup_prompt(args: argparse.Namespace) -> int:
+    from knowledgeos.guidance import merge_generated
+
     project_root = Path(args.project_root).expanduser().resolve()
     missing = [path for path in REQUIRED_AGENT_GUIDE_FILES if not (project_root / path).exists()]
     if missing:
         print(f"cannot build startup prompt; missing required files: {', '.join(missing)}", file=sys.stderr)
         return 1
-    prompt = build_startup_prompt(project_root)
+    try:
+        prompt = build_startup_prompt(project_root)
+        if args.output:
+            target = Path(args.output).expanduser().resolve()
+            if target.exists():
+                prompt = merge_generated(target.read_text(encoding="utf-8"), prompt)
+    except ValueError as exc:
+        print(f"cannot build startup prompt: {exc}", file=sys.stderr)
+        return 1
     if args.output:
         target = Path(args.output).expanduser().resolve()
         write_text(target, prompt)
@@ -5925,7 +9447,11 @@ def cmd_ask_sandbox(args: argparse.Namespace) -> int:
 
 def cmd_runtime_adapters(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
-    result = build_runtime_adapters_state(project_root, show_paths=args.show_paths)
+    try:
+        result = build_runtime_adapters_state(project_root, show_paths=args.show_paths, host_snapshot=host_snapshot_from_args(args))
+    except (OSError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if args.json:
         emit(result, True)
     else:
@@ -5935,7 +9461,67 @@ def cmd_runtime_adapters(args: argparse.Namespace) -> int:
         print(f"real_cli_execution: {result['policy']['real_cli_execution']}")
         for adapter in result["adapters"]:
             print(f"- {adapter['id']}: {adapter['status']} ({adapter['execution_mode']})")
+        if result.get("runtime_subagents"):
+            print("runtime_subagents:")
+            for item in result["runtime_subagents"]:
+                print(f"- {item['id']}: {item['runtime_tool']}({item['runtime_agent_type']})")
     return 0 if result.get("status") == "ready" else 1
+
+
+def cmd_subagent_adapter(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = build_subagent_adapter(
+            project_root,
+            args.id,
+            task_id=args.task_id or "",
+            run_id=args.run_id or "",
+            purpose=args.purpose or "",
+            host_snapshot=host_snapshot_from_args(args),
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"runtime_tool: {result['runtime_tool']}")
+        print(f"runtime_agent_type: {result['runtime_agent_type']}")
+        print(f"capability_event: {result['capability_event_suggestion']}")
+    return 0
+
+
+def cmd_verify_subagents(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).expanduser().resolve()
+    try:
+        result = verify_subagent_catalog(
+            project_root,
+            args.task_id,
+            args.run_id,
+            native_min_successes=args.native_min_successes,
+        )
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        emit(result, True)
+    else:
+        print(result["marker"])
+        print(f"ledger: {result['ledger']}")
+        if result["catalog_empty"]:
+            print("catalog_empty: true")
+        if result["missing_adapter_role_ids"]:
+            print("missing_adapter_roles: " + ", ".join(result["missing_adapter_role_ids"]))
+        if result["adapter_mismatches"]:
+            print(f"adapter_mismatches: {len(result['adapter_mismatches'])}")
+        if result["missing_role_ids"]:
+            print("missing_roles: " + ", ".join(result["missing_role_ids"]))
+        if result["native_shortfalls"]:
+            print("native_shortfalls: " + ", ".join(f"{key}={value}" for key, value in result["native_shortfalls"].items()))
+        if result["invalid_events"]:
+            print(f"invalid_events: {len(result['invalid_events'])}")
+    return 0 if result.get("status") == "passed" else 2
 
 
 def cmd_workbench_state(args: argparse.Namespace) -> int:
@@ -6104,6 +9690,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--force", action="store_true", help="allow non-ready task status; routing is still required")
     run.add_argument("--json", action="store_true")
     run.set_defaults(func=cmd_run_task)
+    add_host_snapshot_arguments(run)
 
     create = sub.add_parser("create-task", help="append a new task to .agent-os/tasks.yaml")
     create.add_argument("--project-root", required=True)
@@ -6133,6 +9720,8 @@ def build_parser() -> argparse.ArgumentParser:
     align_spec_parser.add_argument("--project-root", required=True)
     align_spec_parser.add_argument("--task-id")
     align_spec_parser.add_argument("--spec-id")
+    align_spec_parser.add_argument("--thread-id", default="")
+    align_spec_parser.add_argument("--run-id", default="")
     align_spec_parser.add_argument("--note", default="")
     align_spec_parser.add_argument("--json", action="store_true")
     align_spec_parser.set_defaults(func=cmd_align_spec)
@@ -6195,7 +9784,7 @@ def build_parser() -> argparse.ArgumentParser:
     phase_task_parser.add_argument("--json", action="store_true")
     phase_task_parser.set_defaults(func=cmd_phase_task)
 
-    capability_event_parser = sub.add_parser("capability-event", help="record an observable MCP, skill, subagent, or script capability call")
+    capability_event_parser = sub.add_parser("capability-event", help="record an observable mounted capability call")
     capability_event_parser.add_argument("--project-root", required=True)
     capability_event_parser.add_argument("--task-id", required=True)
     capability_event_parser.add_argument("--run-id", required=True)
@@ -6204,6 +9793,8 @@ def build_parser() -> argparse.ArgumentParser:
     capability_event_parser.add_argument("--purpose", required=True, help="public purpose for the capability call")
     capability_event_parser.add_argument("--status", default="completed")
     capability_event_parser.add_argument("--evidence", default="")
+    capability_event_parser.add_argument("--invocation-id", default="", help="host runtime invocation id when available")
+    capability_event_parser.add_argument("--recovers-event-id", default="", help="exact timed-out capability event this completion resolves")
     capability_event_parser.add_argument("--json", action="store_true")
     capability_event_parser.set_defaults(func=cmd_capability_event)
 
@@ -6217,6 +9808,35 @@ def build_parser() -> argparse.ArgumentParser:
     trace_step_parser.add_argument("--evidence", default="", help="command, file, or user confirmation evidence")
     trace_step_parser.add_argument("--json", action="store_true")
     trace_step_parser.set_defaults(func=cmd_trace_step)
+
+    decision_event_parser = sub.add_parser("decision-event", help="record a public Decision Graph event for a run")
+    decision_event_parser.add_argument("--project-root", required=True)
+    decision_event_parser.add_argument("--task-id", required=True)
+    decision_event_parser.add_argument("--run-id", required=True)
+    decision_event_parser.add_argument("--kind", required=True, choices=sorted(DECISION_EVENT_KINDS))
+    decision_event_parser.add_argument("--status", default="active", choices=sorted(DECISION_EVENT_STATUSES))
+    decision_event_parser.add_argument("--title", required=True)
+    decision_event_parser.add_argument("--summary", default="")
+    decision_event_parser.add_argument("--reason", default="", help="public decision rationale; do not include hidden chain-of-thought")
+    decision_event_parser.add_argument("--evidence", default="", help="command, file, or user confirmation evidence")
+    decision_event_parser.add_argument("--parent-id", default="")
+    decision_event_parser.add_argument("--option", action="append", default=[])
+    decision_event_parser.add_argument("--chosen", default="")
+    decision_event_parser.add_argument("--linked-step", default="", choices=["", *OPERATIONAL_TRACE_STEPS])
+    decision_event_parser.add_argument("--linked-capability-event-id", default="")
+    decision_event_parser.add_argument("--linked-effect-assertion-id", default="")
+    decision_event_parser.add_argument("--json", action="store_true")
+    decision_event_parser.set_defaults(func=cmd_decision_event)
+
+    decision_query_parser = sub.add_parser("decision-query", help="query public Decision Graph events for a run")
+    decision_query_parser.add_argument("--project-root", required=True)
+    decision_query_parser.add_argument("--run-id", required=True)
+    decision_query_parser.add_argument("--task-id", default="")
+    decision_query_parser.add_argument("--kind", default="", choices=["", *sorted(DECISION_EVENT_KINDS)])
+    decision_query_parser.add_argument("--status", default="", choices=["", *sorted(DECISION_EVENT_STATUSES)])
+    decision_query_parser.add_argument("--parent-id", default="")
+    decision_query_parser.add_argument("--json", action="store_true")
+    decision_query_parser.set_defaults(func=cmd_decision_query)
 
     artifact_assert_parser = sub.add_parser("artifact-assert", help="verify a real side effect before recording EFFECT_OK evidence")
     artifact_assert_parser.add_argument("--project-root", required=True)
@@ -6236,6 +9856,7 @@ def build_parser() -> argparse.ArgumentParser:
     context_pack_parser.add_argument("--task-id", required=True)
     context_pack_parser.add_argument("--run-id", required=True)
     context_pack_parser.add_argument("--summary", default="")
+    context_pack_parser.add_argument("--thread-id", default="")
     context_pack_parser.add_argument("--json", action="store_true")
     context_pack_parser.set_defaults(func=cmd_context_pack)
 
@@ -6267,6 +9888,13 @@ def build_parser() -> argparse.ArgumentParser:
     verify_effects_parser.add_argument("--run-id", required=True)
     verify_effects_parser.add_argument("--json", action="store_true")
     verify_effects_parser.set_defaults(func=cmd_verify_effects)
+
+    verify_decisions_parser = sub.add_parser("verify-decisions", help="verify Decision Graph events and command evidence for a run")
+    verify_decisions_parser.add_argument("--project-root", required=True)
+    verify_decisions_parser.add_argument("--task-id", required=True)
+    verify_decisions_parser.add_argument("--run-id", required=True)
+    verify_decisions_parser.add_argument("--json", action="store_true")
+    verify_decisions_parser.set_defaults(func=cmd_verify_decisions)
 
     complete = sub.add_parser("complete-task", help="complete a task only after eval, lifecycle, outputs, and required postflight pass")
     complete.add_argument("--project-root", required=True)
@@ -6303,17 +9931,81 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--allow-unrouted", action="store_true", help="return success even when human triage is required")
     dispatch.add_argument("--json", action="store_true")
     dispatch.set_defaults(func=cmd_dispatch_task)
+    add_host_snapshot_arguments(dispatch)
 
-    render_html = sub.add_parser("render-html", help="render Markdown evidence into composable static HTML sidecars")
+    dispatch_report = sub.add_parser("dispatch-report", help="summarize all actual mounted capability events for a run")
+    dispatch_report.add_argument("--project-root", required=True)
+    dispatch_report.add_argument("--task-id", required=True)
+    dispatch_report.add_argument("--run-id", required=True)
+    dispatch_report.add_argument("--json", action="store_true")
+    dispatch_report.set_defaults(func=cmd_dispatch_report)
+
+    render_html = sub.add_parser("render-html", help="render Markdown, flow, and Decision Graph evidence into composable static HTML sidecars")
     render_html.add_argument("--project-root", required=True)
-    render_html.add_argument("--kind", choices=sorted(HTML_REPORT_KINDS), help="receipt, handoff, or rich-report")
-    render_html.add_argument("--run-id", help="run id for receipt or handoff rendering")
+    render_html.add_argument("--kind", choices=sorted(HTML_REPORT_KINDS), help="receipt, handoff, rich-report, decision-map, or mission-flow")
+    render_html.add_argument("--run-id", help="run id for receipt, handoff, decision-map, or mission-flow rendering")
+    render_html.add_argument("--task-id", help="optional task id for mission-flow; defaults from run.yaml")
     render_html.add_argument("--input", help="Markdown source for rich-report")
     render_html.add_argument("--output", help="HTML output path; defaults beside the source")
     render_html.add_argument("--compose", help="compose report manifests into one HTML page")
     render_html.add_argument("--theme", default=HTML_DEFAULT_THEME)
+    render_html.add_argument(
+        "--presentation",
+        choices=sorted(HTML_PRESENTATION_MODES),
+        help="presentation shell: default, minimal, bare, or fragment; project reporting policy is used when omitted",
+    )
     render_html.add_argument("--json", action="store_true")
     render_html.set_defaults(func=cmd_render_html)
+
+    flow_summary = sub.add_parser("flow-summary", help="print a friendly layered Mermaid mission flow for a run")
+    flow_summary.add_argument("--project-root", required=True)
+    flow_summary.add_argument("--run-id", required=True)
+    flow_summary.add_argument("--task-id", help="optional task id; defaults from run.yaml")
+    flow_summary.add_argument("--format", choices=["mermaid", "markdown"], default="mermaid")
+    flow_summary.add_argument("--json", action="store_true")
+    flow_summary.set_defaults(func=cmd_flow_summary)
+
+    thread_plan = sub.add_parser("thread-plan", help="manage chat-level append-only natural-language plan ledgers")
+    thread_sub = thread_plan.add_subparsers(dest="thread_action", required=True)
+    thread_start = thread_sub.add_parser("start", help="start a chat-level Thread Plan Ledger")
+    thread_start.add_argument("--project-root", required=True)
+    thread_start.add_argument("--title", required=True)
+    thread_start.add_argument("--spec-id", default="")
+    thread_start.add_argument("--json", action="store_true")
+    thread_start.set_defaults(func=cmd_thread_plan)
+
+    thread_current = thread_sub.add_parser("current", help="show the current active Thread Plan Ledger")
+    thread_current.add_argument("--project-root", required=True)
+    thread_current.add_argument("--json", action="store_true")
+    thread_current.set_defaults(func=cmd_thread_plan)
+
+    thread_append = thread_sub.add_parser("append", help="append a natural-language plan note")
+    thread_append.add_argument("--project-root", required=True)
+    thread_append.add_argument("--thread-id", required=True)
+    thread_append.add_argument("--kind", required=True, choices=sorted(THREAD_PLAN_EVENT_KINDS))
+    thread_append.add_argument("--text", required=True)
+    thread_append.add_argument("--spec-id", default="")
+    thread_append.add_argument("--task-id", default="")
+    thread_append.add_argument("--run-id", default="")
+    thread_append.add_argument("--parent-event-id", default="")
+    thread_append.add_argument("--json", action="store_true")
+    thread_append.set_defaults(func=cmd_thread_plan)
+
+    thread_link = thread_sub.add_parser("link-run", help="link a task run to the current chat-level plan")
+    thread_link.add_argument("--project-root", required=True)
+    thread_link.add_argument("--thread-id", required=True)
+    thread_link.add_argument("--task-id", required=True)
+    thread_link.add_argument("--run-id", required=True)
+    thread_link.add_argument("--text", default="")
+    thread_link.add_argument("--json", action="store_true")
+    thread_link.set_defaults(func=cmd_thread_plan)
+
+    thread_render = thread_sub.add_parser("render", help="render a thread plan as Markdown, Mermaid, or HTML")
+    thread_render.add_argument("--project-root", required=True)
+    thread_render.add_argument("--thread-id", required=True)
+    thread_render.add_argument("--format", choices=["markdown", "html", "mermaid"], default="markdown")
+    thread_render.add_argument("--json", action="store_true")
+    thread_render.set_defaults(func=cmd_thread_plan)
 
     receipt = sub.add_parser("receipt", help="write a local project receipt")
     receipt.add_argument("--project-root", required=True)
@@ -6363,6 +10055,25 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_adapters.add_argument("--show-paths", action="store_true", help="include absolute executable paths instead of privacy redaction")
     runtime_adapters.add_argument("--json", action="store_true")
     runtime_adapters.set_defaults(func=cmd_runtime_adapters)
+    add_host_snapshot_arguments(runtime_adapters)
+
+    subagent_adapter = sub.add_parser("subagent-adapter", help="resolve a registered subagent into a Codex runtime adapter call package")
+    subagent_adapter.add_argument("--project-root", required=True)
+    subagent_adapter.add_argument("--id", required=True, help="registered subagent id, for example codex-explorer or maestro-architect")
+    subagent_adapter.add_argument("--task-id", help="optional task id; when paired with --run-id records command evidence")
+    subagent_adapter.add_argument("--run-id", help="optional run id; when paired with --task-id records command evidence")
+    subagent_adapter.add_argument("--purpose", default="", help="short public purpose for the suggested capability-event")
+    subagent_adapter.add_argument("--json", action="store_true")
+    subagent_adapter.set_defaults(func=cmd_subagent_adapter)
+    add_host_snapshot_arguments(subagent_adapter)
+
+    verify_subagents = sub.add_parser("verify-subagents", help="verify challenge-bound parent attestations for an immutable runtime subagent catalog")
+    verify_subagents.add_argument("--project-root", required=True)
+    verify_subagents.add_argument("--task-id", required=True)
+    verify_subagents.add_argument("--run-id", required=True)
+    verify_subagents.add_argument("--native-min-successes", type=int, default=DEFAULT_NATIVE_SUBAGENT_SUCCESSES)
+    verify_subagents.add_argument("--json", action="store_true")
+    verify_subagents.set_defaults(func=cmd_verify_subagents)
 
     preview = sub.add_parser("workbench-preview", help="serve the read-only Workbench preview with live project state")
     preview.add_argument("--project-root", required=True)

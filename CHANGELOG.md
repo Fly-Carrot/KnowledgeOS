@@ -6,8 +6,67 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ## Unreleased
 
+### Lean Batch 3: Candidate Qualification
+
+- Add `make release-smoke` to validate a clean source export using freshly initialized runtime/project state, guardrail scenarios and all tests. Keep `make smoke` for local repository history; never fabricate missing private outputs or weaken doctor.
+- Make the doctor summary/path tests self-contained instead of dependent on the developer checkout; retain the original assertions and add a missing relative-linked schema refusal check.
+- Fix a reproduced legacy-route regression: interleaved route/dispatch checkpoints may precede context and plan within the execution envelope. Valid legacy routers remain byte-identical during audit/repair; short-route ordering and completion gates remain enforced.
+- Add clean-export, missing-source refusal and legacy checkpoint regressions, with an explicit [candidate validation report](docs/reports/lean-batch3-validation.md).
+- Publish only the reviewed candidate changes. Exact-model qualification is explicitly deferred, not inferred from deterministic tests; no automatic main merge, stable tag, installed-kernel replacement, app rebuild or bulk project migration.
+
+### Lean Batch 2: Short Entries And Launcher Isolation
+
+- Pin launcher imports to the selected checkout rather than the caller's same-named Python package, preserving working directory, arguments and exit codes.
+- Generate short global/project/startup entries from `knowledgeos.guidance` v2; load detailed guidance on demand before substantial work or any write/external effect. Missing or conflicting guidance stops affected mutation.
+- Preserve legacy client calls, in-flight bindings, custom rules, project strictness and explicit evidence reporting. Adjacent checkpoints may share a readable update; failures and skipped reasons remain visible.
+- Include workflow-route changes in the guidance fingerprint; keep compact and guided safety identical and retain guided as default.
+- Add disposable two-project/two-mode pilots, active-run history/rollback tests and launcher regressions. Global entry activation is separately backed up and scoped; no bulk kernel rollout or GitHub release occurs in this batch.
+
+### Lean Batch 1: Compatible Execution
+
+- Share route-contract validation between doctor and harness repair. Unmarked profiles retain `legacy-v1`; explicit `producer-bound-v1` profiles may omit redundant dispatch and standalone verification calls without losing completion checks.
+- Preserve valid short routes during audit/repair; unknown or malformed explicit contracts require review instead of silent conversion. Recognize command hints rather than command names embedded in prose.
+- Preserve command-backed manual dispatch decisions for unchanged legacy plans, repair missing producer checkpoints after an interrupted dispatch, and reject failed records as reuse candidates.
+- Prevent automatic postflight replay for legacy runs with prior evidence or completed status but no attempt journal. Require reconciliation or explicit pending, without rewriting the old postflight evidence.
+- Add isolated compatibility regressions and the [Batch 1 specification](docs/specs/lean-batch1.md). This batch does not replace global rules, migrate live projects, or publish a release.
+- Record a separately reproduced launcher import-precedence risk for pre-rollout follow-up; `bin/knowledgeos` is unchanged because this task's route does not authorize that path.
+
+### Correctness And Lean Orchestration Candidate
+
+- Bind a task to its explicit Spec (or explicit none), freeze the binding per run, and preserve alignment history. An unrelated project active Spec is no longer silently adopted.
+- Separate registry declarations, resolvable adapters, current host availability, and verified executions. Keep unknown states visible and suppress the unavailable stock Maestro orchestrator without deleting custom entries.
+- Generate compact and guided prompts from one versioned safety contract. Existing unmarked/custom instructions require review rather than silent replacement; model names never lower safety gates.
+- Bind evaluation evidence to declared artifacts and policy hashes. Completion rejects stale evidence after changes; legacy evaluations without a fingerprint must be rerun.
+- Serialize completion and journal postflight attempts. Successful retries reuse matching sync evidence; interrupted or failed external attempts require reconciliation instead of automatic replay.
+- Recheck recorded artifact assertions against real files at completion, including after a fresh eval, so replacing verified content with a stub cannot reuse an old effect proof.
+- Reuse fingerprinted dispatch planning while rechecking authorization. Run creation binds dispatch evidence automatically; read-only inspection does not create caches. Preflight caches stay in ignored local state.
+- Emit idempotent, command-bound route/plan/dispatch checkpoint evidence from successful producers. Review, execute, and report remain evidence-backed explicit steps; legacy manual phases remain supported.
+- Preserve standalone diagnostics and manual phase commands. This candidate does not certify GPT-5/GPT-6 model performance or change the user's installed/global configuration automatically.
+
 ### Added
 
+- `verify-subagents` now validates challenge-bound parent attestations against an immutable run catalog snapshot and emits `SUBAGENT_CATALOG_OK` only when marker, cleanup, role-contract, catalog-integrity, and native stability checks pass.
+- A public Markdown and HTML subagent validation report records the 42-role runtime matrix without exposing local paths or runtime agent ids.
+- Full Capability Dispatch Report: `dispatch-report` now treats `AGENT_DISPATCH_OK` as a complete mounted-capability report, not only a subagent summary.
+- `capability-event` can record plugin/app, browser, Chrome, GitHub, security connector, MCP, skill, subagent, orchestrator, script, shell, and file-read capability use.
+- `KOS_DECISION` prompt contract: every conversation should begin with a visible KnowledgeOS routing judgment covering project state, work class, required flow, and reason.
+- `dispatch-report.md` now includes used/skipped counts by capability kind, skipped/not-needed reasons, dispatch plan evidence, evidence file paths, and gaps.
+- Codex native runtime subagents: `codex-default`, `codex-explorer`, and `codex-worker` are registered globally and in new project templates.
+- Maestro adapter-backed subagents: `maestro-*` role specs now live under `capability-layer/subagents/maestro/` and resolve to Codex `multi_agent_v1.spawn_agent` call packages.
+- `subagent-adapter` emits `SUBAGENT_ADAPTER_OK` with runtime tool, runtime agent type, role prompt, and suggested capability-event evidence.
+- `runtime-adapters` now reports registered Codex runtime subagents separately from CLI/builtin adapters.
+- `dispatch-report` now treats `timed_out`, `blocked`, and `close_failed` subagent records as runtime gaps instead of successful agent invocations.
+- HTML sidecar presentation modes: `default`, `minimal`, `bare`, and `fragment`, keeping evidence metadata mandatory while making visual layout project-selectable.
+- Decision Graph module for public, auditable decision summaries without expanding the kernel.
+- `decision-event` records plan branches, route selections, inserted steps, abandoned branches, rollbacks, deferred work, human decisions, risk tradeoffs, and final decisions into `decision-events.ndjson`, returning `DECISION_OK`.
+- `decision-query` and `verify-decisions` make decision trees queryable and command-evidence checked.
+- `render-html --kind decision-map` generates a presentation sidecar from the decision ledger while keeping NDJSON as the source of truth.
+- `.agent-os/decision-policy.yaml` lets projects choose decision-graph strictness: `warn`, `enforce`, or `off` with a downgrade reason.
+- `flow-summary` emits a readable, layered Mermaid Mission Flow with `FLOW_OK` for medium-or-larger task completion reports.
+- `render-html --kind mission-flow` generates a self-contained Mission Flow HTML sidecar.
+- `complete-task` now prepares `mission-flow.md` and returns `flow_mermaid` for medium, high, or complex tasks so agents can include a clear end-of-task flow diagram.
+- Thread Plan Ledger module for chat-window-level, append-only natural-language planning across multiple tasks and runs.
+- `thread-plan start/current/append/link-run/render` creates readable `Plan A / Plan B` and `Phase A / Phase B` planning maps, returning `THREAD_PLAN_OK`.
 - `render-html` for HTML presentation sidecars without replacing Markdown, YAML, or NDJSON as canonical evidence.
 - Composable HTML report manifests and fragments for receipt, handoff, rich-report, and stitched report outputs.
 - `.agent-os/effect-policy.yaml` for project-level capability effect verification strictness.
@@ -25,12 +84,32 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ### Fixed
 
+- Substantive subagent work is no longer treated as failed solely because a short marker-smoke wait elapsed; startup guidance now preserves agent ids, uses a multi-minute wait, performs one interrupt/recovery cycle, and reconciles late results.
+- Adapter role prompts now enforce a bounded-subagent runtime boundary so specialist agents do not restart the full KnowledgeOS lifecycle or recursively delegate unless explicitly appointed as orchestrators.
+- `dispatch-report` no longer labels safety-policy `blocked` events as runtime failures, separates resolved late-result gaps from active gaps, and reports unique agent ids separately from raw capability-event counts.
+- Catalog verification no longer allows duplicate events for one role to compensate for another missing role.
+- Catalog verification now rejects catalog drift, malformed marker evidence, missing adapter challenges, and attempts to lower the native stability floor below three; output explicitly states the parent-attested trust boundary.
+- Runtime-gap reconciliation now requires a later `completed` event of the same capability kind, id, and purpose, so failed or unrelated events cannot erase a timeout.
+- Adapter challenges are now single-use, standard runtime roles remain mandatory even if disabled before the first snapshot, snapshot metadata fails closed, and timeout recovery is one-to-one through `--recovers-event-id`.
+- Snapshot metadata now has a complete integrity hash and validated timestamp/evidence model; failed or cancelled subagents are runtime gaps, never successful invocations.
+- Prompt templates and generated startup prompts now require `AGENT_DISPATCH_PLAN`, `AGENT_DISPATCH_OK`, and full capability summaries for substantial work.
+- `dispatch-task` limits subagent candidates to a small runtime-callable set instead of flooding plans with every Maestro role.
+- `harness-audit --apply` can repair old project registries that are missing the three Codex native runtime subagents.
+- Runtime subagent smoke failures can now be closed honestly through `capability-event --kind subagent --status timed_out` plus `AGENT_DISPATCH_OK` gap reporting.
+- `dispatch-report` now reports `agents=0` with explicit skipped-agent reasons instead of making no-subagent runs look empty.
+- `thread-plan render --format html` no longer duplicates the Thread Plan heading inside the report body; the HTML shell keeps the page title and the Markdown fragment keeps the plan title.
+- `complete-task` now runs decision verification and blocks forged or structurally invalid decision evidence when project policy is enforced.
 - `artifact-assert` now rejects nonexistent `capability_event_id` links instead of allowing forged capability-to-effect evidence.
 - `verify-effects` now rejects existing effect assertions that reference missing capability events.
 - `run-task` now allocates suffixed run ids when the same task is run more than once within the same second.
 - Local Codex operator configuration can use the current `hooks` feature flag instead of the deprecated `codex_hooks` feature path.
 - `verify-lifecycle` now blocks completion when dispatch evidence or required capability-stage evidence is missing.
 - Root and template startup prompts now mention `TRACE_OK`, `CHECKPOINT_OK`, and `CAPABILITY_OK` as separate public evidence channels.
+
+### Verified
+
+- All 42 registered runtime-callable roles completed strict live role-contract validation; the three native Codex roles each completed three serial smoke rounds.
+- The prior explorer timeout was reproduced as a workload-duration issue: explorer and default both exceeded the same fixed wait on substantive review, then returned valid recoverable results.
 
 ## 0.5.0 - System Hardening And Kernel Repair
 

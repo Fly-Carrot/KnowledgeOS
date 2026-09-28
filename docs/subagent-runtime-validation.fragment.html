@@ -1,0 +1,166 @@
+<article class="kos-report-fragment" data-kos-fragment="true" data-kind="rich-report" data-source-sha256="4407ea2bf73ee5ca9a51368e864c07ead2bd35757689a9bb9ef1eb10ee9fde56">
+  <div class="kos-eyebrow">rich-report</div>
+  <h1 id="rich-report-4407ea2bf73e-subagent-runtime-validation">Subagent Runtime Validation</h1>
+<p>Date: 2026-07-11</p>
+<p>Task: KOS-T087</p>
+<p>Spec: SPEC-20260711-001</p>
+<h2 id="rich-report-4407ea2bf73e-outcome">Outcome</h2>
+<p>KnowledgeOS now has command-evidenced validation for the complete runtime-callable subagent catalog:</p>
+<ul class="kos-list">
+<li>`SUBAGENT_CATALOG_OK roles=42/42 native_min=3 invalid=0`</li>
+<li>3 native Codex roles completed three serial smoke rounds each.</li>
+<li>39 Maestro adapter roles each completed one live role-contract smoke.</li>
+<li>48 catalog invocations completed with a unique nonce, matching role id, `cleanup=completed`, and `role_contract=passed`.</li>
+<li>Three additional diagnostic invocations isolated the substantive-task timeout behavior.</li>
+<li>No active runtime gap remained after late-result reconciliation.</li>
+</ul>
+<p>This validates invocation, role-prompt loading, result delivery, and cleanup through parent-recorded runtime attestations. It is not a deep benchmark of every specialist domain or an independent host-runtime audit.</p>
+<h2 id="rich-report-4407ea2bf73e-root-cause">Root Cause</h2>
+<p>The earlier `codex-explorer` symptom was reproducible only for substantive work, not for minimal runtime smokes:</p>
+<p>1. `codex-default`, `codex-explorer`, and `codex-worker` each completed three minimal serial smokes.</p>
+<p>2. A real read-only code-review task exceeded a fixed 120-second wait on both `codex-explorer` and `codex-default`.</p>
+<p>3. The explorer returned a valid late result without intervention.</p>
+<p>4. The default agent returned valid current findings after one interrupt request.</p>
+<p>5. Both agents closed successfully.</p>
+<p>6. A later Maestro code-review run inherited parent-level lifecycle behavior and attempted nested delegation instead of directly reviewing the diff.</p>
+<p>The defect was therefore not an explorer adapter mapping failure. The operational failure combined a fixed short wait, lost recovery context, and missing boundaries between parent orchestration and bounded subagent execution.</p>
+<h2 id="rich-report-4407ea2bf73e-repair">Repair</h2>
+<h3 id="rich-report-4407ea2bf73e-strict-catalog-verifier">Strict catalog verifier</h3>
+<p>`verify-subagents` reads the registered runtime-callable catalog and the run capability ledger. A role counts only when its evidence contains:</p>
+<pre><code>SUBAGENT_SMOKE_OK id=&lt;registered-id&gt; nonce=&lt;unique-nonce&gt;
+cleanup=completed
+role_contract=passed
+adapter_challenge=&lt;challenge from subagent-adapter&gt;</code></pre>
+<p>The verifier:</p>
+<ul class="kos-list">
+<li>counts unique role ids rather than raw events;</li>
+<li>locks the target catalog in a run-level snapshot before validation;</li>
+<li>validates snapshot schema, task/run binding, UTC timestamp, evidence model, catalog hash, and full snapshot integrity;</li>
+<li>counts unique nonces for native stability;</li>
+<li>rejects unknown roles and malformed strict evidence;</li>
+<li>rejects catalog drift and challenge-free attestations;</li>
+<li>consumes each adapter challenge once, so one adapter issuance cannot prove multiple executions;</li>
+<li>enforces a native minimum floor of three rather than allowing callers to weaken it;</li>
+<li>does not count `timed_out`, `blocked`, `skipped`, or cleanup failures;</li>
+<li>emits `SUBAGENT_CATALOG_OK` only after full coverage.</li>
+</ul>
+<h3 id="rich-report-4407ea2bf73e-runtime-gap-reconciliation">Runtime-gap reconciliation</h3>
+<p>`dispatch-report` now:</p>
+<ul class="kos-list">
+<li>keeps safety-policy `blocked` events visible without calling them runtime failures;</li>
+<li>treats timeout, interruption, orphaning, errors, and close failures as runtime gaps;</li>
+<li>treats explicit `failed` or cancelled subagent events as runtime gaps rather than successful invocations;</li>
+<li>recognizes a later completed event with `recovered_from=timed_out` as a resolved gap;</li>
+<li>binds each recovery to one exact timeout with `--recovers-event-id`, preventing one completion from clearing multiple failures;</li>
+<li>reports unique agent ids separately from raw capability-event counts.</li>
+</ul>
+<h3 id="rich-report-4407ea2bf73e-host-runtime-usage-contract">Host runtime usage contract</h3>
+<p>Startup prompts and agent guidance now require:</p>
+<ul class="kos-list">
+<li>preserving every spawned agent id;</li>
+<li>one multi-minute wait for substantive work instead of repeated short polls;</li>
+<li>one interrupt requesting current findings after a timeout;</li>
+<li>one recovery wait;</li>
+<li>closing only after a terminal result;</li>
+<li>recording late completion as recovered evidence.</li>
+</ul>
+<h3 id="rich-report-4407ea2bf73e-bounded-subagent-runtime-boundary">Bounded subagent runtime boundary</h3>
+<p>Every adapter role prompt now states that a spawned specialist:</p>
+<ul class="kos-list">
+<li>works directly on the parent-assigned scope;</li>
+<li>returns findings to the parent;</li>
+<li>does not create or reopen KnowledgeOS tasks/specs;</li>
+<li>does not run completion or postflight;</li>
+<li>does not recursively dispatch another subagent unless orchestration was explicitly delegated.</li>
+</ul>
+<p>This keeps the parent Agent responsible for lifecycle and capability evidence and prevents accidental recursive delegation.</p>
+<p>KnowledgeOS still does not spawn agents from the shell. The Codex host performs delegation; KnowledgeOS resolves roles and verifies public evidence.</p>
+<p>The evidence model is explicitly `parent_attested_runtime`. `host_runtime_verified=false` means the CLI cannot independently inspect Codex&#x27;s private tool-call log. The adapter challenge, immutable run catalog snapshot, result marker, cleanup record, and role-contract record make the parent attestation auditable and resistant to accidental or stale evidence, but they are not a cryptographic host signature.</p>
+<h2 id="rich-report-4407ea2bf73e-verified-catalog">Verified Catalog</h2>
+<h3 id="rich-report-4407ea2bf73e-default-backed-1">Default-backed (1)</h3>
+<ul class="kos-list">
+<li>`codex-default`</li>
+</ul>
+<h3 id="rich-report-4407ea2bf73e-explorer-backed-17">Explorer-backed (17)</h3>
+<ul class="kos-list">
+<li>`codex-explorer`</li>
+<li>`maestro-accessibility-specialist`</li>
+<li>`maestro-api-designer`</li>
+<li>`maestro-architect`</li>
+<li>`maestro-cloud-architect`</li>
+<li>`maestro-code-reviewer`</li>
+<li>`maestro-compliance-reviewer`</li>
+<li>`maestro-content-strategist`</li>
+<li>`maestro-database-administrator`</li>
+<li>`maestro-db2-dba`</li>
+<li>`maestro-debugger`</li>
+<li>`maestro-performance-engineer`</li>
+<li>`maestro-security-engineer`</li>
+<li>`maestro-seo-specialist`</li>
+<li>`maestro-site-reliability-engineer`</li>
+<li>`maestro-solutions-architect`</li>
+<li>`maestro-zos-sysprog`</li>
+</ul>
+<h3 id="rich-report-4407ea2bf73e-worker-backed-24">Worker-backed (24)</h3>
+<ul class="kos-list">
+<li>`codex-worker`</li>
+<li>`maestro-analytics-engineer`</li>
+<li>`maestro-cobol-engineer`</li>
+<li>`maestro-coder`</li>
+<li>`maestro-copywriter`</li>
+<li>`maestro-data-engineer`</li>
+<li>`maestro-design-system-engineer`</li>
+<li>`maestro-devops-engineer`</li>
+<li>`maestro-hlasm-assembler-specialist`</li>
+<li>`maestro-i18n-specialist`</li>
+<li>`maestro-ibm-i-specialist`</li>
+<li>`maestro-integration-engineer`</li>
+<li>`maestro-ml-engineer`</li>
+<li>`maestro-mlops-engineer`</li>
+<li>`maestro-mobile-engineer`</li>
+<li>`maestro-observability-engineer`</li>
+<li>`maestro-platform-engineer`</li>
+<li>`maestro-product-manager`</li>
+<li>`maestro-prompt-engineer`</li>
+<li>`maestro-refactor`</li>
+<li>`maestro-release-manager`</li>
+<li>`maestro-technical-writer`</li>
+<li>`maestro-tester`</li>
+<li>`maestro-ux-designer`</li>
+</ul>
+<h2 id="rich-report-4407ea2bf73e-verification-commands">Verification Commands</h2>
+<pre><code>./bin/knowledgeos verify-subagents \
+  --project-root . \
+  --task-id KOS-T087 \
+  --run-id RUN-20260711-202846-KOS-T087 \
+  --native-min-successes 3
+
+python3 -B -m py_compile knowledgeos/cli.py
+python3 -B -m unittest discover -s tests -v
+./examples/scenarios/run_guardrail_scenarios.sh
+./bin/knowledgeos doctor --project-root . --summary
+git diff --check</code></pre>
+<h2 id="rich-report-4407ea2bf73e-evidence-boundary">Evidence Boundary</h2>
+<p>Canonical evidence remains in Markdown, YAML, and NDJSON. The HTML report is a presentation sidecar and is not the source of truth. Public artifacts intentionally omit local absolute paths, runtime agent ids, and credentials.</p>
+  <details class="kos-fragment-meta">
+    <summary>Source metadata</summary>
+    <dl class="kos-meta"><div><dt>Kind</dt><dd>rich-report</dd></div>
+<div><dt>Run ID</dt><dd>not run-bound</dd></div>
+<div><dt>Source</dt><dd>docs/subagent-runtime-validation.md</dd></div>
+<div><dt>Source SHA-256</dt><dd>4407ea2bf73ee5ca9a51368e864c07ead2bd35757689a9bb9ef1eb10ee9fde56</dd></div>
+<div><dt>Generated</dt><dd>2026-07-11T13:40:44.817518+00:00</dd></div></dl>
+    <p class="kos-notice">HTML is presentation, not source of truth.</p>
+    <nav class="kos-nav" aria-label="Report sections"><ul class="kos-list"><li><a href="#rich-report-4407ea2bf73e-subagent-runtime-validation">Subagent Runtime Validation</a></li>
+<li><a href="#rich-report-4407ea2bf73e-outcome">Outcome</a></li>
+<li><a href="#rich-report-4407ea2bf73e-root-cause">Root Cause</a></li>
+<li><a href="#rich-report-4407ea2bf73e-repair">Repair</a></li>
+<li><a href="#rich-report-4407ea2bf73e-strict-catalog-verifier">Strict catalog verifier</a></li>
+<li><a href="#rich-report-4407ea2bf73e-runtime-gap-reconciliation">Runtime-gap reconciliation</a></li>
+<li><a href="#rich-report-4407ea2bf73e-host-runtime-usage-contract">Host runtime usage contract</a></li>
+<li><a href="#rich-report-4407ea2bf73e-bounded-subagent-runtime-boundary">Bounded subagent runtime boundary</a></li>
+<li><a href="#rich-report-4407ea2bf73e-verified-catalog">Verified Catalog</a></li>
+<li><a href="#rich-report-4407ea2bf73e-default-backed-1">Default-backed (1)</a></li>
+<li><a href="#rich-report-4407ea2bf73e-explorer-backed-17">Explorer-backed (17)</a></li>
+<li><a href="#rich-report-4407ea2bf73e-worker-backed-24">Worker-backed (24)</a></li></ul></nav>
+  </details>
+</article>

@@ -111,22 +111,82 @@ An orchestrator and a subagent are related but not identical:
 
 KnowledgeOS can register an external orchestrator adapter without copying its runtime into the project. Optional external adapters can remain visible in the registry, but they should not be treated as active subagent catalogs unless their individual agents are discoverable and registered.
 
-The active local specialist-agent catalog is currently **Maestro Orchestrate** (`josstei/maestro-orchestrate`). It exposes 39 specialist agents and a Codex MCP server. Locally, Codex already has `mcp_servers.maestro` configured; KnowledgeOS registers that interface as `maestro-mcp` and registers each specialist as a `maestro-*` `subagent` entry.
+KnowledgeOS now exposes two runtime-backed subagent families:
 
-Maestro's Codex runtime resolves agent methodology through MCP:
+- `codex-default`, `codex-explorer`, and `codex-worker`: native Codex runtime subagents backed by `multi_agent_v1.spawn_agent`;
+- `maestro-*`: Maestro role templates adapted onto the same Codex runtime instead of depending on a live Maestro MCP process.
+
+The active local specialist-agent catalog is represented under `capability-layer/subagents/maestro/`. It contains 39 role specs such as `maestro-architect`, `maestro-coder`, `maestro-security-engineer`, `maestro-code-reviewer`, and `maestro-tester`.
+
+The boundary is explicit:
 
 ```text
-maestro-mcp
--> get_runtime_context
--> get_agent(["architect", "coder", "security-engineer", ...])
--> spawn_agent(...) when delegation is useful
+dispatch-task
+-> subagent-adapter
+-> Codex runtime spawn_agent
+-> capability-event --kind subagent
+-> dispatch-report
 ```
 
-That means the MCP server retrieves the agent methodology and runtime context; the actual subagent execution still goes through Codex delegation (`spawn_agent`) or the host runtime's equivalent. KnowledgeOS records both surfaces:
+KnowledgeOS does not spawn subagents from the shell. It registers intent, resolves the runtime call package, requires public evidence, and verifies the report. The host Codex runtime performs actual delegation.
+
+KnowledgeOS records these surfaces:
 
 - `maestro`: active orchestrator layer;
-- `maestro-mcp`: MCP interface for runtime context, skill content, plan validation, and agent methodology;
-- `maestro-*`: 39 visible specialist subagent entries, including `maestro-architect`, `maestro-coder`, `maestro-security-engineer`, `maestro-code-reviewer`, and `maestro-tester`.
+- `maestro-mcp`: optional MCP interface for runtime context, skill content, plan validation, and agent methodology;
+- `codex-*`: three native Codex runtime subagents;
+- `maestro-*`: 39 adapter-backed specialist subagent entries.
+
+`dispatch-task` limits subagent recommendations to a small candidate set, usually at most three. This avoids noisy plans that list every specialist role.
+
+Use `subagent-adapter` to resolve the callable package:
+
+```bash
+./bin/knowledgeos subagent-adapter \
+  --project-root /path/to/project \
+  --id maestro-architect \
+  --task-id T001 \
+  --run-id RUN-... \
+  --purpose "Review architecture risks before implementation."
+```
+
+The command emits `SUBAGENT_ADAPTER_OK` with `runtime_tool`, `runtime_agent_type`, role prompt, and a suggested `capability-event`. It is still read-only with respect to actual agent execution.
+
+Keep the agent id returned by `spawn_agent`. A short marker smoke and a substantive review have different latency profiles: use one multi-minute wait for real work rather than repeated short polls. If the wait expires, request current findings once, wait once more, and close only after a terminal result. When a late result arrives, append a completed event with `recovered_from=timed_out`; `dispatch-report` then separates resolved history from active runtime gaps.
+
+Adapter role prompts also carry a subagent runtime boundary. A bounded specialist works directly on the parent-assigned scope and returns findings; it does not restart the project lifecycle or recursively dispatch another agent unless the parent explicitly delegated orchestration. This prevents parent-level KnowledgeOS rules from creating an accidental delegation tree inside every specialist call.
+
+If the host runtime accepts a subagent but the agent later times out, blocks, or cannot be closed cleanly, record that truth directly:
+
+```bash
+./bin/knowledgeos capability-event \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --kind subagent \
+  --id codex-explorer \
+  --status timed_out \
+  --purpose "Runtime smoke did not return before timeout." \
+  --evidence "spawn_agent returned an id; wait_agent timed out"
+```
+
+`dispatch-report` will surface that as a runtime gap instead of counting it as a successful agent.
+
+For an explicit whole-catalog validation, strict evidence can be checked without trusting raw event counts:
+
+```bash
+./bin/knowledgeos verify-subagents \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --native-min-successes 3
+```
+
+The command emits `SUBAGENT_CATALOG_OK` only when every role in the run-level catalog snapshot has a unique successful nonce with `cleanup=completed`, `role_contract=passed`, and a matching adapter challenge. Repeated evidence for one role cannot compensate for another missing role, catalog drift fails verification, and the native stability floor cannot be lowered below three.
+
+Each adapter challenge is single-use. This is a parent-attested runtime proof: KnowledgeOS does not have direct access to the Codex host's private tool-call log, so output also reports `host_runtime_verified: false` instead of claiming an independent host signature.
+
+When a late completion resolves a timeout, record the exact timeout capability-event id with `capability-event --recovers-event-id <CAP-...>`. Recovery is one-to-one; matching text alone cannot clear a runtime gap.
 
 ComposioHQ Agent Orchestrator remains an optional external worktree/PR orchestration adapter. It is not the active source of the 39 specialist agents.
 
@@ -177,6 +237,9 @@ This is intentionally a product feature: KnowledgeOS should make agents more tho
 Capability orchestration tests verify that:
 
 - `dispatch-task` returns a dispatch-ready plan for `KOS-T009`;
+- Codex native subagents and Maestro adapter-backed subagents are visible in new project templates;
+- `subagent-adapter` resolves `maestro-architect` into a Codex runtime call package;
+- dispatch limits subagent candidates instead of flooding plans with every Maestro role;
 - Branch Builder is prioritized before orchestration;
 - orchestration appears before lower-level capability use;
 - consultation checkpoints include execution and completion;

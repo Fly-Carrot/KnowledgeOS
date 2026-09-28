@@ -64,7 +64,8 @@ Checks include:
 - write-policy coverage;
 - capability guardrails;
 - workflow route coverage;
-- lifecycle consistency for `run-task -> context-pack -> plan-task -> phase-task -> eval-task -> verify-context -> verify-lifecycle -> verify-effects -> complete-task`.
+- lifecycle consistency for `run-task -> context-pack -> plan-task -> phase-task -> eval-task -> verify-context -> verify-lifecycle -> verify-effects -> complete-task`;
+- decision policy validation when `.agent-os/decision-policy.yaml` is present.
 
 ### `init-project`
 
@@ -147,6 +148,48 @@ Align the active or selected spec with the current task before execution.
 ```
 
 The command writes `alignment.md` and returns `aligned` or `needs_review`. Agents should stop for human triage when alignment needs review.
+
+### `thread-plan`
+
+Manage a chat-level, append-only natural-language plan. Use this when a conversation starts a durable plan/spec or when later rounds should build on an earlier planning path.
+
+```bash
+./bin/knowledgeos thread-plan start \
+  --project-root /path/to/project \
+  --title "长期维护鸟类声景基金申请计划" \
+  --spec-id SPEC-...
+```
+
+Append progress, branch, phase, decision, change, or summary notes:
+
+```bash
+./bin/knowledgeos thread-plan append \
+  --project-root /path/to/project \
+  --thread-id THREAD-... \
+  --kind phase \
+  --text "Phase A：把聊天级计划记录清楚；Phase B：再把多个任务串起来。"
+```
+
+Link a run back to the long-lived conversation:
+
+```bash
+./bin/knowledgeos thread-plan link-run \
+  --project-root /path/to/project \
+  --thread-id THREAD-... \
+  --task-id T001 \
+  --run-id RUN-...
+```
+
+Render the plan as Markdown, Mermaid, or HTML:
+
+```bash
+./bin/knowledgeos thread-plan render \
+  --project-root /path/to/project \
+  --thread-id THREAD-... \
+  --format html
+```
+
+Successful output begins with `THREAD_PLAN_OK`. This module does not gate completion. It is a readable planning map across a chat window, while `plan-task` remains the run-level execution plan.
 
 ### `check-write`
 
@@ -321,7 +364,7 @@ Record an observable capability call without executing it.
   --purpose "Coordinate specialist review before execution."
 ```
 
-Allowed kinds are `mcp`, `skill`, `subagent`, `orchestrator`, `script`, `shell`, and `file_read`.
+Allowed kinds are `app`, `browser`, `chrome`, `file_read`, `github`, `mcp`, `plugin`, `script`, `security`, `shell`, `skill`, `subagent`, and `orchestrator`.
 
 The command writes `.agent-os/runs/<RUN_ID>/capability-events.ndjson` and matching command evidence. Successful plain-text output begins with:
 
@@ -330,6 +373,42 @@ CAPABILITY_OK kind=<kind> id=<capability-id> purpose=<short purpose>
 ```
 
 JSON output also includes a stable `capability_event_id`. Use that id when an effect assertion proves the real side effect produced by the capability. If `artifact-assert` is called with `--capability-event-id`, the id must already exist in the run's `capability-events.ndjson`; bogus links are rejected.
+
+### `decision-event`
+
+Record a public Decision Graph event when a plan branches, a route is selected, a step is inserted, or a branch is abandoned, rolled back, superseded, deferred, or finalized.
+
+```bash
+./bin/knowledgeos decision-event \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --kind branch_selected \
+  --status selected \
+  --title "Use targeted rerun" \
+  --summary "Select the smaller validation path." \
+  --reason "It proves the changed artifact without repeating expensive work." \
+  --evidence "plan review"
+```
+
+The command writes `.agent-os/runs/<RUN_ID>/decision-events.ndjson` and matching command evidence. Plain-text output begins with:
+
+```text
+DECISION_OK kind=<kind> status=<status> title=<short title>
+```
+
+Use `decision-event` for public decision summaries, not hidden chain-of-thought. Ordinary linear progress should stay in `trace-step`.
+
+### `decision-query`
+
+Query Decision Graph events by run, task, kind, status, or parent id.
+
+```bash
+./bin/knowledgeos decision-query \
+  --project-root /path/to/project \
+  --run-id RUN-... \
+  --parent-id DEC-...
+```
 
 ### `artifact-assert`
 
@@ -365,6 +444,49 @@ Failed assertions return non-zero and do not write a passing effect record. Asse
   --task-id T001 \
   --run-id RUN-...
 ```
+
+Successful dispatch output includes `AGENT_DISPATCH_PLAN`. The dispatch summary now reports declared agents and runtime-callable agents separately, so a plan can distinguish "registered" from "actually callable through Codex runtime".
+
+### `subagent-adapter`
+
+Resolve a registered subagent into a Codex runtime call package.
+
+```bash
+./bin/knowledgeos subagent-adapter \
+  --project-root /path/to/project \
+  --id maestro-architect \
+  --task-id T001 \
+  --run-id RUN-... \
+  --purpose "Review architecture risks."
+```
+
+The command emits:
+
+```text
+SUBAGENT_ADAPTER_OK id=maestro-architect runtime_agent_type=explorer
+```
+
+It returns `runtime_tool: multi_agent_v1.spawn_agent`, the runtime agent type, the role prompt, and a suggested `capability-event`. It does not execute the subagent itself; actual delegation belongs to the host Codex runtime. After delegation, record the real use with `capability-event --kind subagent`.
+
+### `verify-subagents`
+
+Verify that strict, challenge-bound parent attestations cover the immutable run catalog instead of trusting current registry entries or raw event counts.
+
+```bash
+./bin/knowledgeos verify-subagents \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-... \
+  --native-min-successes 3
+```
+
+A successful run emits:
+
+```text
+SUBAGENT_CATALOG_OK roles=42/42 native_min=3 invalid=0
+```
+
+Each covered role needs a unique smoke nonce, matching registered role id, `cleanup=completed`, `role_contract=passed`, and a single-use challenge returned by `subagent-adapter`. Duplicate events cannot replace a missing role, the standard native/Maestro catalog cannot be removed before snapshot, catalog drift is rejected, and native Codex roles cannot use a minimum below three. The result reports `evidence_model: parent_attested_runtime` and `host_runtime_verified: false` because the CLI cannot independently inspect Codex host tool logs.
 
 ### `verify-lifecycle`
 
@@ -404,9 +526,74 @@ EFFECT_VERIFY_OK status=<passed|warning|failed|disabled> strictness=<level> asse
 
 JSON output includes `effect_verify_marker: EFFECT_VERIFY_OK` and the full `marker` string. Agents must relay this marker before claiming effect verification success.
 
+### `verify-decisions`
+
+Verify that Decision Graph evidence is command-generated and structurally valid.
+
+```bash
+./bin/knowledgeos verify-decisions \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-...
+```
+
+The project policy lives in `.agent-os/decision-policy.yaml`. `strictness: warn` is the default and does not block linear work with no decision events. `strictness: enforce` blocks completion when decision evidence is missing, forged, orphaned, or invalid. `strictness: off` requires a `downgrade_reason`.
+
+Plain output includes:
+
+```text
+DECISION_VERIFY_OK status=<passed|warning|failed|disabled> strictness=<level> decisions=<n> warnings=<n> errors=<n>
+```
+
+### `render-html --kind decision-map`
+
+Render `.agent-os/runs/<RUN_ID>/decision-events.ndjson` into a human-readable static decision map.
+
+```bash
+./bin/knowledgeos render-html \
+  --project-root /path/to/project \
+  --run-id RUN-... \
+  --kind decision-map
+```
+
+The HTML includes source path, source SHA-256, run id, generated time, and the notice `HTML is presentation, not source of truth.`
+
+### `flow-summary`
+
+Print a friendly, layered Mermaid mission flow for a run. This is designed for human end-of-task reporting, not machine enforcement.
+
+```bash
+./bin/knowledgeos flow-summary \
+  --project-root /path/to/project \
+  --run-id RUN-...
+```
+
+Plain output begins with:
+
+```text
+FLOW_OK run=<run-id> stages=<n> synced=<yes|no>
+```
+
+The diagram uses simple labels: `Goal`, `Health Check`, `Task & Plan`, `Safe Writes`, `Work Done`, `Tools Used`, `Proof`, `Decisions`, and `Finish`. It intentionally avoids exposing internal jargon as the main user-facing surface.
+
+For medium, high, or complex tasks, `complete-task` also writes `.agent-os/runs/<RUN_ID>/mission-flow.md` and returns `flow_marker`, `flow_summary_marker`, and `flow_mermaid` so the agent can include the readable flow in its final answer.
+
+### `render-html --kind mission-flow`
+
+Render `.agent-os/runs/<RUN_ID>/mission-flow.md` into a self-contained HTML sidecar with colored cards and source metadata.
+
+```bash
+./bin/knowledgeos render-html \
+  --project-root /path/to/project \
+  --run-id RUN-... \
+  --kind mission-flow
+```
+
+The HTML is presentation only. Markdown, YAML, and NDJSON remain the source of truth.
+
 ### `complete-task`
 
-Close a task only after `eval-task` passed, declared outputs exist, context verification passes, lifecycle verification passes, effect verification passes or explicitly downgrades, and required postflight succeeds or records an explicit pending reason.
+Close a task only after `eval-task` passed, declared outputs exist, context verification passes, lifecycle verification passes, effect verification passes or explicitly downgrades, decision verification passes or warns according to policy, and required postflight succeeds or records an explicit pending reason.
 
 ```bash
 ./bin/knowledgeos complete-task \
@@ -418,9 +605,44 @@ Close a task only after `eval-task` passed, declared outputs exist, context veri
 
 Manual `Status: passed` text is not enough unless an explicit override is used.
 
-Before postflight, `complete-task` runs `verify-effects`. It blocks on failed effect verification and records effect status, the `EFFECT_VERIFY_OK` marker, warnings, or explicit strictness downgrades in the receipt.
+Before postflight, `complete-task` runs `verify-effects` and `verify-decisions`. It blocks on failed verification and records status, visible markers, warnings, or explicit strictness downgrades in the receipt.
+
+For medium, high, or complex tasks, `complete-task` also prepares a readable Mission Flow summary and returns `FLOW_OK` fields. Agents should include that Mermaid flow in the final user-facing answer unless the user explicitly asks for a terse response.
+
+`complete-task` also writes a dispatch report from the recorded `capability-event` ledger and returns `AGENT_DISPATCH_OK` fields. This makes all mounted capabilities visible in the final response without trusting hidden runtime claims, including agents invoked or skipped, MCP, skills, plugins/apps, browser/Chrome/GitHub/security connectors, scripts, shell, and file reads.
 
 If `.agent-os/fabric-link.yaml` sets `postflight_required: true`, `complete-task` runs the configured shared-fabric `after-task.sh` and only reports `sync_status: SYNC_OK` when the hook emits `[SYNC_OK]`. Use `--allow-pending-postflight "<reason>"` only as an explicit, receipt-recorded escape hatch.
+
+### `dispatch-report`
+
+Summarize actual capability events recorded for a run:
+
+```bash
+./bin/knowledgeos dispatch-report \
+  --project-root /path/to/project \
+  --task-id T001 \
+  --run-id RUN-...
+```
+
+The command writes:
+
+```text
+.agent-os/runs/<RUN_ID>/dispatch-report.md
+```
+
+It emits `AGENT_DISPATCH_OK agents=<n> capabilities=<n> run=<RUN_ID>`.
+
+The generated report is a **Full Capability Dispatch Report**. It includes:
+
+- used and skipped counts by capability kind;
+- agents invoked and agents skipped;
+- MCP, skills, plugins/apps, browser/Chrome/GitHub/security connectors, scripts, shell, and file reads;
+- skipped/not-needed reasons;
+- dispatch plan evidence;
+- capability and command ledger paths;
+- gaps, such as required stages without a capability event or skip reason.
+
+Use `dispatch-task` for the planned route (`AGENT_DISPATCH_PLAN`) and `dispatch-report` for what was actually registered through `capability-event`.
 
 ### `render-html`
 
@@ -441,10 +663,38 @@ Render canonical Markdown evidence into static, composable HTML sidecars for hum
   --project-root /path/to/project \
   --input reports/drafts/x.md \
   --kind rich-report \
-  --output reports/drafts/x.html
+  --output reports/drafts/x.html \
+  --presentation minimal
+
+./bin/knowledgeos render-html \
+  --project-root /path/to/project \
+  --run-id RUN-... \
+  --kind decision-map
+
+./bin/knowledgeos render-html \
+  --project-root /path/to/project \
+  --run-id RUN-... \
+  --kind mission-flow
 ```
 
 HTML is presentation only. Markdown, YAML, and NDJSON remain the source of truth. Generated pages include source path, source SHA-256, generated time, run id when available, and the notice `HTML is presentation, not source of truth.`
+
+The OS only enforces the evidence metadata contract. It does not require a single visual layout. Presentation modes:
+
+- `default`: the original KnowledgeOS card layout with hero, panel, and colored report shell;
+- `minimal`: readable document body with evidence metadata footer, without hero/sidebar layout;
+- `bare`: very small HTML shell and metadata footer for project-owned styling;
+- `fragment`: reusable fragment plus manifest only, without writing a full document shell.
+
+Projects may set an optional default:
+
+```yaml
+reporting:
+  html_sidecars: true
+  html_source_of_truth: false
+  html_presentation_default: minimal
+  html_required_metadata: true
+```
 
 Each render writes:
 
@@ -453,6 +703,8 @@ Each render writes:
 <output>.fragment.html
 <output>.manifest.json
 ```
+
+When `--presentation fragment` is used, only `<output>.fragment.html` and `<output>.manifest.json` are written. The manifest records an empty `output` field because no full HTML document was generated.
 
 Use the fragment and manifest for composition:
 

@@ -2,6 +2,260 @@
 
 This file is the real-time construction log for the local KnowledgeOS build.
 
+## 2026-09-28 - Lean Batch 3 Candidate Qualification
+
+The user selected candidate publication first and explicitly deferred the
+exact-model matrix. See the [Batch 3 Spec](specs/lean-batch3.md) and
+[validation report](reports/lean-batch3-validation.md). No main merge, stable
+tag, dirty installed-kernel replacement or bulk live-project migration.
+
+A clean export exposed ten missing maintainer-only artifacts in the local
+smoke target. A separate `release-smoke` now initializes real disposable state,
+without suppressing doctor failures or fabricating historical outputs. A
+read-only review also found valid legacy interleaved checkpoints were falsely
+rejected by the new static ordering check. Both defects reproduced before
+repair; targeted regressions passed and the full clean-export suite is recorded
+in the linked report. No exact-model compatibility claim is made.
+
+The final repaired clean-export run passed **214 tests** and **30 guardrail
+scenarios**, with a fresh project doctor at **401/401**. Two old doctor tests
+were repaired to initialize independent fixtures instead of borrowing private
+developer history; their summary assertions and real relative-path checks
+remain intact. The installed checkout stayed unchanged. Publication excludes
+the newly generated local ledgers and uses the existing draft candidate PR.
+
+## 2026-09-28 - Launcher Repair And Lean Batch 2
+
+Scope: [Batch 2 Spec](specs/lean-batch2.md). Continue in the isolated candidate,
+preserve Batch 1 changes and the independently dirty installed checkout. No
+main merge, GitHub push, model certification, or bulk project migration.
+
+### Reproduction And Changes
+
+- The deferred launcher defect reproduced with a temporary shadow package:
+  the absolute CLI printed the shadow marker. Root-pinned `runpy` now selects
+  its own package without changing the caller's directory. Both regression
+  tests and all 13 Batch 1 tests passed before starting the next step.
+- Startup/project entry surfaces duplicated approximately 8,800 characters of
+  detailed instructions. Failing tests established the new short-entry budget
+  and shared-source requirement. Generated entries now load `agent-guide`
+  instead of duplicating the full lifecycle. This measures entry size, not a
+  guarantee of total token savings after on-demand guidance is loaded.
+- A workflow-router change did not affect the guidance fingerprint. A failing
+  regression now passes after adding the actual router path to config inputs.
+- Independent read-only review identified legacy-client fallback, side effects
+  in otherwise simple tasks, custom delegation authority and safe rollback as
+  critical boundaries. Entries explicitly retain these; custom authorization
+  belongs outside the generated product block.
+- Checkpoint reporting remains explicit. Grouping adjacent markers reduces
+  repetitive text without removing warning, failure, pending or skip details.
+
+### Verification And Local Activation
+
+- `make smoke`: **210 tests passed**, **30 guardrail scenarios passed**, with
+  doctor, route, registry, dispatch and write-guard smoke checks.
+- Targeted launcher plus Batch 1 regressions: **15 passed**; guidance checks:
+  **17 passed**; pilot suite: **3 passed**, including four project-type/mode
+  combinations, active-run preservation and rollback, and failed-load refusal.
+- Candidate doctor: **1,564 passed, 0 failed** at verification time. Installed
+  doctor after launcher activation: **1,213 passed, 0 failed**. Syntax and
+  whitespace checks passed.
+- The local Codex global entry was actually activated with a reviewed backup,
+  exact target hashes, dry-run, interrupted-install/idempotency rehearsal,
+  byte-exact rollback rehearsal and refusal to overwrite later user edits.
+  Its size changed from **5,444 to 4,461 bytes**; personal communication rules
+  and the standing delegation authorization were preserved verbatim.
+- Only the installed launcher and global entry were deployed. All other
+  tracked installed files matched the captured pre-migration hashes. The
+  installed legacy `agent-guide` output was byte-identical before and after.
+  The temporary two-target external-write permission was then removed.
+- Existing chats were not restarted and no task/run/Spec binding was migrated.
+  The current chat received the refreshed entry, but other clients may load it
+  only on their next context refresh or startup. This is not an all-chat or
+  exact-model qualification claim; the project pilot is deterministic.
+- Public changes remain local on the isolated candidate branch. Backups,
+  private hashes and migration receipts remain ignored local state, not public
+  release artifacts. GitHub publication and broader rollout remain Batch 3.
+
+## 2026-09-28 - Lean Batch 1: Compatibility Before Rollout
+
+Status: isolated implementation candidate on `codex/lean-batch1`; no installed
+CLI, global instructions, or live projects switched. See the
+[Batch 1 Spec](specs/lean-batch1.md) for scope and recovery boundaries.
+
+### Reproduction And Repair
+
+| Defect | Reproduction | Minimal repair |
+| --- | --- | --- |
+| Valid short routes rejected or expanded | Initialize a temporary project; remove redundant explicit dispatch/verifier hints under a short contract; run doctor and router repair | Shared version-aware validator; keep legacy defaults and preserve valid short routes byte-for-byte |
+| Invalid/unknown contracts silently normalized | Remove a required short-route step or declare an unknown contract, then request repair | Explicit review action and route refusal, without rewriting that router |
+| Unchanged dispatch hides an old skip decision | Start with a command-backed manual skip and legacy dispatch evidence, then repeat the same dispatch | Preserve matching manual decisions; changed dispatch inputs still invalidate reuse |
+| Interrupted dispatch cannot recover its checkpoint | Inject a failure between command evidence and checkpoint append, then repeat dispatch | Reuse successful command evidence while restoring its missing checkpoint |
+| Cached failed dispatch is treated as successful | Record a failed command attempt, then reuse the same computed plan | Require matching successful command data before reuse |
+| Legacy sync can replay an external action | Keep prior postflight evidence but no attempt journal, reevaluate and complete | Refuse ambiguous replay; allow explicit pending with reason while retaining old evidence |
+
+The targeted failing tests were run before the corresponding fixes. The legacy
+skip test also reproduced the failure against the baseline dispatch function.
+Recovery tests use real temporary projects and shell-hook counters, not real
+user outputs or remote services. A previous reuse-only unit fixture now includes
+a successful command schema and tests checkpoint recovery separately, rather
+than assuming an incomplete record proves completion.
+
+The first repository smoke caught a compatibility regression in the new
+validator: legacy preflight dispatch was incorrectly required to have a run id.
+A failing test now distinguishes preflight inspection from run-bound evidence;
+the validator was corrected without modifying the existing project router.
+
+One bounded, read-only runtime subagent reviewed active-run compatibility and
+returned concrete findings. Its terminal result and cleanup were observed. This
+does not claim native-role or cross-model runtime qualification.
+
+### Verification
+
+- Batch 1 targeted compatibility suite: **13 passed**.
+- `make smoke`: **passed**, including all **202 unit tests**, **30 guardrail
+  scenarios**, doctor, route, registry, dispatch, and write-guard smoke checks.
+- Candidate repository doctor: **1,529 passed, 0 failed** at regression time.
+  Consolidating duplicated router checks changes the check count, not the
+  number of required lifecycle phases.
+- Original workspace using the installed CLI from its original working
+  directory: **1,213 passed, 0 failed**; no installed files were edited.
+- `python3 -B -m py_compile knowledgeos/cli.py` and `git diff --check`: passed.
+- Public changed-source/document scans found no added local home paths or
+  credential-pattern matches. Private run/spec/thread ledgers are not release
+  artifacts. No GitHub publication was performed.
+
+### Known Boundary Before Rollout
+
+A separate launcher defect was reproduced during cross-directory validation:
+an absolute `bin/knowledgeos` invocation from a directory containing another
+`knowledgeos` Python package can load that directory's package because `python
+-m` searches the working directory before `PYTHONPATH`. A disposable shadow
+package reproduced this without touching user data. Do not interpret an
+absolute launcher path alone as proof of which checkout executed.
+
+The current task's route rejects writes to `bin/knowledgeos`; that guard was
+respected. The launcher was not changed or silently worked around in product
+code. Candidate tests ran from the candidate checkout; installed validation ran
+from the original workspace. Fix and test launcher-root pinning under an
+appropriately scoped task **before global rollout**. Batch 1's bounded lifecycle
+work is validated, not a claim that every pre-existing system defect is fixed.
+Local postflight success does not imply global rollout or GitHub synchronization.
+
+## 2026-09-15 - Correctness And Lean Orchestration Candidate
+
+Status: integration candidate; see final verification below before rollout.
+
+Scope: implement the accepted [model-neutral specification](specs/correctness-lean-v1.md) on an isolated branch based on published commit `4867612`. Existing installed code, uncommitted work, and global prompts are not overwritten.
+
+### Reproduced Defects
+
+- Task/Spec alignment wrote an alignment record while context still selected the project active Spec. Regression fixtures use two tasks/Specs and deliberately move unrelated active pointers. The repair stores explicit task binding and frozen run provenance; real Spec drift requires explicit re-alignment and a new plan.
+- Runtime callability was inferred from registry metadata, and consultation instructions could disagree with standing authorization. Regressions distinguish missing/expired host snapshots, generic spawn schemas, revoked/scoped grants, and unavailable stock Maestro. Runtime facts must come from current host evidence, not role names.
+- Completion accepted an eval after an output or effective policy changed. Both temporary-project cases failed before repair; evaluation now fingerprints its inputs and completion checks freshness.
+- Repeated completion repeated a successful hook; a failed hook could also be replayed after already producing a side effect. Both cases were reproduced using a real shell hook appending to a counter. Durable attempt records plus a completion lock prevent automatic replay.
+- A previously recorded effect assertion remained valid after the artifact was replaced with a stub and reevaluated. The new regression failed before repair; final effect verification now reruns the original assertion against the actual file without recording a fake tool invocation.
+- Re-aligning a changed Spec and rebuilding its plan could still reuse the old eval. A failing integration regression led to including frozen run Spec provenance in the evaluation fingerprint as well as artifact/policy hashes.
+- Prompt surfaces were maintained separately. A shared versioned generator now emits compact/guided views with identical safety rules and preserves content outside its managed block.
+- Integration exposed two further gaps: the short flow initially lacked automatic run-bound dispatch evidence, and legacy templates omitted the stock Maestro source field. Both were reproduced and repaired rather than asking the agent to compensate with extra commands.
+
+### Implemented Interface Changes
+
+- `align-spec --task-id ... --spec-id ... [--run-id ...]` now persists explicit binding. `--spec-id none` is an explicit choice subject to project policy. Context and write guards reject drift in a relevant unfinished run.
+- `dispatch-task`, `run-task`, and adapter inspection accept explicit host snapshot arguments: `--host-snapshot`, `--host-id`, `--host-session-id`, `--host-snapshot-sha256`, and `--host-attestation-evidence`. CLI file imports are **parent-attested observations**, not authorization credentials. Embedding hosts may supply scoped grants through the in-process bridge; no authenticated Codex bridge is automatically installed by this patch.
+- Dispatch reports distinguish registered, adapter-resolvable, host-available, and execution-verified states. Generic spawn uses prompt-based roles and only the observed schema. Invocation counts use actual invocation ids, not the number of running/completed ledger rows.
+- Preflight planning is cached under `.knowledgeos-local/dispatch-preflight/`; run plans are in the ignored run envelope. Fingerprints cover task, bound Spec, policy, registry, route, and host evidence. Reuse never reuses an authorization permit or skips write checks.
+- Successful `run-task`, `plan-task`, and run-bound dispatch emit producer-linked checkpoints. The normal path can omit a second dispatch and standalone verification calls. Review/execute/report and actual capability/effect evidence remain explicit; `complete-task` still performs final checks.
+- `project.guidance_mode` selects `guided` (default) or `compact`. Both are generated from `knowledgeos/guidance.py` with identical safety rules. No model-name heuristic changes strictness.
+
+### Validation And Migration Notes
+
+- Tests create isolated projects and runtimes; no real project outputs are reset or reconstructed.
+- Existing effect/decision/strictness tests now evaluate after changing policy so they continue testing their specific gate. Separate regressions explicitly verify that policy changes invalidate the prior eval. Safety assertions were not removed.
+- A legacy eval without `input_fingerprint` needs a fresh `eval-task`; history is not rewritten to invent this evidence.
+- An interrupted completion can leave `completion.lock`; a failed/ambiguous hook leaves `postflight-attempt.json`. Inspect the process and real external side effect before recovery. Do not blindly delete the journal and replay. An explicit pending reason remains non-successful sync, never `SYNC_OK`.
+- Filesystem ledgers and host attestations provide auditable evidence, not a security boundary against a process that can rewrite both the evidence and its verifier.
+- Model/runtime qualification remains **untested** until the per-model matrix in the Spec is run. Unit tests and coding subagents are not substitutes for that matrix; default guidance remains guided.
+
+### Release Boundary
+
+This is a candidate on `codex/correctness-lean-v1`, based on the existing published development branch, not an automatic main-branch merge or installation upgrade. No new stable version tag is issued before model/host qualification. The host-snapshot import is available for explicit client integration, while clients without current host evidence continue to report unknown. It does not manufacture runtime tools or grant permissions from JSON.
+
+Validation includes new-project guardrail scenarios, old-project audit/repair on an isolated baseline copy with an unchanged data fixture, real shell-hook replay tests, and a parent-observed current generic-spawn schema import. Browser repository navigation timed out; repository baseline verification used the GitHub connector rather than claiming browser success.
+
+### Final Code Validation
+
+- `python3 -B -m unittest discover -s tests -v`: **189 passed** after the final integration fixes.
+- `python3 -B -m py_compile knowledgeos/cli.py knowledgeos/guidance.py`: passed.
+- `examples/scenarios/run_guardrail_scenarios.sh`: **30 passed, 0 failed**.
+- Repository doctor: **1,688 passed, 0 failed**. Historical local evidence needed by this repository's doctor was preserved locally, not published as fabricated placeholders.
+- Isolated legacy-project doctor after audited repair: **383 passed, 0 failed**; existing data fixture remained byte-identical.
+- `make smoke` passed during integration; the final standalone test/scenario/doctor commands above revalidated the later integration fixes.
+- Staged diff whitespace and added-line private-path/credential-pattern scans passed. Only public source, tests, templates, Spec, and changelog/report files are selected; local ledgers, host snapshots, caches, and installed-tree changes are excluded.
+- Remaining qualification: authenticated host-client integration, interrupted OS/filesystem fault recovery beyond the tested lock/journal cases, and the full exact-model benchmark matrix. No claim of universal GPT-5 compatibility or freedom from all bugs.
+
+## 2026-07-11 - Milestone Update: Verified Subagent Runtime Catalog
+
+Status: implemented and live-validated in KOS-T087
+
+Problem:
+
+- Minimal adapter checks could not prove that every registered role actually ran.
+- Repeated capability events could inflate visible agent counts without proving unique catalog coverage.
+- A fixed 120-second wait made substantive explorer work look failed even when a valid result arrived later.
+- Safety-policy `blocked` events were mixed with timeout and cleanup failures under `runtime_gaps`.
+
+Changes:
+
+- Added `verify-subagents` with immutable catalog snapshots, adapter challenges, unique-role/nonces, cleanup, role-contract, and native stability checks.
+- Added timeout recovery guidance to startup prompts and agent documentation.
+- Added a bounded-subagent role-prompt contract that prevents accidental recursive lifecycle and delegation inside specialist calls.
+- Added resolved runtime-gap reconciliation to `dispatch-report`.
+- Added single-use adapter challenges, mandatory standard-catalog baselines, fail-closed snapshot metadata, and one-to-one timeout recovery event links.
+- Added complete snapshot-integrity validation and explicit failed/cancelled runtime-gap classification.
+- Changed dispatch agent counts to unique agent ids while retaining raw event counts separately.
+- Added `docs/subagent-runtime-validation.md` and its composable HTML sidecar.
+
+Verification:
+
+- `SUBAGENT_CATALOG_OK roles=42/42 native_min=3 invalid=0`.
+- Three native Codex roles completed three serial smoke rounds each.
+- All 39 Maestro adapter roles completed one live role-contract smoke each.
+- Forty-eight catalog invocations completed with strict evidence; three additional diagnostic invocations isolated timeout behavior.
+- The substantive explorer review eventually completed and closed; a default control also exceeded 120 seconds and recovered after one interrupt, proving the issue was not explorer-specific.
+- A frozen-diff Maestro reviewer reproduced the recursive-dispatch trigger, confirming that parent-level lifecycle rules needed an explicit subagent boundary.
+- Active runtime gaps after reconciliation: zero.
+- The verifier explicitly reports `evidence_model=parent_attested_runtime` and `host_runtime_verified=false`; it does not overclaim independent access to Codex host tool logs.
+
+## 2026-07-08 - Milestone Update: Runtime Subagents And Maestro Adapter
+
+Status: implemented in current branch
+
+Problem:
+
+- `dispatch-task` could recommend Maestro specialist roles, but those roles were mostly registry declarations rather than runtime-callable adapter packages.
+- New project templates did not expose the three basic Codex runtime subagents.
+- Old projects could keep stale registries with no `codex-default`, `codex-explorer`, or `codex-worker`.
+- Large Maestro catalogs could make dispatch plans noisy by listing too many candidates.
+
+Changes:
+
+- Added global and template registry entries for `codex-default`, `codex-explorer`, and `codex-worker`.
+- Converted visible `maestro-*` subagents into adapter-backed entries with `runtime_tool: multi_agent_v1.spawn_agent`.
+- Added `capability-layer/subagents/maestro/` role specs and manifest.
+- Added `subagent-adapter`, which emits `SUBAGENT_ADAPTER_OK` and returns the runtime call package without spawning from the shell.
+- Updated `dispatch-task` to include runtime-callable agent metadata and to limit subagent recommendations to a small ranked candidate set.
+- Updated `runtime-adapters` to report registered Codex runtime subagents.
+- Extended `dispatch-report` so runtime subagent statuses such as `timed_out`, `blocked`, and `close_failed` become explicit `runtime_gaps` instead of being counted as successful agents.
+- Updated `harness-audit --apply` to repair old project registries missing native Codex runtime subagents.
+- Updated startup and agent docs to require actual host-runtime subagent calls to be followed by `capability-event --kind subagent` and `dispatch-report`.
+
+Verification:
+
+- Targeted unit tests cover registry visibility, dispatch candidate limiting, `subagent-adapter`, runtime adapter reporting, template initialization, and harness repair.
+- A regression test covers the Dewey-style timeout path: spawned subagent evidence can be recorded as `timed_out`, then surfaced through `AGENT_DISPATCH_OK` runtime gaps.
+- Full validation is recorded in the active KnowledgeOS run for `KOS-T086`.
+
 ## 2026-05-09 - Milestone: Safe Skeleton
 
 Status: in progress
@@ -658,3 +912,185 @@ Validation:
 - Reproduced the bogus capability link acceptance in a temporary project, then verified the same command fails with `capability event not found`.
 - Added targeted regression coverage for bogus capability links, forged effect ledgers, and same-second run id collisions.
 - Re-ran harness audit, guardrail scenarios, unit tests, smoke, and diff checks after the fix.
+
+## 2026-05-29 - Module Note: Decision Graph
+
+Status: implemented locally as an optional module, not a kernel expansion.
+
+Bug / product gap reproduced:
+
+- Long research and agent sessions could record what happened through trace steps and lifecycle checkpoints, but they had no first-class public record of why a plan branched, why a route was abandoned, or why a rollback happened.
+- Without a decision ledger, the human-readable plan could drift from the executed path, especially when a task inserted new checks or changed route midway.
+- Completion could not distinguish between ordinary linear progress and important decision changes that should be auditable.
+
+Fix:
+
+- Added `decision-event` to write `.agent-os/runs/<RUN_ID>/decision-events.ndjson` and return `DECISION_OK`.
+- Added `decision-query` for filtering decision events by run, task, kind, status, or parent id.
+- Added `verify-decisions` to detect forged events, orphan nodes, invalid kinds/statuses, and unexplained abandoned, rollback, or superseded branches.
+- Added `.agent-os/decision-policy.yaml` with default `strictness: warn`; `strictness: enforce` makes `complete-task` block on decision verification failure.
+- Added `render-html --kind decision-map` to generate a readable HTML sidecar from the decision ledger while keeping NDJSON as source of truth.
+- Updated agent guide, startup prompts, operating spec, executable control-plane docs, release checklist, project template, and tests.
+
+Validation:
+
+- Reproduced missing CLI behavior before implementation: `decision-event` was an invalid command and completion did not enforce decision verification.
+- Added targeted tests for event creation, query, orphan detection, strict policy completion blocking, default warn policy, startup prompt contract, doctor policy validation, and decision-map HTML output.
+- Verified `python3 -B -m py_compile knowledgeos/cli.py`.
+- Verified `python3 -B -m unittest discover -s tests -v`: 87 tests passed.
+- Verified `./examples/scenarios/run_guardrail_scenarios.sh`: 30 checkpoints passed.
+- Verified `./bin/knowledgeos doctor --root . --project-root . --summary`: 1789 checks passed.
+- Verified `git diff --check`.
+
+## 2026-05-29 - Reporting Note: Mission Flow
+
+Status: implemented locally as a presentation/reporting layer, not kernel evidence.
+
+Product gap reproduced:
+
+- Medium and complex tasks could finish with strong command evidence but still require the user to mentally assemble what happened from raw markers such as `CHECKPOINT_OK`, `CAPABILITY_OK`, `EFFECT_OK`, `DECISION_OK`, and `[SYNC_OK]`.
+- The user-facing closeout needed a readable flow diagram with plain labels, not a dense dump of internal lifecycle terms.
+
+Fix:
+
+- Added `flow-summary`, which writes `.agent-os/runs/<RUN_ID>/mission-flow.md` and emits `FLOW_OK`.
+- Added `render-html --kind mission-flow`, which creates a self-contained HTML sidecar with colored cards and source metadata.
+- Updated `complete-task` so medium, high, and complex tasks return `flow_marker`, `flow_summary_marker`, `flow_mermaid`, and `flow_source`.
+- Kept Mission Flow out of kernel enforcement. It summarizes existing evidence lanes for humans and does not replace Markdown, YAML, or NDJSON evidence.
+- Updated executable docs, operating spec, agent guide, startup prompts, templates, changelog, and tests.
+
+Validation:
+
+- Added targeted tests for `flow-summary`, mission-flow HTML sidecars, and `complete-task` flow output.
+- Verified the diagram uses readable labels such as `Goal`, `Health Check`, `Task & Plan`, `Safe Writes`, `Work Done`, `Tools Used`, `Proof`, `Decisions`, and `Finish`.
+
+## 2026-05-29 - Module Note: Thread Plan Ledger
+
+Status: implemented locally as a chat-level planning module, not a lifecycle checkpoint.
+
+Product gap reproduced:
+
+- Run-level Mission Flow summarizes one completed task but does not preserve the whole chat-window plan as the conversation grows.
+- Long research/product conversations need a natural-language version map: Plan A / Plan B, Phase A / Phase B, current route, inserted steps, linked runs, and deferred branches.
+- The desired view should be readable by humans and should not add another completion gate.
+
+Fix:
+
+- Added `thread-plan start`, `thread-plan current`, `thread-plan append`, `thread-plan link-run`, and `thread-plan render`.
+- Added `.agent-os/threads/<THREAD_ID>/thread-plan.ndjson` as the append-only source of truth, with Markdown and HTML sidecars for review.
+- Added `THREAD_PLAN_OK` command output for successful thread-plan operations.
+- Kept Thread Plan Ledger out of `complete-task`, `verify-lifecycle`, and checkpoint enforcement.
+- Updated executable docs, operating spec, agent guide, startup prompts, templates, release checklist, changelog, and tests.
+
+Validation:
+
+- Added targeted tests for start/current/append/link-run/render and append-only ledger behavior.
+- Verified Markdown includes `Plan A / Plan B`, `Phase A / Phase B`, current working line, and linked run evidence.
+- Verified HTML sidecar is self-contained and marks HTML as presentation, not source of truth.
+
+## 2026-05-30 - Bugfix Note: Thread Plan HTML Heading
+
+Status: fixed and regression-tested.
+
+Bug reproduced:
+
+- `thread-plan render --format html` produced three `<h1>` headings for one thread-plan page.
+- Root cause: the HTML document shell already renders a page title, the Thread Plan renderer manually prepended another `<h1>`, and the Markdown fragment converted its own top-level title into a third `<h1>`.
+
+Fix:
+
+- Removed the extra hand-written Thread Plan body heading from `render_thread_plan_html`.
+- Kept the canonical Markdown title and the outer HTML shell title intact.
+
+Validation:
+
+- Reproduced the issue in a temporary project before the fix: `h1_count=3`.
+- Re-ran the same reproduction after the fix: `h1_count=2`.
+- Added a regression assertion to the Thread Plan Ledger test.
+
+## 2026-06-08 - HTML Sidecar Presentation Modes
+
+Status: implemented locally as a lighter presentation contract.
+
+Product gap reproduced:
+
+- `render-html --presentation minimal` failed with `unrecognized arguments`, so projects had no supported way to keep KnowledgeOS evidence metadata while opting out of the default hero/sidebar/card layout.
+- The original HTML sidecar contract mixed two concerns: required provenance metadata and optional visual styling.
+
+Fix:
+
+- Added `render-html --presentation default|minimal|bare|fragment`.
+- Kept `default` backward compatible with the existing `knowledgeos-default` card layout.
+- Added `minimal` and `bare` shells that preserve source path, source SHA-256, generated time, kind/run metadata, and the source-of-truth notice without forcing hero/sidebar layout.
+- Added `fragment` mode for composable report pieces that write only `.fragment.html` and `.manifest.json`.
+- Updated manifests with `presentation` and `html_required_metadata`.
+- Documented that KnowledgeOS enforces provenance, traceability, and safety, not visual design.
+
+Validation:
+
+- Reproduced the missing CLI option before implementation.
+- Added a targeted regression test for all four presentation modes.
+- Verified `python3 -B -m py_compile knowledgeos/cli.py`.
+
+## 2026-06-09 - Explicit Agent Dispatch Reporting
+
+Status: implemented locally as a visible dispatch summary layer.
+
+Product gap reproduced:
+
+- `dispatch-task` returned a structured plan but did not emit an obvious `AGENT_DISPATCH_PLAN` marker for user-facing summaries.
+- `capability-event` recorded individual MCP, skill, subagent, orchestrator, script, shell, and file-read events, but there was no single run-level report like `[SYNC_OK]`.
+- `complete-task` could finish without returning a visible agent/subagent dispatch summary.
+
+Fix:
+
+- Added `AGENT_DISPATCH_PLAN` fields to `dispatch-task` JSON and plain output.
+- Added `dispatch-report`, which reads `capability-events.ndjson`, writes `dispatch-report.md`, and emits `AGENT_DISPATCH_OK`.
+- Updated `complete-task` receipts and JSON output with agent count, capability count, dispatch marker, and report path.
+
+Validation:
+
+- Added targeted tests for dispatch plan markers, dispatch-report output, and complete-task dispatch summaries.
+- Reproduced all three missing behaviors before implementation.
+- Verified the targeted tests pass after implementation.
+
+## 2026-06-09 - Dispatch Reporting Prompt Contract Sync
+
+Status: fixed locally as a prompt/template propagation patch.
+
+Bug reproduced:
+
+- A downstream agent completed a KnowledgeOS task and reported `[SYNC_OK]`, but did not show `AGENT_DISPATCH_PLAN` or `AGENT_DISPATCH_OK` in the final visible summary.
+- Runtime support already existed in `dispatch-task`, `dispatch-report`, and `complete-task`.
+- Root cause: project template and guide text did not consistently require agents to relay the dispatch markers, so stale project prompts could silently omit them.
+
+Fix:
+
+- Updated the project `AGENTS.md` template to require `AGENT_DISPATCH_PLAN`, `dispatch-report`, and final `AGENT_DISPATCH_OK` reporting.
+- Updated the live startup prompt and agent guide with the same visible dispatch contract.
+- Added a static prompt-contract regression test so future template drift is caught.
+
+Validation:
+
+- Targeted prompt contract tests cover generated prompts and static template/docs/startup files.
+
+## 2026-06-11 - Full Capability Dispatch Report And KOS Decision Contract
+
+Status: implemented locally as a stricter visible reporting contract.
+
+Product gap reproduced:
+
+- `AGENT_DISPATCH_OK` was too subagent-centric, so runs with `agents=0` could look empty even when shell, file reads, GitHub, browser, security, MCP, skills, or scripts were used.
+- Project prompts required dispatch reporting for substantial work but did not require every conversation to start with an explicit KnowledgeOS routing decision.
+
+Fix:
+
+- Upgraded `dispatch-report` into a Full Capability Dispatch Report.
+- Added used/skipped counts by capability kind, skipped/not-needed records, dispatch plan evidence, evidence file paths, and gaps.
+- Extended `capability-event` kinds to cover plugin/app, browser, Chrome, GitHub, and security connectors.
+- Updated startup prompt, project template, generated guide, and agent guide to require `KOS_DECISION` at conversation start.
+- Clarified that `AGENT_DISPATCH_OK` must summarize all mounted/external capabilities, not only subagents.
+
+Validation:
+
+- Added regression coverage for GitHub/browser capability reporting, skipped required subagent reporting, full capability wording, and `KOS_DECISION` prompt contract.

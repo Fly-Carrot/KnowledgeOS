@@ -1,0 +1,88 @@
+{
+  "schema_version": "knowledgeos.html-report.v1",
+  "kind": "rich-report",
+  "title": "Subagent Runtime Validation",
+  "theme": "knowledgeos-default",
+  "presentation": "default",
+  "run_id": "",
+  "source": "docs/subagent-runtime-validation.md",
+  "source_sha256": "4407ea2bf73ee5ca9a51368e864c07ead2bd35757689a9bb9ef1eb10ee9fde56",
+  "output": "docs/subagent-runtime-validation.html",
+  "fragment": "docs/subagent-runtime-validation.fragment.html",
+  "sections": [
+    {
+      "id": "rich-report-4407ea2bf73e-subagent-runtime-validation",
+      "title": "Subagent Runtime Validation",
+      "level": 1
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-outcome",
+      "title": "Outcome",
+      "level": 2
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-root-cause",
+      "title": "Root Cause",
+      "level": 2
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-repair",
+      "title": "Repair",
+      "level": 2
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-strict-catalog-verifier",
+      "title": "Strict catalog verifier",
+      "level": 3
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-runtime-gap-reconciliation",
+      "title": "Runtime-gap reconciliation",
+      "level": 3
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-host-runtime-usage-contract",
+      "title": "Host runtime usage contract",
+      "level": 3
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-bounded-subagent-runtime-boundary",
+      "title": "Bounded subagent runtime boundary",
+      "level": 3
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-verified-catalog",
+      "title": "Verified Catalog",
+      "level": 2
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-default-backed-1",
+      "title": "Default-backed (1)",
+      "level": 3
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-explorer-backed-17",
+      "title": "Explorer-backed (17)",
+      "level": 3
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-worker-backed-24",
+      "title": "Worker-backed (24)",
+      "level": 3
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-verification-commands",
+      "title": "Verification Commands",
+      "level": 2
+    },
+    {
+      "id": "rich-report-4407ea2bf73e-evidence-boundary",
+      "title": "Evidence Boundary",
+      "level": 2
+    }
+  ],
+  "generated_at": "2026-07-11T13:40:44.817518+00:00",
+  "html_source_of_truth": false,
+  "html_required_metadata": true,
+  "notice": "HTML is presentation, not source of truth."
+}
