@@ -6,6 +6,13 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 ## Unreleased
 
+### Unified Runtime Safety And Route Reuse
+
+- Preserve bounded subagent history controls in the schema-aware adapter; refuse implicit/full history without specific run-bound approval.
+- Add `ensure-route` for new tasks to reuse an existing lifecycle/eval profile with narrower declared-output scope. Do not invent permissions or rewrite running tasks.
+- Refresh English generated guidance with safe route recovery and next-operation rule reload after runtime updates; preserve custom text.
+- Document backup, hash-guarded shared-entry activation and rollback in [the rollout guide](docs/unified-runtime-rollout.md). Model qualification remains unverified.
+
 ### Lean Batch 3: Candidate Qualification
 
 - Add `make release-smoke` to validate a clean source export using freshly initialized runtime/project state, guardrail scenarios and all tests. Keep `make smoke` for local repository history; never fabricate missing private outputs or weaken doctor.

@@ -27,6 +27,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from knowledgeos.history_policy import history_arguments, validate_fork_turns
 
 REQUIRED_PUBLIC_FILES = [
     "README.md",
@@ -871,6 +874,13 @@ def validate_tool_registry(project_root: Path, *, allow_placeholders: bool = Fal
         results.append(CheckResult(kind in TOOL_KINDS, "tool_registry_kind", f"{entry_id} kind={kind}"))
         results.append(CheckResult(status in TOOL_STATUSES, "tool_registry_status", f"{entry_id} status={status}"))
         results.append(CheckResult(bool(invocation), "tool_registry_invocation", f"{entry_id} invocation present"))
+        if kind == "subagent":
+            try:
+                validate_fork_turns(entry.get("fork_turns", "none"))
+                history_error = ""
+            except ValueError as exc:
+                history_error = str(exc)
+            results.append(CheckResult(not history_error, "tool_registry_history", f"{entry_id}: {history_error or 'bounded history policy'}"))
 
         serialized_values = " ".join(str(value) for value in entry.values())
         has_secret_marker = any(marker in serialized_values for marker in ["API_KEY=", "SECRET=", "TOKEN=", "password=", "secret:"])
@@ -1123,13 +1133,19 @@ def valid_host_snapshot(snapshot: Any) -> bool:
     )
 
 
-def runtime_contract(entry: dict[str, str], snapshot: dict[str, Any]) -> dict[str, Any]:
+def runtime_contract(entry: dict[str, str], snapshot: dict[str, Any], *, approved_full_history: bool = False) -> dict[str, Any]:
     resolvable = is_adapter_resolvable_subagent(entry)
     result: dict[str, Any] = {
         "registered": True, "adapter_resolvable": resolvable,
         "host_available": "unknown", "execution_verified": "unknown",
         "runtime_callable": False, "runtime_arguments": {}, "host_provenance": {},
     }
+    try:
+        history = validate_fork_turns(entry.get("fork_turns", "none"), allow_all=approved_full_history)
+        result["fork_turns"] = history
+    except ValueError as exc:
+        result["history_error"] = str(exc)
+        return result
     if not resolvable or not valid_host_snapshot(snapshot):
         return result
     fingerprint = hashlib.sha256(json.dumps(snapshot, sort_keys=True).encode()).hexdigest()
@@ -1176,6 +1192,11 @@ def runtime_contract(entry: dict[str, str], snapshot: dict[str, Any]) -> dict[st
         if set(properties[prompt_key]) - {"type", "description", "title", "default"}:
             continue
         arguments = {prompt_key: build_default_subagent_role_prompt(entry) + "\n\n" + SUBAGENT_RUNTIME_BOUNDARY}
+        try:
+            arguments.update(history_arguments(history, properties))
+        except ValueError as exc:
+            result["history_error"] = str(exc)
+            continue
         if "agent_type" in properties:
             role_schema = properties["agent_type"]
             role = runtime_agent_type_for_entry(entry)
@@ -1191,6 +1212,7 @@ def runtime_contract(entry: dict[str, str], snapshot: dict[str, Any]) -> dict[st
         result.update(host_available=True, runtime_callable=True,
                       runtime_tool=tool["name"], runtime_arguments=arguments,
                       role_binding="native_parameter" if "agent_type" in arguments else "prompt_only")
+        result.pop("history_error", None)
         result["host_provenance"]["tool_schema_version"] = tool["schema_version"]
         break
     return result
@@ -3625,6 +3647,10 @@ def evaluation_fingerprint(project_root: Path, task_id: str, run_id: str = "") -
         files["policy:" + name] = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "missing"
     task = dict(find_task(project_root, task_id))
     task.pop("status", None)
+    # Preserve historical fingerprints for native routes; only mapped tasks bind mapping evidence.
+    _, mappings = task_route_store(project_root)
+    if task_id in mappings:
+        files["task_route"] = content_fingerprint(json.dumps(mappings.get(task_id), sort_keys=True))
     binding = run_spec_binding(project_root, task_id, ensure_run_belongs_to_task(project_root, task_id, run_id)) if run_id else {}
     return content_fingerprint(json.dumps({"files": files, "task": task,
         "spec": {key: binding.get(key, "") for key in ("spec_id", "fingerprint", "binding_source", "binding_status")},
@@ -3855,8 +3881,8 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
     if router_path.exists():
         profiles = parse_workflow_profiles(router_path)
         results.append(CheckResult(bool(profiles), "workflow_router", f"{len(profiles)} route profile(s) found"))
-        task_types = {task.get("type", "") for task in tasks if task.get("type")}
-        missing_routes = sorted(task_type for task_type in task_types if task_type not in profiles)
+        missing_routes = sorted({task.get("type", "") for task in tasks
+                                 if build_task_route(project_root, task["id"], None)["status"] != "routed"})
         results.append(CheckResult(not missing_routes, "workflow_router", "all task types are routed" if not missing_routes else f"missing routes for {missing_routes}"))
         for name, profile in sorted(profiles.items()):
             eval_profile = str(profile.get("eval_profile", ""))
@@ -4164,8 +4190,26 @@ def ensure_subagent_catalog_snapshot(run_dir: Path, task_id: str, run_id: str, c
     return snapshot
 
 
+def require_full_history_approval(project_root: Path, *, task_id: str, run_id: str,
+                                  decision_id: str, subagent_id: str) -> dict[str, Any]:
+    if not task_id or not run_id or not decision_id:
+        raise ValueError("full history requires task/run-bound explicit approval")
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    event = next((e for e in load_decision_events(run_dir) if e.get("decision_id") == decision_id), {})
+    summary = str(event.get("summary", ""))
+    if (event.get("task_id") != task_id or event.get("run_id") != run_id
+            or event.get("kind") != "human_decision" or event.get("status") != "executed"
+            or not str(event.get("evidence", "")).strip()
+            or event.get("chosen") != f"approve_full_history:{subagent_id}"
+            or "fork_turns=all" not in summary or subagent_id not in summary
+            or not decision_event_has_command_event(run_dir, event, task_id, run_id)):
+        raise ValueError("approval requires chosen=approve_full_history:<exact-subagent-id>, explicit fork_turns=all and command evidence")
+    return event
+
+
 def build_subagent_adapter(project_root: Path, subagent_id: str, *, task_id: str = "", run_id: str = "", purpose: str = "",
-                           host_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+                           host_snapshot: dict[str, Any] | None = None, fork_turns: str | None = None,
+                           allow_full_history: bool = False, justification: str = "", approval_decision_id: str = "") -> dict[str, Any]:
     entries = load_tool_registry(project_root)
     entry = next((item for item in entries if item.get("id") == subagent_id), None)
     if not entry:
@@ -4181,7 +4225,15 @@ def build_subagent_adapter(project_root: Path, subagent_id: str, *, task_id: str
     role_spec = load_maestro_role_spec(subagent_id) if subagent_id.startswith("maestro-") else {}
     role_prompt = role_spec.get("role_prompt") or build_default_subagent_role_prompt(entry)
     role_prompt = f"{role_prompt}\n\n{SUBAGENT_RUNTIME_BOUNDARY}"
-    contract = runtime_contract(entry, load_host_capability_snapshot() if host_snapshot is None else host_snapshot)
+    validate_fork_turns(entry.get("fork_turns", "none"))
+    history = validate_fork_turns(fork_turns if fork_turns is not None else entry.get("fork_turns", "none"), allow_all=allow_full_history)
+    if history == "all":
+        if not justification.strip():
+            raise ValueError("full history requires a specific justification")
+        require_full_history_approval(project_root, task_id=task_id, run_id=run_id,
+                                      decision_id=approval_decision_id, subagent_id=subagent_id)
+    contract = runtime_contract({**entry, "fork_turns": history}, load_host_capability_snapshot() if host_snapshot is None else host_snapshot,
+                                approved_full_history=history == "all")
     arguments = contract["runtime_arguments"]
     for prompt_key in ("message", "prompt"):
         if prompt_key in arguments:
@@ -4210,6 +4262,7 @@ def build_subagent_adapter(project_root: Path, subagent_id: str, *, task_id: str
             runtime_agent_type=runtime_type,
             runtime_challenge=runtime_challenge,
             catalog_sha256=catalog_sha256,
+            fork_turns=history, approval_decision_id=approval_decision_id, justification=justification,
         )
     return {
         **contract,
@@ -8549,6 +8602,93 @@ def load_workflow_profiles(project_root: Path) -> dict[str, dict[str, Any]]:
     return parse_workflow_profiles(router_path)
 
 
+def task_route_store(project_root: Path) -> tuple[Path, dict[str, Any]]:
+    path = project_root / ".agent-os/workflows/task-routes.json"
+    if path.is_symlink() or not path.resolve().is_relative_to(project_root.resolve()):
+        raise ValueError("task route store must remain inside the project without a symlink")
+    data = json.loads(path.read_text()) if path.exists() else {}
+    if not isinstance(data, dict):
+        raise ValueError("invalid task route store")
+    return path, data
+
+
+def bounded_route_profile(project_root: Path, task_id: str, profile: dict[str, Any]) -> dict[str, Any]:
+    outputs = parse_task_list_field(project_root / ".agent-os/tasks.yaml", "outputs").get(task_id, [])
+    errors = workflow_lifecycle_errors(profile)
+    evals = parse_indented_profile_keys(project_root / ".agent-os/evals.yaml", "evals")
+    if errors or profile.get("eval_profile") not in evals or not outputs:
+        raise ValueError("route requires valid lifecycle, existing eval profile and declared outputs")
+    for output in outputs:
+        path = Path(output)
+        if (path.is_absolute() or ".." in path.parts or any(c in output for c in "*?[]")
+                or path.parts[0] in {".agent-os", ".knowledgeos-local", ".git"}
+                or path.name in {"AGENTS.md", "GEMINI.md"}
+                or classify_write(project_root, output)["decision"] != "allow"
+                or not route_output_match(output, profile.get("allowed_outputs", []))):
+            raise ValueError(f"output not eligible for automatic route reuse: {output}")
+    return {**profile, "allowed_outputs": outputs, "allow_external_controlled": "false"}
+
+
+def task_route_fingerprint(project_root: Path, task_id: str, profile: dict[str, Any]) -> str:
+    material = {"profile": profile, "type": find_task(project_root, task_id).get("type"),
+                "outputs": parse_task_list_field(project_root / ".agent-os/tasks.yaml", "outputs").get(task_id, [])}
+    return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+
+
+def ensure_task_route(project_root: Path, task_id: str, *, profile_name: str = "", dry_run: bool = False) -> dict[str, Any]:
+    current = build_task_route(project_root, task_id, None)
+    if current["status"] == "routed":
+        return {"status": "reused", "route_marker": "ROUTE_OK", "task_id": task_id, "route": current}
+    task = find_task(project_root, task_id)
+    if task.get("status") not in {"ready", "backlog"} or any(
+            parse_scalar_values(p, {"task_id"}).get("task_id") == task_id
+            for p in (project_root / ".agent-os/runs").glob("*/run.yaml")):
+        raise ValueError("cannot remap an existing run or historical task; preserve its original route")
+    profiles = load_workflow_profiles(project_root)
+    eligible = {}
+    for name, profile in profiles.items():
+        try:
+            eligible[name] = bounded_route_profile(project_root, task_id, profile)
+        except ValueError:
+            continue
+    if not profile_name:
+        preferred = "report_task" if task.get("type") in {"manuscript", "drafting", "writing"} else ""
+        profile_name = preferred if preferred in eligible else next(iter(eligible)) if len(eligible) == 1 else ""
+    if not profile_name:
+        return {"status": "route_selection_required", "candidates": sorted(eligible),
+                "reason": "agent may select an existing eligible profile with --profile; no permissions will be added"}
+    if profile_name not in eligible:
+        raise ValueError("selected route is absent or cannot cover declared outputs under current policy")
+    path, data = task_route_store(project_root)
+    for target in (path, path.with_suffix(".lock"), path.with_suffix(".tmp")):
+        if classify_write(project_root, str(target))["decision"] != "allow":
+            raise ValueError(f"route mapping write is not authorized by project policy: {target.name}")
+    record = {"profile": profile_name, "fingerprint": task_route_fingerprint(project_root, task_id, profiles[profile_name])}
+    if not dry_run:
+        # Exclusive creation serializes writers; re-read under the lock to preserve other tasks.
+        lock = path.with_suffix(".lock")
+        with lock.open("x"):
+            try:
+                _, data = task_route_store(project_root)
+                data[task_id] = record
+                temporary = path.with_suffix(".tmp")
+                with temporary.open("x") as handle:
+                    json.dump(data, handle, indent=2, sort_keys=True)
+                    handle.write("\n")
+                temporary.replace(path)
+            finally:
+                lock.unlink()
+    return {"status": "dry_run" if dry_run else "created", "route_marker": "ROUTE_OK",
+            "task_id": task_id, "profile": profile_name, "allowed_outputs": eligible[profile_name]["allowed_outputs"]}
+
+
+def cmd_ensure_route(args: argparse.Namespace) -> int:
+    result = ensure_task_route(Path(args.project_root).expanduser().resolve(), args.task_id,
+                               profile_name=args.profile or "", dry_run=args.dry_run)
+    emit(result, args.json)
+    return 0 if result["status"] != "route_selection_required" else 2
+
+
 def build_task_route(project_root: Path, task_id: str | None, task_type: str | None) -> dict[str, Any]:
     task: dict[str, str] | None = None
     if task_id:
@@ -8559,13 +8699,24 @@ def build_task_route(project_root: Path, task_id: str | None, task_type: str | N
 
     profiles = load_workflow_profiles(project_root)
     profile = profiles.get(task_type)
+    if task_id:
+        try:
+            _, mappings = task_route_store(project_root)
+            if task_id in mappings:
+                profile = None
+                record = mappings[task_id]
+                original = profiles.get(record.get("profile")) if isinstance(record, dict) else None
+                if original and record.get("fingerprint") == task_route_fingerprint(project_root, task_id, original):
+                    profile = bounded_route_profile(project_root, task_id, original)
+        except (ValueError, OSError):
+            profile = None
     if not profile:
         return {
             "status": "human_triage_required",
             "reason": f"no workflow route profile for task type {task_type!r}",
             "task_id": task_id,
             "task_type": task_type,
-            "recommended_action": "add a route profile under .agent-os/workflows/router.yaml before mutation",
+            "recommended_action": "use ensure-route for a new task to reuse an existing profile; never broaden permissions",
         }
 
     if "lifecycle_contract" in profile:
@@ -9478,6 +9629,8 @@ def cmd_subagent_adapter(args: argparse.Namespace) -> int:
             run_id=args.run_id or "",
             purpose=args.purpose or "",
             host_snapshot=host_snapshot_from_args(args),
+            fork_turns=args.fork_turns, allow_full_history=args.allow_full_history,
+            justification=args.justification, approval_decision_id=args.approval_decision_id,
         )
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
@@ -9918,6 +10071,14 @@ def build_parser() -> argparse.ArgumentParser:
     route.add_argument("--json", action="store_true")
     route.set_defaults(func=cmd_route_task)
 
+    ensure_route = sub.add_parser("ensure-route", help="bind a new task to an existing profile without expanding permissions")
+    ensure_route.add_argument("--project-root", required=True)
+    ensure_route.add_argument("--task-id", required=True)
+    ensure_route.add_argument("--profile")
+    ensure_route.add_argument("--dry-run", action="store_true")
+    ensure_route.add_argument("--json", action="store_true")
+    ensure_route.set_defaults(func=cmd_ensure_route)
+
     tools = sub.add_parser("tool-registry", help="inspect and validate MCP, skill, workflow, and subagent configuration")
     tools.add_argument("--project-root", required=True)
     tools.add_argument("--check-paths", action="store_true", help="also verify absolute source_path/path entries exist")
@@ -10063,6 +10224,10 @@ def build_parser() -> argparse.ArgumentParser:
     subagent_adapter.add_argument("--task-id", help="optional task id; when paired with --run-id records command evidence")
     subagent_adapter.add_argument("--run-id", help="optional run id; when paired with --task-id records command evidence")
     subagent_adapter.add_argument("--purpose", default="", help="short public purpose for the suggested capability-event")
+    subagent_adapter.add_argument("--fork-turns", help="none (default), 1..8 when representable, or explicitly approved all")
+    subagent_adapter.add_argument("--allow-full-history", action="store_true")
+    subagent_adapter.add_argument("--justification", default="")
+    subagent_adapter.add_argument("--approval-decision-id", default="")
     subagent_adapter.add_argument("--json", action="store_true")
     subagent_adapter.set_defaults(func=cmd_subagent_adapter)
     add_host_snapshot_arguments(subagent_adapter)
