@@ -764,11 +764,21 @@ def parse_workflow_profiles(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def find_placeholder_markers(path: Path) -> list[str]:
+    """Inspect live configuration, not immutable evidence quoting past checks."""
     markers: list[str] = []
     if path.is_file():
         paths = [path]
     else:
-        paths = [p for p in path.rglob("*") if p.is_file()]
+        evidence_dirs = {"runs", "threads", "specs", "receipts", "handoffs",
+                         "inbox", "backups", "dispatch-preflight"}
+        paths = []
+        for directory, dirs, files in os.walk(path, followlinks=False):
+            if Path(directory) == path:
+                dirs[:] = [name for name in dirs if name not in evidence_dirs]
+            for name in files:
+                item = Path(directory) / name
+                if item.suffix.lower() in {".yaml", ".yml", ".json"}:
+                    paths.append(item)
     for item in paths:
         try:
             text = read_text(item)
@@ -6429,6 +6439,10 @@ def discover_agent_os_projects(search_roots: list[Path], *, include_templates: b
         "Applications",
         "System",
         "global-agent-fabric_venv",
+        "archive",
+        "backups",
+        "initialization-backups",
+        "outputs",
     }
     for search_root in search_roots:
         search_root = search_root.expanduser()
@@ -6441,7 +6455,9 @@ def discover_agent_os_projects(search_roots: list[Path], *, include_templates: b
             dirnames[:] = [
                 name
                 for name in dirnames
-                if name not in skip_names and not (name.startswith(".") and name not in {".agent-os"})
+                if name not in skip_names
+                and not name.startswith("knowledgeos-init-")
+                and not (name.startswith(".") and name not in {".agent-os"})
             ]
             if ".agent-os" in dirnames:
                 if include_templates or "templates/project-control-plane" not in str(current):
@@ -8760,6 +8776,14 @@ def cmd_init_project(args: argparse.Namespace) -> int:
         "CHANGE_ME_DATE": datetime.now().strftime("%Y-%m-%d"),
     }
     actions = copy_template_tree(template, project_root, replacements, dry_run=args.dry_run, force=args.force)
+    if not args.dry_run:
+        from knowledgeos.guidance import merge_generated, render_guidance
+        written = {item["path"] for item in actions if item["action"] == "write"}
+        for relative, surface in (("AGENTS.md", "entry"), (".agent-os/startup-prompt.md", "startup")):
+            target = project_root / relative
+            if str(target) in written:
+                generated = render_guidance(project_root, root / "bin" / "knowledgeos", surface=surface)
+                write_text(target, merge_generated(read_text(target), generated))
     emit(actions, args.json)
     return 0
 
