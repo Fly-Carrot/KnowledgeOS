@@ -17,6 +17,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -265,6 +266,8 @@ LIFECYCLE_COMMAND_MARKERS = [
     "verify-effects",
     "complete-task",
 ]
+LEGACY_LIFECYCLE_CONTRACT = "legacy-v1"
+PRODUCER_BOUND_LIFECYCLE_CONTRACT = "producer-bound-v1"
 TASK_STATUSES = {"backlog", "ready", "in_progress", "blocked", "completed", "cancelled"}
 RUNNABLE_TASK_STATUSES = {"ready", "in_progress"}
 TOOL_KINDS = {"mcp", "skill", "workflow", "orchestrator", "subagent", "memory"}
@@ -3858,7 +3861,6 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
         for name, profile in sorted(profiles.items()):
             eval_profile = str(profile.get("eval_profile", ""))
             allowed_outputs = profile.get("allowed_outputs", [])
-            route_order = profile.get("route_order", [])
             results.append(CheckResult(bool(eval_profile), "workflow_router_eval", f"{name} eval_profile present"))
             if eval_profile:
                 results.append(CheckResult(eval_profile in eval_profiles, "workflow_router_eval", f"{name} eval_profile={eval_profile}"))
@@ -3869,80 +3871,11 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                     f"{name} allowed_outputs present",
                 )
             )
-            if isinstance(route_order, list):
-                has_run = any("run-task" in item for item in route_order)
-                has_dispatch_event = any("dispatch-task" in item and "--run-id" in item for item in route_order)
-                has_context = any("context-pack" in item for item in route_order)
-                has_plan = any("plan-task" in item for item in route_order)
-                has_phase = any("phase-task" in item for item in route_order)
-                has_eval = any("eval-task" in item for item in route_order)
-                has_verify_context = any("verify-context" in item for item in route_order)
-                has_verify = any("verify-lifecycle" in item for item in route_order)
-                has_verify_effects = any("verify-effects" in item for item in route_order)
-                has_complete = any("complete-task" in item for item in route_order)
-                run_index = next((idx for idx, item in enumerate(route_order) if "run-task" in item), -1)
-                dispatch_event_index = next((idx for idx, item in enumerate(route_order) if "dispatch-task" in item and "--run-id" in item), -1)
-                context_index = next((idx for idx, item in enumerate(route_order) if "context-pack" in item), -1)
-                plan_index = next((idx for idx, item in enumerate(route_order) if "plan-task" in item), -1)
-                eval_index = next((idx for idx, item in enumerate(route_order) if "eval-task" in item), -1)
-                verify_context_index = next((idx for idx, item in enumerate(route_order) if "verify-context" in item), -1)
-                verify_index = next((idx for idx, item in enumerate(route_order) if "verify-lifecycle" in item), -1)
-                verify_effects_index = next((idx for idx, item in enumerate(route_order) if "verify-effects" in item), -1)
-                complete_index = next((idx for idx, item in enumerate(route_order) if "complete-task" in item), -1)
-                results.append(CheckResult(has_run, "workflow_router_lifecycle", f"{name} includes run-task"))
-                results.append(CheckResult(has_dispatch_event, "workflow_router_lifecycle", f"{name} includes dispatch-task --run-id"))
-                results.append(CheckResult(has_context, "workflow_router_lifecycle", f"{name} includes context-pack"))
-                results.append(CheckResult(has_plan, "workflow_router_lifecycle", f"{name} includes plan-task"))
-                results.append(CheckResult(has_phase, "workflow_router_lifecycle", f"{name} includes phase-task"))
-                results.append(CheckResult(has_eval, "workflow_router_lifecycle", f"{name} includes eval-task"))
-                results.append(CheckResult(has_verify_context, "workflow_router_lifecycle", f"{name} includes verify-context"))
-                results.append(CheckResult(has_verify, "workflow_router_lifecycle", f"{name} includes verify-lifecycle"))
-                results.append(CheckResult(has_verify_effects, "workflow_router_lifecycle", f"{name} includes verify-effects"))
-                results.append(CheckResult(has_complete, "workflow_router_lifecycle", f"{name} includes complete-task"))
-                results.append(
-                    CheckResult(
-                        run_index >= 0 and context_index >= 0 and plan_index >= 0 and run_index < context_index < plan_index,
-                        "workflow_router_lifecycle",
-                        f"{name} run-task before context-pack before plan-task",
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        run_index >= 0 and dispatch_event_index >= 0 and context_index >= 0 and run_index < dispatch_event_index < context_index,
-                        "workflow_router_lifecycle",
-                        f"{name} run-task before dispatch-task --run-id before context-pack",
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        eval_index >= 0 and complete_index >= 0 and eval_index < complete_index,
-                        "workflow_router_lifecycle",
-                        f"{name} eval-task before complete-task",
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        verify_context_index >= 0 and complete_index >= 0 and verify_context_index < complete_index,
-                        "workflow_router_lifecycle",
-                        f"{name} verify-context before complete-task",
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        verify_index >= 0 and complete_index >= 0 and verify_index < complete_index,
-                        "workflow_router_lifecycle",
-                        f"{name} verify-lifecycle before complete-task",
-                    )
-                )
-                results.append(
-                    CheckResult(
-                        verify_effects_index >= 0 and complete_index >= 0 and verify_effects_index < complete_index,
-                        "workflow_router_lifecycle",
-                        f"{name} verify-effects before complete-task",
-                    )
-                )
-            else:
-                results.append(CheckResult(False, "workflow_router_lifecycle", f"{name} route_order is not a list"))
+            lifecycle_errors = workflow_lifecycle_errors(profile)
+            results.append(CheckResult(
+                not lifecycle_errors, "workflow_router_lifecycle",
+                f"{name}: " + ("; ".join(lifecycle_errors) if lifecycle_errors else "supported lifecycle contract"),
+            ))
     else:
         results.append(CheckResult(False, "workflow_router", f"missing router file: {router_path}"))
 
@@ -4800,6 +4733,7 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
                     f"task_status_at_start: {task_status}",
                     f"status: started",
                     f"route_status: {route.get('status', '')}",
+                    f"route_contract: {route.get('lifecycle_contract', LEGACY_LIFECYCLE_CONTRACT)}",
                     f"eval_profile: {route.get('eval_profile', '')}",
                     f"human_gate: {route.get('human_gate', '')}",
                     f"created_at: {datetime.now(timezone.utc).isoformat()}",
@@ -5000,26 +4934,42 @@ def record_dispatch_event(project_root: Path, task_id: str, run_id: str, dispatc
     previous = [event for event in load_command_events(run_dir)
                 if event.get("generated_by") == "knowledgeos" and event.get("event_type") == "dispatch-task"
                 and event.get("task_id") == task_id and event.get("run_id") == run_id]
-    if (previous and dispatch.get("dispatch_reuse") == "reused"
-            and previous[-1].get("dispatch_fingerprint") == dispatch.get("dispatch_fingerprint")):
+    prior = previous[-1] if previous else {}
+    same_plan = (prior.get("status") == "dispatch_ready"
+                 and dispatch.get("status") == "dispatch_ready"
+                 and prior.get("required_stages") == required_stages
+                 and prior.get("planned_tools") == planned_tools
+                 and (not prior.get("dispatch_fingerprint")
+                      or prior["dispatch_fingerprint"] == dispatch.get("dispatch_fingerprint")))
+    reused = bool(same_plan and dispatch.get("dispatch_reuse") == "reused"
+                  and prior.get("dispatch_fingerprint") == dispatch.get("dispatch_fingerprint"))
+    phases = [p for p in load_phase_records(run_dir) if p.get("phase") == "dispatch"
+              and p.get("task_id") == task_id and p.get("run_id") == run_id]
+    latest = phases[-1] if phases else {}
+    manual_valid = (latest and "producer" not in latest and latest.get("status") in PHASE_STATUSES
+                    and (latest.get("status") != "skipped" or str(latest.get("skip_reason", "")).strip())
+                    and has_command_event(run_dir, "phase-task", task_id, run_id,
+                                          phase="dispatch", status=latest.get("status")))
+    if not reused:
+        append_command_event(
+            run_dir, "dispatch-task", task_id, run_id,
+            status=str(dispatch.get("status", "")), required_stages=required_stages,
+            planned_tools=planned_tools, dispatch_fingerprint=dispatch.get("dispatch_fingerprint", ""),
+            dispatch_reuse=dispatch.get("dispatch_reuse", "recomputed"),
+        )
+    # A same-plan replay must not overwrite a public manual skip. Conversely,
+    # a cached command alone is insufficient after a crash before phase append.
+    if same_plan and (manual_valid or (reused and checkpoint_producer_valid(run_dir, latest))):
         return {"run_id": run_id, "required_stages": required_stages,
-                "record_reuse": "reused", "command_events": str(command_events_path(run_dir))}
-    append_command_event(
-        run_dir,
-        "dispatch-task",
-        task_id,
-        run_id,
-        status=str(dispatch.get("status", "")),
-        required_stages=required_stages,
-        planned_tools=planned_tools,
-        dispatch_fingerprint=dispatch.get("dispatch_fingerprint", ""),
-        dispatch_reuse=dispatch.get("dispatch_reuse", "recomputed"),
-    )
+                "record_reuse": "reused" if reused else "recorded",
+                "checkpoint_reuse": "manual" if manual_valid else "producer",
+                "command_events": str(command_events_path(run_dir))}
     checkpoint = {}
     if dispatch.get("status") == "dispatch_ready":
         checkpoint = record_checkpoint_producer(project_root, task_id, run_id, producer="dispatch-task",
                                                inputs={"dispatch": dispatch}, evidence_paths=[])
     return {"run_id": run_id, "required_stages": required_stages, "command_events": str(command_events_path(run_dir)),
+            "record_reuse": "reused" if reused else "recorded",
             **({"checkpoint": checkpoint} if checkpoint else {})}
 
 
@@ -6579,49 +6529,76 @@ def fill_missing_control_plane_files(
     return actions
 
 
-def route_order_needs_lifecycle_upgrade(route_order: list[str]) -> bool:
-    run_index = next((idx for idx, item in enumerate(route_order) if "run-task" in item), -1)
-    dispatch_event_index = next((idx for idx, item in enumerate(route_order) if "dispatch-task" in item and "--run-id" in item), -1)
-    context_index = next((idx for idx, item in enumerate(route_order) if "context-pack" in item), -1)
-    plan_index = next((idx for idx, item in enumerate(route_order) if "plan-task" in item), -1)
-    phase_index = next((idx for idx, item in enumerate(route_order) if "phase-task" in item), -1)
-    eval_index = next((idx for idx, item in enumerate(route_order) if "eval-task" in item), -1)
-    verify_context_index = next((idx for idx, item in enumerate(route_order) if "verify-context" in item), -1)
-    verify_index = next((idx for idx, item in enumerate(route_order) if "verify-lifecycle" in item), -1)
-    verify_effects_index = next((idx for idx, item in enumerate(route_order) if "verify-effects" in item), -1)
-    complete_index = next((idx for idx, item in enumerate(route_order) if "complete-task" in item), -1)
+def lifecycle_route_tokens(item: str) -> list[str]:
+    """Recognize command hints, not command names mentioned in prose or echo."""
+    try:
+        tokens = shlex.split(item, comments=True)
+    except ValueError:
+        return []
+    if tokens and Path(tokens[0]).name == "knowledgeos":
+        tokens = tokens[1:]
+    return tokens
 
-    required_indices = [
-        run_index,
-        dispatch_event_index,
-        context_index,
-        plan_index,
-        phase_index,
-        eval_index,
-        verify_context_index,
-        verify_index,
-        verify_effects_index,
-        complete_index,
-    ]
-    if any(index < 0 for index in required_indices):
-        return True
-    if not run_index < dispatch_event_index < context_index < plan_index:
-        return True
-    return not (
-        eval_index < complete_index
-        and verify_context_index < complete_index
-        and verify_index < complete_index
-        and verify_effects_index < complete_index
-    )
+
+def workflow_lifecycle_errors(profile: dict[str, Any]) -> list[str]:
+    """Shared static contract check; runtime evidence still gates completion."""
+    contract = profile.get("lifecycle_contract", LEGACY_LIFECYCLE_CONTRACT)
+    if contract not in (LEGACY_LIFECYCLE_CONTRACT, PRODUCER_BOUND_LIFECYCLE_CONTRACT):
+        return [f"unsupported lifecycle_contract: {contract!r}"]
+    route = profile.get("route_order", [])
+    if not isinstance(route, list) or not all(isinstance(item, str) for item in route):
+        return ["route_order must be a list of command hints"]
+    parsed = [lifecycle_route_tokens(item) for item in route]
+    positions = {name: [i for i, tokens in enumerate(parsed) if tokens and tokens[0] == name]
+                 for name in ["run-task", *LIFECYCLE_COMMAND_MARKERS]}
+    required = ["run-task", "context-pack", "plan-task", "phase-task", "eval-task", "complete-task"]
+    diagnostics = ["verify-context", "verify-lifecycle", "verify-effects"]
+    if contract == LEGACY_LIFECYCLE_CONTRACT:
+        required += ["dispatch-task", *diagnostics]
+    errors = [f"missing {name}" for name in required if not positions[name]]
+    chain = ["run-task", "context-pack", "plan-task", "phase-task", "eval-task", "complete-task"]
+    if contract == LEGACY_LIFECYCLE_CONTRACT:
+        # Legacy agents may record route/dispatch before context and plan.
+        chain.remove("phase-task")
+        for index in positions["phase-task"]:
+            if positions["run-task"] and index <= positions["run-task"][-1]:
+                errors.append("run-task must precede phase-task")
+            if positions["eval-task"] and index >= positions["eval-task"][0]:
+                errors.append("phase-task must precede eval-task")
+    for before, after in zip(chain, chain[1:]):
+        if positions[before] and positions[after] and positions[before][-1] >= positions[after][0]:
+            errors.append(f"{before} must precede {after}")
+    bound_dispatches = []
+    for index in positions["dispatch-task"]:
+        tokens = parsed[index]
+        if not any(t == "--run-id" or t.startswith("--run-id=") for t in tokens):
+            # Preflight inspection is allowed, but is not run-bound evidence.
+            if positions["run-task"] and index >= positions["run-task"][0]:
+                errors.append("dispatch-task after run-task requires --run-id")
+            continue
+        bound_dispatches.append(index)
+        if positions["run-task"] and positions["context-pack"]:
+            if not positions["run-task"][-1] < index < positions["context-pack"][0]:
+                errors.append("run-task before dispatch-task --run-id before context-pack")
+    if contract == LEGACY_LIFECYCLE_CONTRACT and not bound_dispatches:
+        errors.append("missing dispatch-task --run-id")
+    for name in diagnostics:
+        if positions[name] and positions["complete-task"] and positions[name][-1] >= positions["complete-task"][0]:
+            errors.append(f"{name} must precede complete-task")
+    return errors
+
+
+def route_order_needs_lifecycle_upgrade(route_order: list[str], lifecycle_contract: str = LEGACY_LIFECYCLE_CONTRACT) -> bool:
+    return bool(workflow_lifecycle_errors({"route_order": route_order, "lifecycle_contract": lifecycle_contract}))
 
 
 def normalize_route_order(route_order: list[str]) -> list[str]:
     cleaned = [
         item
         for item in route_order
-        if not any(marker in item for marker in LIFECYCLE_COMMAND_MARKERS)
+        if not (lifecycle_route_tokens(item) and lifecycle_route_tokens(item)[0] in LIFECYCLE_COMMAND_MARKERS)
     ]
-    run_index = next((idx for idx, item in enumerate(cleaned) if "run-task" in item), -1)
+    run_index = next((idx for idx, item in enumerate(cleaned) if lifecycle_route_tokens(item)[:1] == ["run-task"]), -1)
     if run_index < 0:
         cleaned.append("run-task --project-root . --task-id <task-id>")
         run_index = len(cleaned) - 1
@@ -6659,13 +6636,21 @@ def upgrade_workflow_router_file(project_root: Path, *, apply: bool, backup_name
     if not path.exists():
         return None
     profiles = parse_workflow_profiles(path)
+    # Never guess a migration for a new/unknown contract, or rewrite another
+    # profile in the same file while one requires human review.
+    review = {name: workflow_lifecycle_errors(profile) for name, profile in profiles.items()
+              if profile.get("lifecycle_contract", LEGACY_LIFECYCLE_CONTRACT) != LEGACY_LIFECYCLE_CONTRACT
+              and workflow_lifecycle_errors(profile)}
+    if review:
+        return {"action": "review_workflow_router", "path": str(path), "profiles": list(review),
+                "errors": review, "backup": ""}
     changed = False
     upgraded_profiles: list[str] = []
     for name, profile in profiles.items():
         route_order = profile.get("route_order", [])
         if not isinstance(route_order, list):
             route_order = [str(route_order)]
-        if route_order_needs_lifecycle_upgrade(route_order):
+        if route_order_needs_lifecycle_upgrade(route_order, profile.get("lifecycle_contract", LEGACY_LIFECYCLE_CONTRACT)):
             profile["route_order"] = normalize_route_order(route_order)
             changed = True
             upgraded_profiles.append(name)
@@ -6934,6 +6919,13 @@ def run_postflight_gate(project_root: Path, run_dir: Path, summary: str, allow_p
         "hook_sha": hashlib.sha256(hook.read_bytes()).hexdigest(), "summary": summary,
         "inputs": evaluation_fingerprint(project_root, task_id, run_dir.name)}, sort_keys=True))
     journal = run_dir / "postflight-attempt.json"
+    evidence = run_dir / "postflight.md"
+    if not journal.exists() and (evidence.exists() or parse_scalar_values(run_dir / "run.yaml", {"status"}).get("status") == "completed"):
+        detail = "legacy postflight evidence or completed run has no attempt journal; reconcile its real side effect before retrying"
+        if allow_pending_reason.strip():
+            return {"sync_status": "PENDING", "status_marker": "", "postflight": str(evidence),
+                    "pending_reason": detail + ": " + allow_pending_reason.strip()}
+        raise ValueError(detail)
     if journal.exists():
         previous = json.loads(read_text(journal))
         evidence = run_dir / "postflight.md"
@@ -8576,6 +8568,13 @@ def build_task_route(project_root: Path, task_id: str | None, task_type: str | N
             "recommended_action": "add a route profile under .agent-os/workflows/router.yaml before mutation",
         }
 
+    if "lifecycle_contract" in profile:
+        errors = workflow_lifecycle_errors(profile)
+        if errors:
+            return {"status": "human_triage_required", "task_id": task_id, "task_type": task_type,
+                    "reason": "; ".join(errors),
+                    "recommended_action": "review the declared lifecycle contract; do not silently downgrade it"}
+
     return {
         "status": "routed",
         "task_id": task_id,
@@ -8587,6 +8586,7 @@ def build_task_route(project_root: Path, task_id: str | None, task_type: str | N
         "allow_external_controlled": profile.get("allow_external_controlled", ""),
         "allowed_outputs": profile.get("allowed_outputs", []),
         "notes": profile.get("notes", []),
+        **({"lifecycle_contract": profile["lifecycle_contract"]} if "lifecycle_contract" in profile else {}),
     }
 
 

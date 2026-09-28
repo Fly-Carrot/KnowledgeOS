@@ -9,7 +9,7 @@
 [![CLI](https://img.shields.io/badge/interface-natural%20language%20%2B%20CLI-f97316?style=for-the-badge&labelColor=0b1020)](docs/executable-control-plane.md)
 [![Guardrails](https://img.shields.io/badge/guardrails-route%20%2B%20write%20%2B%20eval-22c55e?style=for-the-badge&labelColor=0b1020)](docs/route-bound-execution-guard.md)
 [![Capabilities](https://img.shields.io/badge/capabilities-MCP%20%2B%20skills%20%2B%20subagents-38bdf8?style=for-the-badge&labelColor=0b1020)](docs/capability-orchestration.md)
-[![Tests](https://img.shields.io/badge/tests-66%20unit%20%2B%2030%20guardrail%20checkpoints-10b981?style=for-the-badge&labelColor=0b1020)](examples/scenarios)
+[![Tests](https://img.shields.io/badge/tests-214%20unit%20%2B%2030%20guardrail%20checkpoints-10b981?style=for-the-badge&labelColor=0b1020)](docs/reports/lean-batch3-validation.md)
 
 ![KnowledgeOS hero banner](docs/assets/knowledgeos-hero.svg)
 
@@ -41,6 +41,13 @@ This first public build is ad-hoc signed and not notarized. On macOS, use **Righ
 ---
 
 ## The Short Version
+
+**Lean candidate update:** shorter entry rules and evidence-preserving lifecycle
+compatibility are available on the development candidate, not a certified
+stable release. See the [Batch 3 scope](docs/specs/lean-batch3.md) and
+[validation report](docs/reports/lean-batch3-validation.md). Validate a fresh
+source download with `make release-smoke`; `make smoke` checks the maintainer's
+local build history. Exact-model qualification remains pending.
 
 KnowledgeOS turns an ordinary project folder into an **observable agent workspace**.
 

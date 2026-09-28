@@ -164,14 +164,18 @@ class RuntimeContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             plan = self.plan(); plan["dispatch_reuse"] = "reused"
+            plan["steps"] = []
             old = {"generated_by": "knowledgeos", "event_type": "dispatch-task", "task_id": "T1", "run_id": "R1",
-                   "dispatch_fingerprint": plan["dispatch_fingerprint"]}
+                   "dispatch_fingerprint": plan["dispatch_fingerprint"], "status": "dispatch_ready",
+                   "required_stages": [], "planned_tools": []}
             with patch.object(cli, "ensure_run_belongs_to_task", return_value=root), \
                  patch.object(cli, "load_command_events", return_value=[old]), \
+                 patch.object(cli, "record_checkpoint_producer", return_value={}) as checkpoint, \
                  patch.object(cli, "append_command_event") as append:
                 record = cli.record_dispatch_event(root, "T1", "R1", plan)
                 self.assertEqual(record["record_reuse"], "reused")
                 append.assert_not_called()
+                checkpoint.assert_called_once()
 
     def test_registry_is_not_host_evidence(self):
         value = cli.tool_summary(ENTRY)

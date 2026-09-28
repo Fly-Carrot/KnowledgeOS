@@ -2,6 +2,16 @@
 
 Before publishing KnowledgeOS, verify:
 
+- run `make release-smoke` in a clean export of the exact public tree; it
+  creates fresh runtime/project state instead of expecting ignored maintainer
+  history. `make smoke` remains the local build-state check;
+- missing public files and raw-material writes still fail; release checks do
+  not repair or relax a broken local doctor;
+- record the branch, commit/tree, exact checks and pending model matrix; no
+  supported-model or stable-release claim without the corresponding evidence;
+- exclude new root `.agent-os/` ledger changes and `.knowledgeos-local/` from
+  staging; templates, not private run history, initialize consumer projects;
+
 - no personal absolute paths in public docs or templates;
 - no API keys or secret values;
 - local migration content stays under `.knowledgeos-local/` and is not shipped;

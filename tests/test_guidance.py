@@ -53,7 +53,7 @@ class GuidanceTests(unittest.TestCase):
         self.assertNotEqual(first, guidance.configuration_fingerprint(self.root))
 
     def test_views_share_contract_and_lean_finish(self):
-        for view in (cli.build_agent_guide, cli.build_startup_prompt):
+        for view in (cli.build_agent_guide,):
             text = view(self.root)
             normal = text.split('## Normal Path')[1].split('## Contextual Index')[0]
             self.assertIn('eval-task', normal)
@@ -63,6 +63,9 @@ class GuidanceTests(unittest.TestCase):
             self.assertIn('review and execute require actual evidence', text)
             self.assertIn('reset-project', text)
             self.assertIn('recovered_from=timed_out', text)
+        startup = cli.build_startup_prompt(self.root)
+        self.assertIn('agent-guide --project-root', startup)
+        self.assertIn(guidance.REPORT_RULE, startup)
 
     def test_normal_path_uses_run_binding_not_repeat_dispatch(self):
         for mode in ('compact', 'guided'):
@@ -78,6 +81,8 @@ class GuidanceTests(unittest.TestCase):
         for path, surface in (('AGENTS.md', 'entry'), ('.agent-os/startup-prompt.md', 'startup')):
             self.assertEqual((templates / path).read_text(), guidance.render_guidance(
                 'CHANGE_ME_PROJECT_ROOT', 'CHANGE_ME_KNOWLEDGEOS_BIN', surface=surface))
+        self.assertEqual((templates.parent / 'global-agent-rules.md').read_text(), guidance.render_guidance(
+            '.', 'CHANGE_ME_KNOWLEDGEOS_BIN', surface='global'))
 
     def test_custom_sections_preserved(self):
         generated = guidance.render_guidance(self.root, 'kos')
@@ -115,6 +120,38 @@ class GuidanceTests(unittest.TestCase):
     def test_paths_are_shell_quoted(self):
         text = guidance.render_guidance('/tmp/a project', '/tmp/a bin/kos')
         self.assertIn("'/tmp/a bin/kos' doctor --project-root '/tmp/a project' --summary", text)
+
+    def test_entry_surfaces_load_the_guide_instead_of_repeating_it(self):
+        for surface in ('entry', 'startup', 'global'):
+            with self.subTest(surface=surface):
+                text = guidance.render_guidance('.', 'kos', surface=surface)
+                self.assertLess(len(text), 3600)
+                self.assertIn('kos agent-guide --project-root .', text)
+                self.assertNotIn('### Parameter Examples', text)
+                self.assertIn(guidance.REPORT_RULE, text)
+                self.assertIn('legacy', text)
+                self.assertIn('unavailable', text)
+                self.assertIn('in-flight', text)
+                self.assertIn('any write/external side effect', text)
+                self.assertIn('failed, empty, truncated or incompatible', text)
+                for marker in ('KOS_DECISION', 'BOOT_OK', 'CHECKPOINT_OK', 'CAPABILITY_OK',
+                               'AGENT_DISPATCH_PLAN', 'AGENT_DISPATCH_OK', 'FLOW_OK', 'SYNC_OK'):
+                    self.assertIn(marker, text)
+
+    def test_global_entry_does_not_capture_project_specific_config(self):
+        first = guidance.render_guidance(self.root, 'kos', surface='global')
+        self.config('project:\n  guidance_mode: invalid\n')
+        second = guidance.render_guidance(self.root, 'kos', surface='global')
+        self.assertEqual(first, second)
+        self.assertNotIn(str(self.root), first)
+        self.assertIn('kos agent-guide --project-root .', first)
+
+    def test_route_contract_changes_invalidate_guidance_fingerprint(self):
+        before = guidance.configuration_fingerprint(self.root)
+        router = self.root / '.agent-os/workflows/router.yaml'
+        router.parent.mkdir()
+        router.write_text('workflows:\n  report_task:\n    lifecycle_contract: producer-bound-v1\n')
+        self.assertNotEqual(before, guidance.configuration_fingerprint(self.root))
 
 
 if __name__ == '__main__':

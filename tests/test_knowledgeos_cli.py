@@ -140,33 +140,54 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertTrue(all(item["ok"] for item in payload), payload)
         self.assertTrue(any(item["label"] == "public_scan" for item in payload))
 
-    def test_doctor_summary_reduces_output(self):
-        full = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(ROOT))
-        summary = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(ROOT), "--summary")
-        self.assertIn("status: ok", summary.stdout)
-        self.assertIn("checks:", summary.stdout)
-        self.assertIn("failed: 0", summary.stdout)
-        self.assertNotIn("[OK]", summary.stdout)
-        self.assertLess(len(summary.stdout.splitlines()), len(full.stdout.splitlines()))
+    def doctor_fixture(self, directory):
+        project = Path(directory) / 'project'
+        runtime = Path(directory) / 'runtime'
+        project.mkdir()
+        self.run_cli('init-os', '--root', str(ROOT), '--os-root', str(runtime))
+        self.run_cli('init-project', '--root', str(ROOT), '--project-root', str(project),
+                     '--name', 'Doctor fixture', '--global-root', str(runtime / 'global-agent-fabric'),
+                     '--capability-root', str(runtime / 'capability-layer'))
+        return project, runtime
 
-        json_summary = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(ROOT), "--summary", "--json")
-        payload = json.loads(json_summary.stdout)
-        self.assertEqual(payload["status"], "ok")
-        self.assertGreater(payload["checks"], 0)
-        self.assertEqual(payload["failed"], 0)
-        self.assertEqual(payload["failed_checks"], [])
+    def test_doctor_summary_reduces_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _ = self.doctor_fixture(tmp)
+            full = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project))
+            summary = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary")
+            self.assertIn("status: ok", summary.stdout)
+            self.assertIn("checks:", summary.stdout)
+            self.assertIn("failed: 0", summary.stdout)
+            self.assertNotIn("[OK]", summary.stdout)
+            self.assertLess(len(summary.stdout.splitlines()), len(full.stdout.splitlines()))
+
+            json_summary = self.run_cli("doctor", "--root", str(ROOT), "--project-root", str(project), "--summary", "--json")
+            payload = json.loads(json_summary.stdout)
+            self.assertEqual(payload["status"], "ok")
+            self.assertGreater(payload["checks"], 0)
+            self.assertEqual(payload["failed"], 0)
+            self.assertEqual(payload["failed_checks"], [])
 
     def test_doctor_project_relative_paths_resolve_from_project_root(self):
         with tempfile.TemporaryDirectory() as tmp:
+            project, runtime = self.doctor_fixture(tmp)
+            for name in ('workspace.yaml', 'fabric-link.yaml'):
+                config = project / '.agent-os' / name
+                config.write_text(config.read_text().replace(str(runtime), '../runtime'))
             result = self.run_cli(
                 "doctor",
                 "--root",
                 str(ROOT),
                 "--project-root",
-                str(ROOT),
+                str(project),
                 "--summary",
                 cwd=tmp,
             )
+            (runtime / 'global-agent-fabric/schemas/phase-contract.md').unlink()
+            broken = self.run_cli('doctor', '--root', str(ROOT), '--project-root', str(project),
+                                  '--summary', cwd=tmp, check=False)
+            self.assertNotEqual(broken.returncode, 0)
+            self.assertIn('phase-contract.md', broken.stdout)
         self.assertIn("status: ok", result.stdout)
         self.assertIn("failed: 0", result.stdout)
 
@@ -4604,21 +4625,22 @@ class KnowledgeOSCliTests(unittest.TestCase):
             project.mkdir()
             self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project), "--name", "Example")
             result = self.run_cli("startup-prompt", "--project-root", str(project))
-            self.assertIn("trace-step", result.stdout)
+            self.assertIn("agent-guide --project-root", result.stdout)
+            self.assertIn("legacy", result.stdout)
+            self.assertIn("unavailable", result.stdout)
             self.assertIn("TRACE_OK", result.stdout)
-            self.assertIn("phase-task", result.stdout)
             self.assertIn("CHECKPOINT_OK", result.stdout)
             self.assertIn("AGENT_DISPATCH_PLAN", result.stdout)
-            self.assertIn("capability-event", result.stdout)
             self.assertIn("CAPABILITY_OK", result.stdout)
             self.assertIn("dispatch-report", result.stdout)
             self.assertIn("AGENT_DISPATCH_OK", result.stdout)
-            self.assertIn("artifact-assert", result.stdout)
             self.assertIn("EFFECT_OK", result.stdout)
-            self.assertIn("verify-effects", result.stdout)
-            self.assertIn("EFFECT_VERIFY_OK", result.stdout)
-            self.assertIn("flow-summary", result.stdout)
             self.assertIn("FLOW_OK", result.stdout)
+            # Detailed instructions are loaded once, not duplicated in every entry.
+            guide = self.run_cli("agent-guide", "--project-root", str(project)).stdout
+            for command in ("trace-step", "phase-task", "capability-event", "artifact-assert",
+                            "verify-effects", "EFFECT_VERIFY_OK", "flow-summary"):
+                self.assertIn(command, guide)
 
     def test_static_prompt_contracts_require_dispatch_report_markers(self):
         template = (ROOT / "templates" / "project-control-plane" / "AGENTS.md").read_text(encoding="utf-8")

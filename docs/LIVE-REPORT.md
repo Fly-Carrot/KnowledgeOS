@@ -2,6 +2,146 @@
 
 This file is the real-time construction log for the local KnowledgeOS build.
 
+## 2026-09-28 - Lean Batch 3 Candidate Qualification
+
+The user selected candidate publication first and explicitly deferred the
+exact-model matrix. See the [Batch 3 Spec](specs/lean-batch3.md) and
+[validation report](reports/lean-batch3-validation.md). No main merge, stable
+tag, dirty installed-kernel replacement or bulk live-project migration.
+
+A clean export exposed ten missing maintainer-only artifacts in the local
+smoke target. A separate `release-smoke` now initializes real disposable state,
+without suppressing doctor failures or fabricating historical outputs. A
+read-only review also found valid legacy interleaved checkpoints were falsely
+rejected by the new static ordering check. Both defects reproduced before
+repair; targeted regressions passed and the full clean-export suite is recorded
+in the linked report. No exact-model compatibility claim is made.
+
+The final repaired clean-export run passed **214 tests** and **30 guardrail
+scenarios**, with a fresh project doctor at **401/401**. Two old doctor tests
+were repaired to initialize independent fixtures instead of borrowing private
+developer history; their summary assertions and real relative-path checks
+remain intact. The installed checkout stayed unchanged. Publication excludes
+the newly generated local ledgers and uses the existing draft candidate PR.
+
+## 2026-09-28 - Launcher Repair And Lean Batch 2
+
+Scope: [Batch 2 Spec](specs/lean-batch2.md). Continue in the isolated candidate,
+preserve Batch 1 changes and the independently dirty installed checkout. No
+main merge, GitHub push, model certification, or bulk project migration.
+
+### Reproduction And Changes
+
+- The deferred launcher defect reproduced with a temporary shadow package:
+  the absolute CLI printed the shadow marker. Root-pinned `runpy` now selects
+  its own package without changing the caller's directory. Both regression
+  tests and all 13 Batch 1 tests passed before starting the next step.
+- Startup/project entry surfaces duplicated approximately 8,800 characters of
+  detailed instructions. Failing tests established the new short-entry budget
+  and shared-source requirement. Generated entries now load `agent-guide`
+  instead of duplicating the full lifecycle. This measures entry size, not a
+  guarantee of total token savings after on-demand guidance is loaded.
+- A workflow-router change did not affect the guidance fingerprint. A failing
+  regression now passes after adding the actual router path to config inputs.
+- Independent read-only review identified legacy-client fallback, side effects
+  in otherwise simple tasks, custom delegation authority and safe rollback as
+  critical boundaries. Entries explicitly retain these; custom authorization
+  belongs outside the generated product block.
+- Checkpoint reporting remains explicit. Grouping adjacent markers reduces
+  repetitive text without removing warning, failure, pending or skip details.
+
+### Verification And Local Activation
+
+- `make smoke`: **210 tests passed**, **30 guardrail scenarios passed**, with
+  doctor, route, registry, dispatch and write-guard smoke checks.
+- Targeted launcher plus Batch 1 regressions: **15 passed**; guidance checks:
+  **17 passed**; pilot suite: **3 passed**, including four project-type/mode
+  combinations, active-run preservation and rollback, and failed-load refusal.
+- Candidate doctor: **1,564 passed, 0 failed** at verification time. Installed
+  doctor after launcher activation: **1,213 passed, 0 failed**. Syntax and
+  whitespace checks passed.
+- The local Codex global entry was actually activated with a reviewed backup,
+  exact target hashes, dry-run, interrupted-install/idempotency rehearsal,
+  byte-exact rollback rehearsal and refusal to overwrite later user edits.
+  Its size changed from **5,444 to 4,461 bytes**; personal communication rules
+  and the standing delegation authorization were preserved verbatim.
+- Only the installed launcher and global entry were deployed. All other
+  tracked installed files matched the captured pre-migration hashes. The
+  installed legacy `agent-guide` output was byte-identical before and after.
+  The temporary two-target external-write permission was then removed.
+- Existing chats were not restarted and no task/run/Spec binding was migrated.
+  The current chat received the refreshed entry, but other clients may load it
+  only on their next context refresh or startup. This is not an all-chat or
+  exact-model qualification claim; the project pilot is deterministic.
+- Public changes remain local on the isolated candidate branch. Backups,
+  private hashes and migration receipts remain ignored local state, not public
+  release artifacts. GitHub publication and broader rollout remain Batch 3.
+
+## 2026-09-28 - Lean Batch 1: Compatibility Before Rollout
+
+Status: isolated implementation candidate on `codex/lean-batch1`; no installed
+CLI, global instructions, or live projects switched. See the
+[Batch 1 Spec](specs/lean-batch1.md) for scope and recovery boundaries.
+
+### Reproduction And Repair
+
+| Defect | Reproduction | Minimal repair |
+| --- | --- | --- |
+| Valid short routes rejected or expanded | Initialize a temporary project; remove redundant explicit dispatch/verifier hints under a short contract; run doctor and router repair | Shared version-aware validator; keep legacy defaults and preserve valid short routes byte-for-byte |
+| Invalid/unknown contracts silently normalized | Remove a required short-route step or declare an unknown contract, then request repair | Explicit review action and route refusal, without rewriting that router |
+| Unchanged dispatch hides an old skip decision | Start with a command-backed manual skip and legacy dispatch evidence, then repeat the same dispatch | Preserve matching manual decisions; changed dispatch inputs still invalidate reuse |
+| Interrupted dispatch cannot recover its checkpoint | Inject a failure between command evidence and checkpoint append, then repeat dispatch | Reuse successful command evidence while restoring its missing checkpoint |
+| Cached failed dispatch is treated as successful | Record a failed command attempt, then reuse the same computed plan | Require matching successful command data before reuse |
+| Legacy sync can replay an external action | Keep prior postflight evidence but no attempt journal, reevaluate and complete | Refuse ambiguous replay; allow explicit pending with reason while retaining old evidence |
+
+The targeted failing tests were run before the corresponding fixes. The legacy
+skip test also reproduced the failure against the baseline dispatch function.
+Recovery tests use real temporary projects and shell-hook counters, not real
+user outputs or remote services. A previous reuse-only unit fixture now includes
+a successful command schema and tests checkpoint recovery separately, rather
+than assuming an incomplete record proves completion.
+
+The first repository smoke caught a compatibility regression in the new
+validator: legacy preflight dispatch was incorrectly required to have a run id.
+A failing test now distinguishes preflight inspection from run-bound evidence;
+the validator was corrected without modifying the existing project router.
+
+One bounded, read-only runtime subagent reviewed active-run compatibility and
+returned concrete findings. Its terminal result and cleanup were observed. This
+does not claim native-role or cross-model runtime qualification.
+
+### Verification
+
+- Batch 1 targeted compatibility suite: **13 passed**.
+- `make smoke`: **passed**, including all **202 unit tests**, **30 guardrail
+  scenarios**, doctor, route, registry, dispatch, and write-guard smoke checks.
+- Candidate repository doctor: **1,529 passed, 0 failed** at regression time.
+  Consolidating duplicated router checks changes the check count, not the
+  number of required lifecycle phases.
+- Original workspace using the installed CLI from its original working
+  directory: **1,213 passed, 0 failed**; no installed files were edited.
+- `python3 -B -m py_compile knowledgeos/cli.py` and `git diff --check`: passed.
+- Public changed-source/document scans found no added local home paths or
+  credential-pattern matches. Private run/spec/thread ledgers are not release
+  artifacts. No GitHub publication was performed.
+
+### Known Boundary Before Rollout
+
+A separate launcher defect was reproduced during cross-directory validation:
+an absolute `bin/knowledgeos` invocation from a directory containing another
+`knowledgeos` Python package can load that directory's package because `python
+-m` searches the working directory before `PYTHONPATH`. A disposable shadow
+package reproduced this without touching user data. Do not interpret an
+absolute launcher path alone as proof of which checkout executed.
+
+The current task's route rejects writes to `bin/knowledgeos`; that guard was
+respected. The launcher was not changed or silently worked around in product
+code. Candidate tests ran from the candidate checkout; installed validation ran
+from the original workspace. Fix and test launcher-root pinning under an
+appropriately scoped task **before global rollout**. Batch 1's bounded lifecycle
+work is validated, not a claim that every pre-existing system defect is fixed.
+Local postflight success does not imply global rollout or GitHub synchronization.
+
 ## 2026-09-15 - Correctness And Lean Orchestration Candidate
 
 Status: integration candidate; see final verification below before rollout.
