@@ -52,6 +52,10 @@ entry stays under 200 words, excluding personal rules. Completion uses one short
 receipt with actual status, verification and a record link. No extra hook,
 background service, database or tool-call ledger is required.
 
+Optional: the [Codex guidance reminder](docs/guidance-refresh-hook.md) helps
+existing chats notice changed rules. It is read-only, non-blocking, and adds no
+required task steps. Installation includes explicit hook trust review.
+
 KnowledgeOS is optional for a new project. Initialization and migration remain
 explicitly authorized operations; missing configuration in a managed project does
 not silently relax its rules. Raw data protection, approvals, real validation and
