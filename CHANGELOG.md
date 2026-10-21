@@ -4,6 +4,16 @@ All notable KnowledgeOS changes are recorded here in a public, repository-friend
 
 KnowledgeOS is still a working prototype, so versions below describe capability milestones rather than packaged releases. Ordinary workflows stay small; existing strict and legacy contracts remain supported.
 
+## Unreleased
+
+- Add an optional read-only Codex `UserPromptSubmit` guidance reminder, displayed
+  as `KnowledgeOS`. It emits a short rule revision hint without running lifecycle
+  commands, initializing projects, changing active runs or blocking on read errors.
+- Document manual installation, preserving existing hooks, explicit trust review,
+  a smoke check and removal. No global rule or workflow is changed automatically.
+- Resolve the adjacent launcher instead of assuming a home-directory checkout;
+  cover relocated checkouts, bounded reads and fail-open behavior with tests.
+
 ## 0.3.0 - 2026-10-21
 
 - Fix read-policy path alias bypasses, preserve explicit per-task confirmation in ordinary eligibility, enforce read restrictions before custody hashing, and revalidate relocated artifact contents. Each defect has a pre-fix failing regression.
