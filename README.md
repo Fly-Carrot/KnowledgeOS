@@ -2,14 +2,14 @@
 
 # KnowledgeOS
 
-### An intent-driven operating layer for AI agents, knowledge work, and software development.
+### Project constraints, research evidence and verified handoffs. Your agent does the work.
 
 [![Status](https://img.shields.io/badge/status-working%20prototype-00f5ff?style=for-the-badge&labelColor=0b1020)](docs/LIVE-REPORT.md)
 [![AgentOS](https://img.shields.io/badge/AgentOS-control%20plane-7c3aed?style=for-the-badge&labelColor=0b1020)](docs/agentos-architecture.md)
 [![CLI](https://img.shields.io/badge/interface-natural%20language%20%2B%20CLI-f97316?style=for-the-badge&labelColor=0b1020)](docs/executable-control-plane.md)
 [![Guardrails](https://img.shields.io/badge/guardrails-route%20%2B%20write%20%2B%20eval-22c55e?style=for-the-badge&labelColor=0b1020)](docs/route-bound-execution-guard.md)
 [![Capabilities](https://img.shields.io/badge/capabilities-MCP%20%2B%20skills%20%2B%20subagents-38bdf8?style=for-the-badge&labelColor=0b1020)](docs/capability-orchestration.md)
-[![Tests](https://img.shields.io/badge/tests-214%20unit%20%2B%2030%20guardrail%20checkpoints-10b981?style=for-the-badge&labelColor=0b1020)](docs/reports/lean-batch3-validation.md)
+[![Tests](https://img.shields.io/badge/tests-regression%20%2B%20guardrails-10b981?style=for-the-badge&labelColor=0b1020)](docs/lean-workflow.md)
 
 ![KnowledgeOS hero banner](docs/assets/knowledgeos-hero.svg)
 
@@ -42,28 +42,27 @@ This first public build is ad-hoc signed and not notarized. On macOS, use **Righ
 
 ## The Short Version
 
-**Lean candidate update:** shorter entry rules and evidence-preserving lifecycle
-compatibility are available on the development candidate, not a certified
-stable release. See the [Batch 3 scope](docs/specs/lean-batch3.md) and
-[validation report](docs/reports/lean-batch3-validation.md). Validate a fresh
-source download with `make release-smoke`; `make smoke` checks the maintainer's
-local build history. Exact-model qualification remains pending.
+**v0.3.0: lean project workflow.** New unmanaged directories work without an
+initialization prompt. Adopted ordinary projects use `run-task`, actual work and
+tests, `eval-task`, then `complete-task`. Research retains sources, meaningful
+decisions and a brief handoff. Existing runs keep their contracts and permissions.
 
-KnowledgeOS turns an ordinary project folder into an **observable agent workspace**.
+Read the [workflow and upgrade guide](docs/lean-workflow.md). The generated global
+entry stays under 200 words, excluding personal rules. Completion uses one short
+receipt with actual status, verification and a record link. No extra hook,
+background service, database or tool-call ledger is required.
 
-Instead of letting an AI agent improvise from chat memory, KnowledgeOS gives every project a small operating layer:
+KnowledgeOS is optional for a new project. Initialization and migration remain
+explicitly authorized operations; missing configuration in a managed project does
+not silently relax its rules. Raw data protection, approvals, real validation and
+required postflight stay enforced. Optional apps and older full-lifecycle commands
+remain available for projects that need them.
 
-- a project control plane under `.agent-os/`;
-- a fixed lifecycle for tasks, routes, runs, evals, receipts, and handoffs;
-- a write guard that protects raw materials and sensitive paths;
-- a cold archive policy for historical files that should be stored but not read by default;
-- a capability bus for MCP servers, skills, workflows, subagents, and orchestrators;
-- a kernel module for boot discipline, phase logs, memory lanes, and postflight sync;
-- a future-ready workbench model for visualizing the whole system.
+Validate a clean checkout with `make release-smoke`. Model-specific qualification
+remains unverified; deterministic tests are not a certification of model behavior.
 
-The philosophy is simple:
-
-> Classifications can stay extensible. The lifecycle must stay fixed.
+The detailed system map below describes the available components, not mandatory
+steps for every task. Workbench downloads above are separate, older app releases.
 
 ---
 

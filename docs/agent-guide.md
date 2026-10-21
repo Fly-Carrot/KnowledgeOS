@@ -1,3 +1,16 @@
+# Choosing The Applicable Guide (v0.3.0)
+
+Use `knowledgeos agent-guide --project-root .` for current project-specific
+guidance. Unmanaged directories work normally without initialization prompts;
+simple questions need no task. Eligible adopted ordinary runs use `run-task`,
+actual work/verification, `eval-task` and `complete-task`, with one truthful final
+receipt. Preserve research evidence, project permissions and required sync.
+
+The retained generated block below is a **legacy/strict reference**, not an
+always-run startup sequence. Its generic initialization prompts do not override
+the current unmanaged-work rule. Existing active contracts remain binding. See
+[Lean project workflow](lean-workflow.md) for migration and compatibility limits.
+
 <!-- KNOWLEDGEOS:GUIDANCE:BEGIN -->
 # KnowledgeOS Agent Guide
 

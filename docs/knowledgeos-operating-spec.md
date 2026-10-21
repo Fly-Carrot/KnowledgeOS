@@ -2,10 +2,21 @@
 
 This document is the detailed companion to the root `SPEC.md`.
 
+## v0.3.0 Scope
+
+The full lifecycle and lanes below describe available strict-profile capabilities,
+not mandatory steps for every task. Unmanaged work does not initialize KnowledgeOS
+or ask to do so. Eligible adopted ordinary runs use run, actual work/verification,
+eval and complete, followed by one evidence-backed receipt. Existing run bindings,
+project restrictions, research evidence and required postflight remain intact.
+See [Lean project workflow](lean-workflow.md); the installed `agent-guide` selects
+the applicable contract. This scope takes precedence over older universal wording
+in the detailed architecture below.
+
 ## Product Doctrine
 
 ```text
-KnowledgeOS = small kernel + pluggable modules + optional apps + project-level strictness + mandatory checkpoint reporting
+KnowledgeOS = small kernel + pluggable modules + optional apps + project-level strictness + evidence-backed reporting
 ```
 
 The architecture is designed to keep the kernel small while making long-running agent work observable and auditable.

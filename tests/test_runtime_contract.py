@@ -91,6 +91,7 @@ class RuntimeContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run = root / "run"; run.mkdir()
+            (run / "run.yaml").write_text("run_id: R1\ntask_id: T1\nstatus: started\n")
             (root / ".agent-os").mkdir()
             task = {"id": "T1", "type": "engineering_change"}
             host = snapshot()

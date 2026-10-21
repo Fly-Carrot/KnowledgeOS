@@ -2,9 +2,27 @@
 
 All notable KnowledgeOS changes are recorded here in a public, repository-friendly form.
 
-KnowledgeOS is still a working prototype, so versions below describe capability milestones rather than packaged releases. The project follows this principle: classifications can remain extensible, but the lifecycle must remain fixed and observable.
+KnowledgeOS is still a working prototype, so versions below describe capability milestones rather than packaged releases. Ordinary workflows stay small; existing strict and legacy contracts remain supported.
 
-## Unreleased
+## 0.3.0 - 2026-10-21
+
+- Fix read-policy path alias bypasses, preserve explicit per-task confirmation in ordinary eligibility, enforce read restrictions before custody hashing, and revalidate relocated artifact contents. Each defect has a pre-fix failing regression.
+- Keep custody hashing compatible with Python 3.10 using bounded streaming reads.
+- Preserve completed legacy dispatch against checksum-verified archived specs; keep active and modern frozen bindings strict. Return dispatch validation failures as diagnostics instead of aborting the whole project check.
+
+### Lean project workflow
+
+- Allow normal work in unmanaged directories without initialization prompts or automatic control-plane creation.
+- Reduce explicitly adopted ordinary runs to run, real work/validation, evaluation and completion; preserve legacy bindings and strict policies.
+- Bind result-v1 checks to acceptance criteria and relevant input/output revisions; reject failed, missing, stale or tampered verification.
+- Support authorized future-default adoption without rewriting policy bytes or historical evidence.
+- Unify English guidance and require one concise evidence-backed final receipt; preserve research sources, material decisions, uncertainty and handoff notes.
+- Preserve required sync, path permissions, raw-data protection and specific approvals. Do not treat optional observation failures as proof of task failure.
+- Include output custody/retirement handling so authorized cleanup need not fabricate outputs or rewrite completed task history.
+- Add clean-distribution CI on Linux/macOS and Python 3.10/3.13; retain regression tests for startup diagnostics and shell-quoted paths.
+- Document safe rollout, rollback and conservative cleanup in `docs/lean-workflow.md`. Exact-model qualification and automatic context refresh remain out of scope.
+
+## Earlier unreleased changes
 
 ### Startup Diagnostics Hotfix
 

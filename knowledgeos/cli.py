@@ -19,14 +19,20 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
+if __package__:
+    from . import output_registry
+else:
+    import output_registry
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from knowledgeos.history_policy import history_arguments, validate_fork_turns
@@ -387,9 +393,11 @@ class CheckResult:
     ok: bool
     label: str
     detail: str
+    severity: str = "error"
 
     def as_dict(self) -> dict[str, Any]:
-        return {"ok": self.ok, "label": self.label, "detail": self.detail}
+        return {"ok": self.ok, "label": self.label, "detail": self.detail,
+                **({"severity": "warning"} if self.severity == "warning" else {})}
 
 
 def knowledgeos_root_from_file() -> Path:
@@ -1363,11 +1371,42 @@ def dispatch_authorization(project_root: Path, task_id: str, task: dict[str, Any
     }
 
 
+def dispatch_run_spec_binding(project_root: Path, task_id: str, run_dir: Path) -> dict[str, Any]:
+    """Read a completed legacy dispatch against its intact archived spec.
+
+    This is a planning-cache input, never permission to resume an old run.
+    Current-run and modern frozen-binding checks remain strict.
+    """
+    try:
+        return run_spec_binding(project_root, task_id, run_dir)
+    except ValueError as exc:
+        if not str(exc).startswith("spec drift:"):
+            raise
+        meta = parse_scalar_values(run_dir / "run.yaml", {"task_id", "run_id", "status"})
+        binding_path = run_dir / "spec-binding.json"
+        modern = binding_path.exists() and json.loads(read_text(binding_path)).get("binding_source") != "legacy_snapshot"
+        if meta.get("status") != "completed" or meta.get("task_id") != task_id or modern:
+            raise
+        snapshot = read_text(run_dir / "spec-snapshot.md")
+        archived = snapshot_metadata(run_dir / "spec-snapshot.md")
+        if "## Body\n" not in snapshot:
+            raise ValueError("historical spec snapshot has no body") from exc
+        body = snapshot.split("## Body\n", 1)[1].strip()
+        fingerprint = archived.get("Spec Fingerprint", "")
+        if content_fingerprint(body) != fingerprint:
+            raise ValueError("historical spec snapshot body fingerprint mismatch") from exc
+        return {"spec_id": archived["Spec ID"], "fingerprint": fingerprint,
+                "spec_fingerprint": fingerprint, "binding_source": "legacy_snapshot",
+                "binding_status": "legacy", "task_id": task_id, "thread_id": "",
+                "project_root": str(project_root.resolve()),
+                "title": archived.get("Spec Title", ""), "body": body}
+
+
 def dispatch_cache_inputs(project_root: Path, task: dict[str, Any], route: dict[str, Any],
                           policy: dict[str, Any], entries: list[dict[str, Any]],
                           host: dict[str, Any], run_dir: Path | None) -> str:
     binding_task = spec_binding_task(project_root, task["id"]) if (project_root / ".agent-os" / "tasks.yaml").exists() else task
-    binding = run_spec_binding(project_root, task["id"], run_dir) if run_dir else resolve_spec_binding(project_root, binding_task)
+    binding = dispatch_run_spec_binding(project_root, task["id"], run_dir) if run_dir else resolve_spec_binding(project_root, binding_task)
     files = sorted((project_root / ".agent-os").glob("*policy*.yaml"))
     project_policy = project_root / ".agent-os" / "project.yaml"
     if project_policy.exists():
@@ -1430,6 +1469,17 @@ def build_dispatch_plan(project_root: Path, task_id: str, *, run_id: str = "",
     entries = load_tool_registry(project_root)
     host_snapshot = load_host_capability_snapshot() if host_snapshot is None else host_snapshot
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id) if run_id else None
+    from knowledgeos.guidance import execution_contract
+    adopted = ordinary_run(project_root, task_id, run_id) if run_id else execution_contract(project_root) == "ordinary-v1"
+    if adopted:
+        # Retain legacy declarations for old runs; do not recommend unavailable
+        # default Maestro adapters as if registry presence were runtime access.
+        entries = [entry for entry in entries if not (
+            (entry.get("id") == "maestro" or entry.get("id", "").startswith("maestro-"))
+            and not tool_summary(entry, host_snapshot=host_snapshot).get("runtime_callable")
+            and entry.get("scope") in {"subagent-orchestration", "maestro-specialist-agent"}
+            and (entry.get("source_path", "") in {"", "external:maestro"}
+                 or entry.get("source_path", "").startswith("capability-layer/subagents/maestro/")))]
     fingerprint = dispatch_cache_inputs(project_root, task, route, policy, entries, host_snapshot, run_dir)
     preflight = project_root / ".knowledgeos-local" / "dispatch-preflight" / (hashlib.sha256(task_id.encode()).hexdigest() + ".json")
     cache_path = run_dir / "dispatch-plan.json" if run_dir else preflight
@@ -1640,6 +1690,11 @@ def classify_write(project_root: Path, target: str) -> dict[str, Any]:
             "inside_project": False,
         }
 
+    if relative == ".knowledgeos-local/future-defaults.json":
+        return {"decision": "human_gate_required",
+                "reason": "future workflow adoption is a policy change requiring explicit authorization",
+                "path": relative, "inside_project": True, "receipt_required": True}
+
     controlled_match = matches_any(relative, policy["controlled"])
     if controlled_match:
         receipt_match = matches_any(relative, policy["require_receipt_for"])
@@ -1845,6 +1900,7 @@ def create_task(
     outputs: list[str],
     acceptance: list[str],
     dry_run: bool = False,
+    inputs: list[str] | None = None,
 ) -> dict[str, Any]:
     ensure_safe_project_root(project_root)
     if status not in TASK_STATUSES:
@@ -1874,6 +1930,7 @@ def create_task(
         *[f"      - {yaml_scalar(item.strip())}" for item in outputs if item.strip()],
         "    acceptance:",
         *[f"      - {yaml_scalar(item.strip())}" for item in acceptance if item.strip()],
+        *([] if inputs is None else ["    inputs:", *[f"      - {yaml_scalar(item)}" for item in inputs]]),
     ]
     if not dry_run:
         current = read_text(tasks_path).rstrip()
@@ -2296,7 +2353,7 @@ def write_context_pack(project_root: Path, task_id: str, run_id: str, *, summary
     task = find_task(project_root, task_id)
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     route = build_task_route(project_root, task_id, None)
-    dispatch = build_dispatch_plan(project_root, task_id)
+    dispatch = build_dispatch_plan(project_root, task_id, run_id=run_id)
     snapshot = run_spec_binding(project_root, task_id, run_dir, thread_id=thread_id)
     decisions = parse_named_blocks(project_root / ".agent-os" / "decisions.yaml")
     eval_profiles = parse_indented_profile_keys(project_root / ".agent-os" / "evals.yaml", "evals")
@@ -2352,7 +2409,8 @@ def write_context_pack(project_root: Path, task_id: str, run_id: str, *, summary
         "## Attention Contract",
         "",
         "- Load this context pack before execution.",
-        "- Use plan.md as the current execution contract.",
+        ("- Use the bound task scope and relevant existing research plan; no separate plan.md is required."
+         if ordinary_run(project_root, task_id, run_id) else "- Use plan.md as the current execution contract."),
         "- If user intent conflicts with the spec snapshot, stop and run align-spec.",
         "",
     ]
@@ -2422,9 +2480,15 @@ def write_task_plan(project_root: Path, task_id: str, run_id: str, *, summary: s
         "- For medium, high, or complex tasks, include a readable FLOW_OK Mission Flow in the final answer.",
         "",
     ]
+    if ordinary_run(project_root, task_id, run_id):
+        lines = lines[:lines.index("## Checkpoint Requirement")] + [
+            "## Verification", "",
+            "- Preserve source references and material research decisions.",
+            "- Run actual scoped validation, eval-task, then complete-task.",
+            "- No manual phase or capability inventory is required by this ordinary contract.", ""]
     write_text(run_dir / "plan.md", "\n".join(lines).rstrip() + "\n")
     append_command_event(run_dir, "plan-task", task_id, run_id, status="written")
-    checkpoint = record_checkpoint_producer(project_root, task_id, run_id, producer="plan-task",
+    checkpoint = {} if ordinary_run(project_root, task_id, run_id) else record_checkpoint_producer(project_root, task_id, run_id, producer="plan-task",
                                            inputs={"task": task, "route": route, "outputs": outputs, "acceptance": acceptance, "summary": summary},
                                            evidence_paths=["plan.md", "context-pack.md", "spec-snapshot.md"])
     return {"status": "written", "task_id": task_id, "run_id": run_id, "plan": str(run_dir / "plan.md"), "checkpoint": checkpoint}
@@ -2436,11 +2500,15 @@ def snapshot_metadata(path: Path) -> dict[str, str]:
 
 def verify_context_contract(project_root: Path, task_id: str, run_id: str, *, allow_spec_drift: bool = False) -> dict[str, Any]:
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    ordinary = ordinary_run(project_root, task_id, run_id)
     errors: list[dict[str, Any]] = []
     context = run_dir / "context-pack.md"
     snapshot = run_dir / "spec-snapshot.md"
     plan = run_dir / "plan.md"
-    for label, path in [("context_pack", context), ("spec_snapshot", snapshot), ("plan", plan)]:
+    required = [("context_pack", context), ("spec_snapshot", snapshot)]
+    if not ordinary:
+        required.append(("plan", plan))
+    for label, path in required:
         if not path.exists():
             errors.append({"label": f"missing_{label}", "detail": str(path)})
     if context.exists() and "Generated By: knowledgeos context-pack" not in read_text(context):
@@ -2449,7 +2517,7 @@ def verify_context_contract(project_root: Path, task_id: str, run_id: str, *, al
         errors.append({"label": "invalid_plan", "detail": "plan.md missing generator marker"})
     if not has_command_event(run_dir, "context-pack", task_id, run_id):
         errors.append({"label": "missing_context_pack_command_event", "detail": "context-pack command evidence is missing"})
-    if not has_command_event(run_dir, "plan-task", task_id, run_id, status="written"):
+    if not ordinary and not has_command_event(run_dir, "plan-task", task_id, run_id, status="written"):
         errors.append({"label": "missing_plan_command_event", "detail": "plan-task command evidence is missing"})
     if snapshot.exists():
         metadata = snapshot_metadata(snapshot)
@@ -3632,13 +3700,21 @@ def archive_legacy_project(
 def evaluation_fingerprint(project_root: Path, task_id: str, run_id: str = "") -> str:
     """Bind an eval to artifacts and effective policy, not mutable run ledgers."""
     files: dict[str, str] = {}
+    scoped = bool(run_id and result_validation_contract(project_root, task_id, run_id))
     excluded = {"runs", "receipts", "handoffs", "threads", "specs"}
-    for output in task_declared_outputs(project_root, task_id):
+    inputs = parse_task_list_field(project_root / ".agent-os/tasks.yaml", "inputs").get(task_id, []) if scoped else []
+    for output in task_declared_outputs(project_root, task_id) + inputs:
+        if scoped:
+            validation_path(project_root, output)
         paths = list(project_root.glob(output)) if any(c in output for c in "*?[]") else [project_root / output]
         for path in paths:
             members = list(path.rglob("*")) if path.is_dir() else [path]
             for member in members:
                 relative = member.relative_to(project_root)
+                if scoped and output not in inputs and ignored_validation_member(member.relative_to(path) if member != path else Path(".")):
+                    continue
+                if scoped:
+                    validation_path(project_root, relative.as_posix())
                 if relative.parts[0] == ".agent-os" and (
                     len(relative.parts) > 1 and relative.parts[1] in excluded
                     or member.name in {"tasks.yaml", "specs.yaml"}
@@ -3655,6 +3731,13 @@ def evaluation_fingerprint(project_root: Path, task_id: str, run_id: str = "") -
                  "decision-policy.yaml", "evals.yaml", "fabric-link.yaml", "workflows/router.yaml"):
         path = project_root / ".agent-os" / name
         files["policy:" + name] = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "missing"
+    if scoped and future_defaults_bound(project_root, task_id, run_id):
+        from knowledgeos.guidance import future_defaults
+        receipt = future_defaults(project_root)
+        if receipt:
+            files["policy:future-defaults"] = content_fingerprint(json.dumps(receipt, sort_keys=True))
+        else:
+            files["policy:future-defaults"] = "missing"
     task = dict(find_task(project_root, task_id))
     task.pop("status", None)
     # Preserve historical fingerprints for native routes; only mapped tasks bind mapping evidence.
@@ -3668,7 +3751,216 @@ def evaluation_fingerprint(project_root: Path, task_id: str, run_id: str = "") -
         "acceptance": parse_task_acceptance(project_root / ".agent-os/tasks.yaml").get(task_id, [])}, sort_keys=True))
 
 
-def write_task_eval(project_root: Path, task_id: str, run_id: str, notes: str = "") -> dict[str, Any]:
+def result_validation_contract(project_root: Path, task_id: str, run_id: str) -> bool:
+    """New semantics are bound at start; never reinterpret existing run evidence."""
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    lines = read_text(run_dir / "run.yaml").splitlines()
+    values = [line.split(":", 1)[1].strip() for line in lines if line.startswith("validation_contract:")]
+    starts = [e for e in load_command_events(run_dir) if e.get("event_type") == "run-task"
+              and e.get("task_id") == task_id and e.get("run_id") == run_id]
+    declared = [e.get("validation_contract") for e in starts if e.get("validation_contract")]
+    if not values and not declared:
+        return False
+    if values != ["result-v1"] or declared != ["result-v1"] or len(starts) != 1:
+        raise ValueError("invalid or changed validation contract")
+    return True
+
+
+def ignored_validation_member(path: Path) -> bool:
+    # Explicitly named files are never ignored; only generated descendants.
+    return any(p in {".git", "__pycache__", ".pytest_cache", ".mypy_cache",
+                     ".ruff_cache", ".codex-trajectory"} for p in path.parts)
+
+
+def validation_path(root: Path, value: str, *, read: bool = True) -> Path:
+    path = Path(value)
+    if (not value or path.is_absolute() or ".." in path.parts
+            or any(c in value for c in "*?[]") or not path.parts):
+        raise ValueError(f"validation requires a bounded project path: {value}")
+    target = root / path
+    target.resolve().relative_to(root.resolve())
+    if any(p in {".git", ".env"} or "secret" in p.lower() for p in path.parts):
+        raise ValueError(f"validation cannot inspect sensitive/internal path: {value}")
+    for parent in [target, *target.parents]:
+        if parent == root:
+            break
+        if parent.is_symlink():
+            raise ValueError(f"validation rejects symlink path: {value}")
+    policy = load_read_policy(root)
+    canonical = path.as_posix()
+    for pattern in (policy.get("require_explicit_human_request", []) + policy.get("deny_indexing", []) if read else []):
+        if fnmatch.fnmatch(canonical, pattern) or fnmatch.fnmatch(canonical.rstrip("/") + "/", pattern):
+            raise ValueError(f"validation path requires explicit read approval: {value}")
+    if target.exists() and not target.is_file() and not target.is_dir():
+        raise ValueError(f"validation requires a regular file/directory: {value}")
+    return target
+
+
+def validation_dependencies(root: Path, paths: list[str]) -> dict[str, str]:
+    digests = {}
+    for value in sorted(set(paths)):
+        target = validation_path(root, value)
+        members = sorted(target.rglob("*")) if target.is_dir() else [target]
+        if not target.exists():
+            raise ValueError(f"missing validation input: {value}")
+        digests[value + "/"] = "directory" if target.is_dir() else "file"
+        for member in members:
+            relative = member.relative_to(root).as_posix()
+            validation_path(root, relative)
+            if member.is_file():
+                digests[relative] = hashlib.sha256(member.read_bytes()).hexdigest()
+            elif not member.is_dir():
+                raise ValueError(f"validation requires regular files: {relative}")
+    return digests
+
+
+def validate_result_checks(root: Path, task_id: str, checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    acceptance = parse_task_acceptance(root / ".agent-os/tasks.yaml").get(task_id, [])
+    if not isinstance(checks, list):
+        raise ValueError("checks must be a list")
+    for check in checks:
+        if not isinstance(check, dict) or check.get("kind") not in {"command", "file_contains", "json_key_equals", "manual"}:
+            raise ValueError("unknown validation kind")
+        covers = check.get("acceptance")
+        if (not isinstance(covers, list) or not covers or
+                any(type(n) is not int or n < 1 or n > len(acceptance) for n in covers)):
+            raise ValueError("validation acceptance must name existing 1-based criteria")
+        inputs = check.get("inputs", [])
+        if not isinstance(inputs, list) or any(not isinstance(p, str) for p in inputs):
+            raise ValueError("validation inputs must be project paths")
+        if check["kind"] == "command":
+            argv = check.get("argv")
+            if not isinstance(argv, list) or not argv or any(not isinstance(a, str) or not a or "\0" in a for a in argv):
+                raise ValueError("command validation requires an explicit argv array")
+            if not inputs:
+                raise ValueError("command validation must declare tested source/test inputs")
+        if check["kind"] in {"file_contains", "json_key_equals"}:
+            if not isinstance(check.get("path"), str) or "expect" not in check:
+                raise ValueError("file validation requires path and expected result")
+            validation_path(root, check["path"])
+            if check["kind"] == "file_contains" and (not isinstance(check["expect"], str) or not check["expect"].strip()):
+                raise ValueError("file_contains requires nonempty expected text")
+            if check["kind"] == "json_key_equals" and not isinstance(check.get("key"), str):
+                raise ValueError("json_key_equals requires key")
+        validation_dependencies(root, inputs)
+    return checks
+
+
+def result_fingerprint(root: Path, task_id: str, run_id: str, checks: list[dict[str, Any]]) -> str:
+    paths = parse_task_list_field(root / ".agent-os/tasks.yaml", "inputs").get(task_id, [])
+    for check in checks:
+        paths.extend(check.get("inputs", []))
+        if check.get("path"):
+            paths.append(check["path"])
+    return checkpoint_digest({"base": evaluation_fingerprint(root, task_id, run_id),
+                              "checks": checks, "inputs": validation_dependencies(root, paths)})
+
+
+def write_result_eval(root: Path, task_id: str, run_id: str, notes: str,
+                      checks: list[dict[str, Any]], execute: bool, dry_run: bool,
+                      timeout: float) -> dict[str, Any]:
+    ordinary_write_checks(root, task_id)
+    checks = validate_result_checks(root, task_id, checks)
+    run_dir = ensure_run_belongs_to_task(root, task_id, run_id)
+    check_digest = checkpoint_digest(checks)
+    current_checks = {checkpoint_digest(c) for c in checks}
+    for event in load_command_events(run_dir):
+        if event.get("event_type") != "eval-task" or not event.get("validation_check_digest"):
+            continue
+        previous = event.get("validation_checks")
+        if (not isinstance(previous, list)
+                or checkpoint_digest(previous) != event["validation_check_digest"]
+                or not {checkpoint_digest(c) for c in previous} <= current_checks):
+            raise ValueError("required validators changed; do not drop or replace bound acceptance checks")
+    if not 0 < timeout <= 3600:
+        raise ValueError("validation timeout must be >0 and <=3600 seconds")
+    if any(c["kind"] == "command" for c in checks) and not execute and not dry_run:
+        raise ValueError("review argv and scope, then explicitly use --execute-validators")
+    before = result_fingerprint(root, task_id, run_id, checks)
+    if dry_run:
+        return {"status": "dry_run", "checks": checks, "input_fingerprint": before,
+                "executes_commands": False, "writes_evidence": False}
+    results = []
+    for check in checks:
+        result = {"check": check, "status": "failed"}
+        try:
+            if check["kind"] == "manual":
+                result.update(status="unverified", detail="Requires human/scientific judgment; no automatic approval")
+            elif check["kind"] == "command":
+                # CLI argv is explicit caller intent, never evaluated from notes or a report.
+                with tempfile.TemporaryFile() as output:
+                    proc = subprocess.Popen(check["argv"], cwd=root, stdout=output,
+                        stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                        start_new_session=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+                    timed_out = False
+                    try:
+                        proc.wait(timeout=timeout)
+                    except subprocess.TimeoutExpired:
+                        timed_out = True
+                        if os.name == "posix":
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        else:
+                            proc.kill()
+                        proc.wait()
+                    output.seek(0)
+                    excerpt = output.read(16385)
+                result.update(status="passed" if proc.returncode == 0 and not timed_out else "failed",
+                              exit_status=proc.returncode, timed_out=timed_out,
+                              output=excerpt[:16384].decode("utf-8", errors="replace"),
+                              output_truncated=len(excerpt) > 16384)
+            else:
+                text = validation_path(root, check["path"]).read_text()
+                if check["kind"] == "file_contains":
+                    passed = check["expect"] in text
+                else:
+                    value = json.loads(text)
+                    for part in check["key"].split("."):
+                        value = value[part]
+                    passed = json.dumps(value, sort_keys=True) == json.dumps(check["expect"], sort_keys=True)
+                result.update(status="passed" if passed else "failed", detail="Checked actual file content")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            result["detail"] = str(exc)
+        results.append(result)
+    covered = {n for r in results if r["status"] == "passed" for n in r["check"]["acceptance"]}
+    required = set(range(1, len(parse_task_acceptance(root / ".agent-os/tasks.yaml").get(task_id, [])) + 1))
+    status = "failed" if any(r["status"] == "failed" for r in results) else (
+        "passed" if required and covered == required and all(r["status"] == "passed" for r in results) else "unverified")
+    try:
+        after = result_fingerprint(root, task_id, run_id, checks)
+    except (ValueError, OSError):
+        after = "unavailable"
+    if before != after or missing_declared_outputs(root, task_id):
+        status = "failed"
+    payload = {"validation_contract": "result-v1", "task_id": task_id, "run_id": run_id,
+               "status": status, "checks": results, "unverified_acceptance": sorted(required - covered),
+               "input_fingerprint": before, "post_fingerprint": after,
+               "tested_scope": task_declared_outputs(root, task_id),
+               "acceptance": parse_task_acceptance(root / ".agent-os/tasks.yaml").get(task_id, []),
+               "notes": notes, "timestamp": datetime.now(timezone.utc).isoformat(),
+               "verification_limit": "Only the declared checks and inputs; not scientific validity, causality or novelty."}
+    write_text(run_dir / "validation.json", json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+    write_text(run_dir / "eval.md", f"# Eval\n\nGenerated By: knowledgeos eval-task\n"
+               f"Task: {task_id}\nRun: {run_id}\nStatus: {status}\n"
+               f"Validation Contract: result-v1\nEvidence: validation.json\n\n"
+               f"Unverified acceptance: {payload['unverified_acceptance']}\n"
+               f"Verification Limit: {payload['verification_limit']}\n\n{notes}\n")
+    append_command_event(run_dir, "eval-task", task_id, run_id, status=status,
+        validation_contract="result-v1", input_fingerprint=before,
+        **({"validation_check_digest": check_digest, "validation_checks": checks} if checks else {}),
+        evidence_sha256=hashlib.sha256((run_dir / "validation.json").read_bytes()).hexdigest(),
+        eval_sha256=hashlib.sha256((run_dir / "eval.md").read_bytes()).hexdigest())
+    return payload
+
+
+def write_task_eval(project_root: Path, task_id: str, run_id: str, notes: str = "",
+                    *, validations: list[dict[str, Any]] | None = None,
+                    execute_validators: bool = False, dry_run: bool = False,
+                    timeout: float = 120) -> dict[str, Any]:
+    if result_validation_contract(project_root, task_id, run_id):
+        return write_result_eval(project_root, task_id, run_id, notes, validations or [],
+                                 execute_validators, dry_run, timeout)
+    if validations or execute_validators or dry_run:
+        raise ValueError("this legacy run retains its original eval contract; no result-v1 flags")
     task = find_task(project_root, task_id)
     run_dir = resolve_run_dir(project_root, run_id)
     if not run_dir.exists():
@@ -3719,9 +4011,70 @@ def write_task_eval(project_root: Path, task_id: str, run_id: str, notes: str = 
     }
 
 
-def deep_validate_project(project_root: Path, *, allow_placeholders: bool = False, skip_external: bool = False) -> list[CheckResult]:
+def unrelated_missing_output(root: Path, target_id: str, owner_id: str, output: str,
+                             custody: list[dict[str, Any]]) -> bool:
+    """Conservative diagnostic classification, never authorization or completion."""
+    if not target_id or target_id == owner_id or custody:
+        return False
+    try:
+        if not ordinary_eligible(root, target_id):
+            return False
+        for path in (root / ".agent-os/runs").glob("*/run.yaml"):
+            meta = parse_scalar_values(path, {"task_id", "status"})
+            if meta.get("task_id") == target_id and meta.get("status") != "completed":
+                if not result_validation_contract(root, target_id, path.parent.name):
+                    return False
+        tasks = parse_tasks(root / ".agent-os/tasks.yaml")
+        if len({t["id"] for t in tasks}) != len(tasks):
+            return False
+        inputs = parse_task_list_field(root / ".agent-os/tasks.yaml", "inputs")
+        outputs = parse_task_list_field(root / ".agent-os/tasks.yaml", "outputs")
+        # No dependency declarations means relevance is unknown, not independent.
+        if not inputs.get(target_id):
+            return False
+        target_spec = resolve_spec_binding(root, spec_binding_task(root, target_id)).get("spec_id")
+        owner_spec = resolve_spec_binding(root, spec_binding_task(root, owner_id)).get("spec_id")
+        if target_spec and target_spec != "none" and target_spec == owner_spec:
+            return False
+        candidate = validation_path(root, output, read=False)
+        if candidate.exists() or candidate.is_symlink():
+            return False
+        def overlap(a, b):
+            return a == b or a in b.parents or b in a.parents
+        relevant = [validation_path(root, p) for p in inputs[target_id] + outputs.get(target_id, [])]
+        visited = {target_id}
+        changed = True
+        while changed:
+            changed = False
+            for task in tasks:
+                tid = task["id"]
+                if tid in visited:
+                    continue
+                produced = [validation_path(root, p, read=False) for p in outputs.get(tid, [])]
+                if any(overlap(p, q) for p in produced for q in relevant):
+                    if tid == owner_id or not inputs.get(tid):
+                        return False
+                    visited.add(tid)
+                    relevant.extend(validation_path(root, p) for p in inputs[tid])
+                    changed = True
+        return not any(overlap(candidate, p) for p in relevant)
+    except (ValueError, KeyError, OSError):
+        return False
+
+
+def deep_validate_project(project_root: Path, *, allow_placeholders: bool = False, skip_external: bool = False,
+                          task_id: str = "") -> list[CheckResult]:
     agent_os = project_root / ".agent-os"
     results: list[CheckResult] = []
+    diagnostic_task = task_id
+    if diagnostic_task:
+        spec_binding_task(project_root, diagnostic_task)  # rejects unknown/duplicate IDs
+        try:
+            inputs = parse_task_list_field(agent_os / "tasks.yaml", "inputs").get(diagnostic_task, [])
+            validation_dependencies(project_root, inputs)
+            results.append(CheckResult(True, "current_task_inputs", f"{diagnostic_task} declared inputs readable"))
+        except (OSError, ValueError) as exc:
+            results.append(CheckResult(False, "current_task_inputs", str(exc)))
 
     results.extend(check_required_files(project_root, REQUIRED_PROJECT_FILES, "project_file"))
     if any(not item.ok for item in results):
@@ -3785,8 +4138,16 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
         target = resolve_project_config_path(project_root, value)
         exists = target.exists()
         results.append(CheckResult(skip_external or exists, "fabric_link", f"{key} -> {value}" if exists else f"{key} target missing: {value}"))
+    from knowledgeos.guidance import execution_contract
+    try:
+        adopted = execution_contract(project_root) == "ordinary-v1"
+        results.append(CheckResult(True, "execution_contract", "explicit ordinary adoption" if adopted else "legacy default"))
+    except ValueError as exc:
+        adopted = False
+        results.append(CheckResult(False, "execution_contract", str(exc)))
     for key in ["boot_required", "phase_logging_required", "postflight_required"]:
-        results.append(CheckResult(fabric.get(key) == "true", "runtime_contract", f"{key}=true"))
+        allowed = {"true", "false"} if adopted and key != "boot_required" else {"true"}
+        results.append(CheckResult(fabric.get(key) in allowed, "runtime_contract", f"{key}={fabric.get(key)}"))
     if fabric.get("boot_required") == "true":
         results.extend(validate_governance_kernel(project_root, fabric.get("governance_root", ""), skip_external=skip_external))
     if fabric.get("postflight_required") == "true":
@@ -3817,6 +4178,12 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
 
     tasks = parse_tasks(agent_os / "tasks.yaml")
     task_outputs = parse_task_list_field(agent_os / "tasks.yaml", "outputs")
+    try:
+        custody_records = output_registry.load_registry(sys.modules[__name__], project_root)
+        results.append(CheckResult(True, "output_registry", "custody registry integrity valid"))
+    except (ValueError, KeyError, OSError, TypeError) as exc:
+        custody_records = []
+        results.append(CheckResult(False, "output_registry", str(exc)))
     results.append(CheckResult(bool(tasks), "tasks_schema", f"{len(tasks)} task(s) found"))
     results.extend(unique_id_results(tasks, "tasks_ids"))
     for task in tasks:
@@ -3829,8 +4196,11 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
             outputs = task_outputs.get(task_id, [])
             results.append(CheckResult(bool(outputs), "completed_task_outputs", f"{task_id} declares outputs"))
             for output in outputs:
-                ok, detail = output_status(project_root, output)
-                results.append(CheckResult(ok, "completed_task_outputs", f"{task_id}: {detail}"))
+                ok, detail = output_registry.completed_output_status(sys.modules[__name__], project_root, task_id, output, custody_records)
+                warning = not ok and unrelated_missing_output(project_root, diagnostic_task, task_id, output, custody_records)
+                results.append(CheckResult(ok, "completed_task_outputs",
+                    f"{task_id}: {detail}" + (f"; unrelated to declared scope of {diagnostic_task}" if warning else ""),
+                    "warning" if warning else "error"))
 
     runs_root = agent_os / "runs"
     if runs_root.exists():
@@ -3847,6 +4217,19 @@ def deep_validate_project(project_root: Path, *, allow_placeholders: bool = Fals
                         f"{run_id} eval generated by knowledgeos eval-task",
                     )
                 )
+                try:
+                    if result_validation_contract(project_root, metadata["task_id"], run_id):
+                        events = [e for e in load_command_events(run_yaml.parent) if e.get("event_type") == "eval-task"]
+                        latest = events[-1] if events else {}
+                        evidence = run_yaml.parent / "validation.json"
+                        intact = (evidence.is_file() and eval_path.is_file()
+                                  and latest.get("validation_contract") == "result-v1"
+                                  and latest.get("status") == "passed"
+                                  and latest.get("evidence_sha256") == hashlib.sha256(evidence.read_bytes()).hexdigest()
+                                  and latest.get("eval_sha256") == hashlib.sha256(eval_path.read_bytes()).hexdigest())
+                        results.append(CheckResult(intact, "completed_run_validation", f"{run_id} recorded validation integrity"))
+                except (ValueError, KeyError, OSError) as exc:
+                    results.append(CheckResult(False, "completed_run_validation", f"{run_id}: {exc}"))
                 if run_has_checkpoint_contract_evidence(run_yaml.parent):
                     lifecycle = verify_lifecycle(project_root, metadata.get("task_id", ""), run_id)
                     results.append(CheckResult(lifecycle.get("status") == "passed", "completed_run_lifecycle", f"{run_id} lifecycle status={lifecycle.get('status')}"))
@@ -4758,6 +5141,108 @@ def build_workbench_preview_handler(
     return WorkbenchPreviewHandler
 
 
+def ordinary_scope(project_root: Path, task_id: str) -> str:
+    task = dict(find_task(project_root, task_id))
+    task.pop("status", None)
+    return checkpoint_digest({"task": task, "outputs": task_declared_outputs(project_root, task_id),
+        "acceptance": parse_task_acceptance(project_root / ".agent-os/tasks.yaml").get(task_id, []),
+        "postflight_required": fabric_contract(project_root).get("postflight_required", "")})
+
+
+def future_defaults_bound(project_root: Path, task_id: str, run_id: str) -> bool:
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    declarations = [line.split(":", 1)[1].strip() for line in read_text(run_dir / "run.yaml").splitlines()
+                    if line.startswith("future_defaults_contract:")]
+    starts = [event for event in load_command_events(run_dir)
+              if event.get("event_type") == "run-task"
+              and event.get("task_id") == task_id and event.get("run_id") == run_id]
+    bindings = [event for event in starts if event.get("future_defaults_contract")]
+    if not declarations and not bindings:
+        return False
+    if (declarations != ["receipt-v1"] or len(starts) != 1 or len(bindings) != 1
+            or bindings[0].get("future_defaults_contract") != "receipt-v1"
+            or not ordinary_run(project_root, task_id, run_id)):
+        raise ValueError("future defaults run binding changed")
+    return True
+
+
+def ordinary_run(project_root: Path, task_id: str, run_id: str) -> bool:
+    """A new project default cannot retroactively waive an existing run's gates."""
+    run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
+    metadata = parse_scalar_values(run_dir / "run.yaml", {"execution_contract", "ordinary_scope"})
+    for key in ("execution_contract", "ordinary_scope"):
+        if sum(line.startswith(key + ":") for line in read_text(run_dir / "run.yaml").splitlines()) > 1:
+            raise ValueError("duplicate ordinary run contract declaration")
+    contract = metadata.get("execution_contract", "legacy")
+    starts = [e for e in load_command_events(run_dir) if e.get("event_type") == "run-task"
+              and e.get("task_id") == task_id and e.get("run_id") == run_id]
+    ordinary_starts = [e for e in starts if e.get("execution_contract") == "ordinary-v1"]
+    if contract == "legacy" and not ordinary_starts:
+        return False
+    if (contract != "ordinary-v1" or len(starts) != 1 or len(ordinary_starts) != 1
+            or not metadata.get("ordinary_scope")
+            or metadata["ordinary_scope"] != ordinary_starts[0].get("ordinary_scope")
+            or metadata["ordinary_scope"] != ordinary_scope(project_root, task_id)):
+        raise ValueError("ordinary run contract or task scope changed; do not rewrite existing bindings")
+    return True
+
+
+def ordinary_write_checks(project_root: Path, task_id: str) -> list[dict[str, Any]]:
+    outputs = task_declared_outputs(project_root, task_id)
+    if not outputs:
+        raise ValueError("ordinary work needs declared output paths")
+    checks = []
+    for output in outputs:
+        path = Path(output)
+        if (not path.parts or path.is_absolute() or ".." in path.parts
+                or any(c in output for c in "*?[]")
+                or path.parts[0] in {".agent-os", ".knowledgeos-local", ".git"}
+                or path.name in {"AGENTS.md", "GEMINI.md"}):
+            raise ValueError(f"ordinary write needs a bounded project artifact: {output}")
+        check = classify_route_write(project_root, task_id, output)
+        if check.get("decision") != "allow":
+            raise ValueError(f"ordinary write blocked: {output}: {check.get('reason')}")
+        # Check existing descendants too; a directory must not hide protected data.
+        target = project_root / output
+        if target.is_dir():
+            for member in target.rglob("*"):
+                if classify_route_write(project_root, task_id, str(member)).get("decision") != "allow":
+                    raise ValueError(f"ordinary directory contains a protected path: {member}")
+        checks.append({k: check[k] for k in ("path", "decision", "reason")})
+    return checks
+
+
+def ordinary_eligible(project_root: Path, task_id: str) -> bool:
+    from knowledgeos import guidance
+    if guidance.execution_contract(project_root) != "ordinary-v1":
+        return False
+    fabric = parse_scalar_values(project_root / ".agent-os/fabric-link.yaml", {"phase_logging_required"})
+    if (fabric.get("phase_logging_required", "true").lower() != "false"
+            and not guidance.future_defaults(project_root)):
+        return False
+    task = find_task(project_root, task_id)
+    if task.get("risk") not in {"normal", "low"}:
+        return False
+    if task.get("type") not in {"engineering_change", "report_task", "documentation_task",
+                              "analysis_task", "research_task", "knowledge_structuring"}:
+        return False
+    if (parse_effect_policy(project_root)["strictness"] == "enforce"
+            or parse_decision_policy(project_root)["strictness"] == "enforce"):
+        return False
+    policy = parse_phase_policy(project_root)
+    if (policy["required_phases"]["default"] != EXPECTED_PHASE_KEYS
+            or not policy["skip_policy"]["require_skip_reason"]):
+        raise ValueError("invalid phase policy; ordinary flow cannot bypass it")
+    dispatch = build_dispatch_plan(project_root, task_id)
+    dispatch_policy = load_dispatch_policy(project_root)
+    gates = set(dispatch_policy.get("human_gate_for", [])) | set(dispatch_policy.get("consult_for_risks", []))
+    # Optional delegation suggestions are not work-start gates. Explicit task
+    # confirmation and risk-specific approvals still require the strict path.
+    if "per_task_confirmation" in gates or task.get("risk") in gates:
+        return False
+    return not any(step.get("required") for step in dispatch.get("steps", []))
+
+
 def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run: bool = False, force: bool = False,
                         *, host_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
     task = find_task(project_root, task_id)
@@ -4767,6 +5252,25 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
     route = build_task_route(project_root, task_id, None)
     if route.get("status") != "routed":
         raise ValueError(f"task {task_id} is not runnable because routing failed: {route.get('reason', 'unknown route failure')}")
+    ordinary = ordinary_eligible(project_root, task_id)
+    if not ordinary:
+        from knowledgeos.guidance import execution_contract
+        if (execution_contract(project_root) == "ordinary-v1"
+                and fabric_contract(project_root).get("postflight_required", "").lower() == "false"):
+            raise ValueError("task requires legacy gates including required postflight; "
+                             "review strict-task policy before starting, without changing active run bindings")
+    if ordinary:
+        for existing in (project_root / ".agent-os/runs").glob("*/run.yaml"):
+            old = parse_scalar_values(existing, {"task_id", "status"})
+            if old.get("task_id") == task_id and old.get("status") != "completed":
+                raise ValueError("continue the existing active run; do not replace its contract")
+    write_checks = ordinary_write_checks(project_root, task_id) if ordinary else []
+    if ordinary:
+        validation_dependencies(project_root,
+            parse_task_list_field(project_root / ".agent-os/tasks.yaml", "inputs").get(task_id, []))
+    scope = ordinary_scope(project_root, task_id) if ordinary else ""
+    from knowledgeos.guidance import future_defaults
+    receipt_bound = bool(ordinary and future_defaults(project_root))
     binding = resolve_spec_binding(project_root, spec_binding_task(project_root, task_id))
     run_id = next_run_id(project_root, task_id)
     run_dir = project_root / ".agent-os" / "runs" / run_id
@@ -4782,6 +5286,8 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
         run_dir / "spec-binding.json",
         run_dir / "dispatch-plan.json",
     ]
+    if ordinary:
+        created.remove(run_dir / "dispatch-plan.json")
     if not dry_run:
         run_dir.mkdir(parents=True, exist_ok=False)
         write_text(run_dir / "spec-binding.json", json.dumps(binding, indent=2) + "\n")
@@ -4797,6 +5303,9 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
                     f"status: started",
                     f"route_status: {route.get('status', '')}",
                     f"route_contract: {route.get('lifecycle_contract', LEGACY_LIFECYCLE_CONTRACT)}",
+                    *([f"execution_contract: ordinary-v1", f"ordinary_scope: {scope}",
+                       "validation_contract: result-v1"] if ordinary else []),
+                    *(["future_defaults_contract: receipt-v1"] if receipt_bound else []),
                     f"eval_profile: {route.get('eval_profile', '')}",
                     f"human_gate: {route.get('human_gate', '')}",
                     f"created_at: {datetime.now(timezone.utc).isoformat()}",
@@ -4812,16 +5321,26 @@ def create_run_envelope(project_root: Path, task_id: str, summary: str, dry_run:
         write_text(run_dir / "diff_summary.md", "# Diff Summary\n\nNo mutations recorded yet.\n")
         write_text(run_dir / "eval.md", "# Eval\n\nNo eval has run yet.\n")
         write_text(run_dir / "handoff.md", f"# Handoff\n\nCurrent run: {run_id}\n\nNext agent should inspect `run.yaml` and `receipt.md`.\n")
-        append_command_event(run_dir, "run-task", task_id, run_id, status="started", lifecycle_contract="capability-visible-v1")
+        append_command_event(run_dir, "run-task", task_id, run_id, status="started",
+                             lifecycle_contract="ordinary-v1" if ordinary else "capability-visible-v1",
+                             **({"execution_contract": "ordinary-v1", "ordinary_scope": scope,
+                                 "validation_contract": "result-v1"} if ordinary else {}),
+                             **({"future_defaults_contract": "receipt-v1"} if receipt_bound else {}))
         write_context_pack(project_root, task_id, run_id, summary=summary)
-        dispatch = build_dispatch_plan(project_root, task_id, run_id=run_id, host_snapshot=host_snapshot, persist=True)
+        if not ordinary:
+            dispatch = build_dispatch_plan(project_root, task_id, run_id=run_id, host_snapshot=host_snapshot, persist=True)
         write_text(project_root / ".agent-os" / "receipts" / "latest.md", receipt)
         write_text(project_root / ".agent-os" / "handoffs" / "current.md", f"# Current Handoff\n\nCurrent run: {run_id}\n\nTask: {task_id}\n")
-        checkpoint = record_checkpoint_producer(project_root, task_id, run_id, producer="run-task",
+        if not ordinary:
+            checkpoint = record_checkpoint_producer(project_root, task_id, run_id, producer="run-task",
                                                inputs={"task": task, "route": route, "summary": summary}, evidence_paths=["prompt.md"])
-        dispatch_event = record_dispatch_event(project_root, task_id, run_id, dispatch)
-    return {"run_id": run_id, "task": task, "route": route, "created": [str(p) for p in created], "dry_run": dry_run,
-            **({"checkpoint": checkpoint, "dispatch": dispatch, "dispatch_event": dispatch_event} if not dry_run else {})}
+            dispatch_event = record_dispatch_event(project_root, task_id, run_id, dispatch)
+    public_route = ({k: route.get(k) for k in ("status", "eval_profile", "human_gate", "allowed_outputs")}
+                    if ordinary else route)
+    return {"run_id": run_id, "task": task, "route": public_route, "created": [str(p) for p in created], "dry_run": dry_run,
+            "execution_contract": "ordinary-v1" if ordinary else "legacy",
+            **({"write_checks": write_checks} if ordinary else {}),
+            **({"checkpoint": checkpoint, "dispatch": dispatch, "dispatch_event": dispatch_event} if not dry_run and not ordinary else {})}
 
 
 def next_run_id(project_root: Path, task_id: str) -> str:
@@ -6270,7 +6789,11 @@ def verify_dispatch_capability_contract(project_root: Path, task_id: str, run_id
     dispatch_event_ok = has_command_event(run_dir, "dispatch-task", task_id, run_id, status="dispatch_ready")
     if not dispatch_event_ok:
         errors.append({"label": "missing_dispatch_command_event", "detail": "dispatch-task --run-id command evidence is missing"})
-    dispatch = build_dispatch_plan(project_root, task_id)
+    try:
+        dispatch = build_dispatch_plan(project_root, task_id, run_id=run_id)
+    except (ValueError, KeyError, OSError) as exc:
+        errors.append({"label": "dispatch_validation_error", "detail": str(exc)})
+        return errors
     if dispatch.get("status") != "dispatch_ready":
         errors.append({"label": "dispatch_not_ready", "detail": dispatch.get("reason", "dispatch plan is not ready")})
         return errors
@@ -6290,6 +6813,11 @@ def verify_dispatch_capability_contract(project_root: Path, task_id: str, run_id
 
 
 def verify_lifecycle(project_root: Path, task_id: str, run_id: str) -> dict[str, Any]:
+    if ordinary_run(project_root, task_id, run_id):
+        return {"status": "passed", "task_id": task_id, "run_id": run_id,
+                "execution_contract": "ordinary-v1", "required_phases": [],
+                "observed_phases": [], "errors": [],
+                "detail": "Bound ordinary contract; no claim of six-phase execution"}
     policy = parse_phase_policy(project_root)
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     required = policy["required_phases"]["default"]
@@ -6980,6 +7508,10 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
 
 def run_postflight_gate(project_root: Path, run_dir: Path, summary: str, allow_pending_reason: str = "") -> dict[str, Any]:
     """Never replay an ambiguous external effect after a crash or failed hook."""
+    task_id = parse_scalar_values(run_dir / "run.yaml", {"task_id"}).get("task_id", "")
+    if (ordinary_run(project_root, task_id, run_dir.name)
+            and fabric_contract(project_root).get("postflight_required", "").lower() == "false"):
+        return {"sync_status": "NOT_REQUIRED", "status_marker": "", "postflight": ""}
     hook = resolve_postflight_hook(project_root, fabric_contract(project_root))
     if hook is None or not hook.is_file() or not os.access(hook, os.X_OK):
         return _run_postflight_gate(project_root, run_dir, summary, allow_pending_reason)
@@ -7131,6 +7663,12 @@ def _complete_task_locked(
     task = find_task(project_root, task_id)
     run_dir = ensure_run_belongs_to_task(project_root, task_id, run_id)
     run_yaml = run_dir / "run.yaml"
+    ordinary = ordinary_run(project_root, task_id, run_id)
+    result_contract = result_validation_contract(project_root, task_id, run_id)
+    if ordinary:
+        if not ordinary_eligible(project_root, task_id):
+            raise ValueError("ordinary policy changed or became strict; reconcile without downgrading gates")
+        ordinary_write_checks(project_root, task_id)
 
     override_flags = {
         "allow_missing_eval": allow_missing_eval,
@@ -7138,6 +7676,8 @@ def _complete_task_locked(
         "allow_missing_outputs": allow_missing_outputs,
     }
     active_overrides = [name for name, enabled in override_flags.items() if enabled]
+    if result_contract and active_overrides:
+        raise ValueError("result-v1 cannot claim completion using missing/manual eval overrides")
     if active_overrides and not override_reason.strip():
         raise ValueError("completion overrides require --override-reason")
 
@@ -7154,7 +7694,21 @@ def _complete_task_locked(
                   and event.get("run_id") == run_id]
         latest = events[-1] if events else {}
         recorded = latest.get("input_fingerprint")
-        if not recorded or latest.get("status") != "passed" or recorded != evaluation_fingerprint(project_root, task_id, run_id):
+        current_fingerprint = evaluation_fingerprint(project_root, task_id, run_id)
+        if result_contract:
+            evidence = run_dir / "validation.json"
+            if (not evidence.is_file()
+                    or latest.get("validation_contract") != "result-v1"
+                    or latest.get("evidence_sha256") != hashlib.sha256(evidence.read_bytes()).hexdigest()
+                    or latest.get("eval_sha256") != hashlib.sha256(eval_path.read_bytes()).hexdigest()):
+                raise ValueError("validation evidence is missing or changed")
+            payload = json.loads(evidence.read_text())
+            if (payload.get("status") != "passed" or payload.get("task_id") != task_id
+                    or payload.get("run_id") != run_id or payload.get("unverified_acceptance")):
+                raise ValueError("validation acceptance is unverified or incorrectly bound")
+            checks = validate_result_checks(project_root, task_id, [r["check"] for r in payload["checks"]])
+            current_fingerprint = result_fingerprint(project_root, task_id, run_id, checks)
+        if not recorded or latest.get("status") != "passed" or recorded != current_fingerprint:
             raise ValueError("stale eval: declared outputs or effective policy changed; rerun eval-task")
     if not allow_missing_outputs:
         missing_outputs = missing_declared_outputs(project_root, task_id)
@@ -7174,10 +7728,12 @@ def _complete_task_locked(
     if decisions.get("status") == "failed":
         raise ValueError("decision verification failed: " + json.dumps(decisions.get("errors", []), ensure_ascii=False))
 
-    dispatch_report = build_dispatch_report(project_root, task_id, run_id)
+    dispatch_report = ({"coverage": "not collected; use host trace, not a claim of zero tool calls",
+                        "agent_count": None, "capability_count": None}
+                       if ordinary else build_dispatch_report(project_root, task_id, run_id))
     postflight = run_postflight_gate(project_root, run_dir, summary, allow_pending_postflight)
     mission_flow: dict[str, Any] | None = None
-    if task.get("complexity", "medium") in MISSION_FLOW_COMPLEXITIES:
+    if not ordinary and task.get("complexity", "medium") in MISSION_FLOW_COMPLEXITIES:
         mission_flow = write_mission_flow_markdown(
             project_root,
             task_id,
@@ -7197,6 +7753,10 @@ def _complete_task_locked(
         f"Completed At: {completed_at}",
         "",
         f"Summary: {summary}",
+        f"Execution Contract: {'ordinary-v1' if ordinary else 'legacy'}",
+        *(["Verification Limit: " + ("Declared validators and input/output revisions checked; scientific judgment remains separate."
+                                    if result_contract else "Output presence/freshness only; no behavioral guarantee."),
+           "Capability Coverage: host trace; no model-written inventory required."] if ordinary else []),
         "",
         f"Lifecycle Status: {lifecycle.get('status')}",
         "",
@@ -7303,6 +7863,11 @@ def _complete_task_locked(
         "task_title": task.get("title", ""),
         "run_id": run_id,
         "status": "completed",
+        **({"execution_contract": "ordinary-v1",
+            "validation_contract": "result-v1" if result_contract else "presence-v1",
+            "verification_limit": ("Declared validators and input/output revisions only; scientific judgment remains separate."
+                                   if result_contract else "Presence/freshness only; behavioral/scientific validation remains separate."),
+            "capability_coverage": "host trace; not collected by this contract"} if ordinary else {}),
         "lifecycle_status": lifecycle.get("status"),
         "context_contract_status": context_contract.get("status"),
         "effect_status": effects.get("status"),
@@ -8505,14 +9070,16 @@ def emit(data: Any, as_json: bool) -> None:
 
 
 def summarize_results(results: list[CheckResult]) -> dict[str, Any]:
-    failed = [item for item in results if not item.ok]
+    failed = [item for item in results if not item.ok and item.severity != "warning"]
+    warnings = [item for item in results if not item.ok and item.severity == "warning"]
     failed_by_label: dict[str, int] = {}
     for item in failed:
         failed_by_label[item.label] = failed_by_label.get(item.label, 0) + 1
     return {
         "status": "ok" if not failed else "fail",
         "checks": len(results),
-        "passed": len(results) - len(failed),
+        "passed": sum(item.ok for item in results),
+        "warnings": [item.as_dict() for item in warnings],
         "failed": len(failed),
         "failed_by_label": failed_by_label,
         "failed_checks": [item.as_dict() for item in failed[:12]],
@@ -8528,6 +9095,8 @@ def emit_summary(summary: dict[str, Any], as_json: bool) -> None:
     print(f"checks: {summary['checks']}")
     print(f"passed: {summary['passed']}")
     print(f"failed: {summary['failed']}")
+    for warning in summary.get("warnings", []):
+        print(f"warning: {warning['label']}: {warning['detail']}")
     if summary["failed"]:
         print("failed_by_label:")
         for label, count in sorted(summary["failed_by_label"].items()):
@@ -8554,13 +9123,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 project_root,
                 allow_placeholders=getattr(args, "allow_placeholders", False) or getattr(args, "template", False),
                 skip_external=getattr(args, "skip_external_checks", False) or getattr(args, "template", False),
+                task_id=getattr(args, "task_id", ""),
             )
         )
     if getattr(args, "summary", False):
         emit_summary(summarize_results(results), args.json)
     else:
         emit([r.as_dict() for r in results] if args.json else results, args.json)
-    return 0 if all(r.ok for r in results) else 1
+    return 0 if all(r.ok or r.severity == "warning" for r in results) else 1
 
 
 def cmd_harness_audit(args: argparse.Namespace) -> int:
@@ -8864,6 +9434,7 @@ def cmd_create_task(args: argparse.Namespace) -> int:
             outputs=args.output,
             acceptance=args.acceptance,
             dry_run=args.dry_run,
+            inputs=getattr(args, "input", None),
         )
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
@@ -8980,12 +9551,15 @@ def cmd_archive_legacy_project(args: argparse.Namespace) -> int:
 def cmd_eval_task(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).expanduser().resolve()
     try:
-        result = write_task_eval(project_root, args.task_id, args.run_id, notes=args.notes)
+        result = write_task_eval(project_root, args.task_id, args.run_id, notes=args.notes,
+                                 validations=[json.loads(v) for v in args.check],
+                                 execute_validators=args.execute_validators,
+                                 dry_run=args.dry_run, timeout=args.timeout)
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     emit(result, args.json)
-    return 0 if result.get("status") == "passed" else 2
+    return 0 if result.get("status") in {"passed", "dry_run"} else 2
 
 
 def cmd_phase_task(args: argparse.Namespace) -> int:
@@ -9549,7 +10123,7 @@ def cmd_receipt(args: argparse.Namespace) -> int:
 
 
 def cmd_agent_guide(args: argparse.Namespace) -> int:
-    from knowledgeos.guidance import merge_generated
+    from knowledgeos.guidance import merge_generated, render_guidance
 
     project_root = Path(args.project_root).expanduser().resolve()
     missing = [path for path in REQUIRED_AGENT_GUIDE_FILES if not (project_root / path).exists()]
@@ -9557,7 +10131,8 @@ def cmd_agent_guide(args: argparse.Namespace) -> int:
         print(f"cannot build guide; missing required files: {', '.join(missing)}", file=sys.stderr)
         return 1
     try:
-        guide = build_agent_guide(project_root)
+        guide = (render_guidance(project_root, knowledgeos_root_from_file() / "bin/knowledgeos", legacy=True)
+                 if getattr(args, "legacy", False) else build_agent_guide(project_root))
         if args.output:
             target = Path(args.output).expanduser().resolve()
             if target.exists():
@@ -9792,11 +10367,13 @@ def cmd_workbench_preview(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="knowledgeos", description="KnowledgeOS executable control plane")
     sub = parser.add_subparsers(dest="command", required=True)
+    output_registry.add_parser(sub, sys.modules[__name__])
 
     doctor = sub.add_parser("doctor", help="validate a KnowledgeOS root and optional project control plane")
     doctor.add_argument("--root", help="KnowledgeOS distribution root")
     doctor.add_argument("--project-root", help="project root to validate")
     doctor.add_argument("--project-only", action="store_true", help="skip distribution checks and validate only the project control plane")
+    doctor.add_argument("--task-id", default="", help="scoped diagnostics; only provably unrelated historical missing outputs can warn")
     doctor.add_argument("--template", action="store_true", help="validate a reusable template with placeholders and linked capability paths unresolved")
     doctor.add_argument("--allow-placeholders", action="store_true", help="allow CHANGE_ME placeholders during project validation")
     doctor.add_argument(
@@ -9878,6 +10455,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--risk", default="normal")
     create.add_argument("--output", action="append", required=True, help="declared task output path; repeat for multiple outputs")
     create.add_argument("--acceptance", action="append", required=True, help="acceptance check; repeat for multiple checks")
+    create.add_argument("--input", action="append", default=None, help="relevant input data, model/config or source path; repeat as needed")
     create.add_argument("--dry-run", action="store_true")
     create.add_argument("--json", action="store_true")
     create.set_defaults(func=cmd_create_task)
@@ -9946,6 +10524,13 @@ def build_parser() -> argparse.ArgumentParser:
     eval_task_parser.add_argument("--task-id", required=True)
     eval_task_parser.add_argument("--run-id", required=True)
     eval_task_parser.add_argument("--notes", default="")
+    eval_task_parser.add_argument("--check", action="append", default=[],
+                                  help="reviewed JSON validator with kind, acceptance indices and explicit inputs")
+    eval_task_parser.add_argument("--execute-validators", action="store_true",
+                                  help="execute explicitly supplied command argv after reviewing scope/permissions; not a sandbox")
+    eval_task_parser.add_argument("--dry-run", action="store_true",
+                                  help="preview result-v1 checks without executing commands or writing evidence")
+    eval_task_parser.add_argument("--timeout", type=float, default=120)
     eval_task_parser.add_argument("--json", action="store_true")
     eval_task_parser.set_defaults(func=cmd_eval_task)
 
@@ -10201,6 +10786,7 @@ def build_parser() -> argparse.ArgumentParser:
     receipt.set_defaults(func=cmd_receipt)
 
     guide = sub.add_parser("agent-guide", help="print or write an agent onboarding checklist for a project")
+    guide.add_argument("--legacy", action="store_true", help="show the retained full contract for existing or strict runs")
     guide.add_argument("--project-root", required=True)
     guide.add_argument("--output", help="write guide to a file instead of stdout")
     guide.add_argument("--json", action="store_true")
