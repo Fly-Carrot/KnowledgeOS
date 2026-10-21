@@ -5,7 +5,7 @@ import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request, ProxyHandler, build_opener
 
 from knowledgeos.cli import build_workbench_preview_handler
 
@@ -475,7 +475,13 @@ class WorkbenchStaticPreviewTests(unittest.TestCase):
         self.assertIn("SHA256SUMS.txt", packaging_doc)
 
     def test_live_preview_handler_serves_static_page_and_live_state(self):
-        handler = build_workbench_preview_handler(ROOT, WORKBENCH)
+        # This is an in-process loopback fixture, not a request via system proxy.
+        urlopen = build_opener(ProxyHandler({})).open
+        from tests.test_knowledgeos_cli import KnowledgeOSCliTests
+        fixture = KnowledgeOSCliTests()
+        self.addCleanup(fixture.doCleanups)
+        project = fixture.configured_project()
+        handler = build_workbench_preview_handler(project, WORKBENCH)
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

@@ -17,6 +17,44 @@ BIN = ROOT / "bin" / "knowledgeos"
 
 
 class KnowledgeOSCliTests(unittest.TestCase):
+    def configured_project(self):
+        """A real fixture, not the maintainer's private .agent-os history."""
+        if hasattr(self, "_configured_project"):
+            return self._configured_project
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        runtime, project = base / "runtime", base / "project"
+        project.mkdir()
+        self.run_cli("init-os", "--root", str(ROOT), "--os-root", str(runtime))
+        self.run_cli("init-project", "--root", str(ROOT), "--project-root", str(project),
+                     "--name", "Portable fixture", "--global-root", str(runtime / "global-agent-fabric"),
+                     "--capability-root", str(runtime / "capability-layer"))
+        router = project / ".agent-os/workflows/router.yaml"
+        profiles = cli.parse_workflow_profiles(router)
+        profiles["capability_orchestration"] = dict(profiles["report_task"])
+        router.write_text(cli.render_workflow_profiles(profiles))
+        tasks = project / ".agent-os/tasks.yaml"
+        with tasks.open("a") as handle:
+            handle.write("\n  - id: KOS-T009\n    title: Orchestration fixture\n"
+                         "    type: capability_orchestration\n    status: ready\n"
+                         "    complexity: complex\n    risk: orchestration_policy_review\n"
+                         "    outputs:\n      - docs/result.md\n"
+                         "    acceptance:\n      - observable dispatch\n"
+                         "  - id: KOS-T014\n    title: Archive fixture\n"
+                         "    type: archive_management\n    status: ready\n"
+                         "    outputs:\n      - archive/\n"
+                         "    acceptance:\n      - scoped archive guard\n")
+        with (project / ".agent-os/tool-registry.yaml").open("a") as handle:
+            handle.write("\n  - id: branch-builder\n    kind: skill\n    status: recommended\n"
+                         "    scope: planning\n    invocation: planning\n    task_fit: '*'\n    human_gate: false\n"
+                         "  - id: maestro-mcp\n    kind: mcp\n    status: disabled\n"
+                         "    scope: legacy\n    invocation: manual\n    human_gate: true\n"
+                         "  - id: agent-orchestrator\n    kind: orchestrator\n    status: disabled\n"
+                         "    scope: legacy\n    invocation: manual\n    execution_mode: ask\n    human_gate: true\n")
+        self._configured_project = project
+        return project
+
     def run_cli(self, *args, cwd=None, check=True):
         env = os.environ.copy()
         env["PYTHONPATH"] = str(ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
@@ -594,7 +632,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertIn("executed: false", plain.stdout)
 
     def test_runtime_adapters_reports_readiness_without_execution(self):
-        result = self.run_cli("runtime-adapters", "--project-root", str(ROOT), "--json")
+        result = self.run_cli("runtime-adapters", "--project-root", str(self.configured_project()), "--json")
         payload = json.loads(result.stdout)
         self.assertEqual(payload["schema_version"], "knowledgeos.runtime-adapters.v1")
         self.assertEqual(payload["status"], "ready")
@@ -613,16 +651,16 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertIn("codex-worker", runtime_subagents)
         self.assertEqual(runtime_subagents["maestro-architect"]["runtime_tool"], "multi_agent_v1.spawn_agent")
         self.assertEqual(runtime_subagents["maestro-architect"]["runtime_agent_type"], "explorer")
-        self.assertNotIn(str(ROOT), result.stdout)
+        self.assertNotIn(str(self.configured_project()), result.stdout)
         self.assertNotRegex(result.stdout, r"/usr/|/opt/|/Users/")
 
-        plain = self.run_cli("runtime-adapters", "--project-root", str(ROOT))
+        plain = self.run_cli("runtime-adapters", "--project-root", str(self.configured_project()))
         self.assertIn("default_runtime: mock", plain.stdout)
         self.assertIn("real_cli_execution: disabled_until_adapter_phase", plain.stdout)
         self.assertIn("runtime_subagents:", plain.stdout)
 
     def test_subagent_adapter_resolves_maestro_role_prompt(self):
-        result = self.run_cli("subagent-adapter", "--project-root", str(ROOT), "--id", "maestro-architect", "--json")
+        result = self.run_cli("subagent-adapter", "--project-root", str(self.configured_project()), "--id", "maestro-architect", "--json")
         payload = json.loads(result.stdout)
         self.assertEqual(payload["subagent_adapter_marker"], "SUBAGENT_ADAPTER_OK")
         self.assertEqual(payload["runtime_tool"], "multi_agent_v1.spawn_agent")
@@ -1365,7 +1403,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
         result = self.run_cli(
             "check-route-write",
             "--project-root",
-            str(ROOT),
+            str(self.configured_project()),
             "--task-id",
             "KOS-T014",
             "--path",
@@ -4178,13 +4216,16 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertEqual(payload["status"], "human_triage_required")
 
     def test_tool_registry_reports_configured_tools(self):
-        result = self.run_cli("tool-registry", "--project-root", str(ROOT), "--check-paths", "--json")
+        result = self.run_cli("tool-registry", "--project-root", str(self.configured_project()), "--check-paths", "--json")
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"], payload)
         self.assertGreaterEqual(payload["counts"].get("mcp", 0), 1)
         self.assertGreaterEqual(payload["counts"].get("skill", 0), 1)
         self.assertGreaterEqual(payload["counts"].get("orchestrator", 0), 1)
-        self.assertGreaterEqual(payload["counts"].get("subagent", 0), 43)
+        expected = set(cli.standard_runtime_subagent_catalog())
+        actual = {entry["id"] for entry in payload["entries"] if entry["kind"] == "subagent"}
+        self.assertEqual(actual, expected)
+        self.assertEqual(payload["counts"].get("subagent", 0), len(expected))
         self.assertIn("codex-default", result.stdout)
         self.assertIn("codex-explorer", result.stdout)
         self.assertIn("codex-worker", result.stdout)
@@ -4196,7 +4237,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertIn("agent-orchestrator", result.stdout)
 
     def test_dispatch_surfaces_maestro_specialist_subagents(self):
-        result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")
+        result = self.run_cli("dispatch-task", "--project-root", str(self.configured_project()), "--task-id", "KOS-T009", "--json")
         payload = json.loads(result.stdout)
         self.assertEqual(payload["status"], "dispatch_ready")
         self.assertEqual(payload["dispatch_marker"], "AGENT_DISPATCH_PLAN")
@@ -4220,7 +4261,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
         self.assertNotIn("agent-orchestrator", orchestrator_ids)
 
     def test_dispatch_task_plain_output_shows_agent_dispatch_plan(self):
-        result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009")
+        result = self.run_cli("dispatch-task", "--project-root", str(self.configured_project()), "--task-id", "KOS-T009")
         self.assertIn("AGENT_DISPATCH_PLAN", result.stdout)
         self.assertIn("planned_agents:", result.stdout)
         self.assertIn("maestro", result.stdout)
@@ -4645,7 +4686,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
     def test_static_prompt_contracts_require_dispatch_report_markers(self):
         template = (ROOT / "templates" / "project-control-plane" / "AGENTS.md").read_text(encoding="utf-8")
         guide = (ROOT / "docs" / "agent-guide.md").read_text(encoding="utf-8")
-        startup = (ROOT / ".agent-os" / "startup-prompt.md").read_text(encoding="utf-8")
+        startup = (self.configured_project() / ".agent-os" / "startup-prompt.md").read_text(encoding="utf-8")
         for content in (template, guide, startup):
             self.assertIn("KOS_DECISION", content)
             self.assertIn("AGENT_DISPATCH_PLAN", content)
@@ -4655,7 +4696,7 @@ class KnowledgeOSCliTests(unittest.TestCase):
             self.assertIn("complete-task", content)
 
     def test_dispatch_task_prioritizes_branch_builder_and_consultation(self):
-        result = self.run_cli("dispatch-task", "--project-root", str(ROOT), "--task-id", "KOS-T009", "--json")
+        result = self.run_cli("dispatch-task", "--project-root", str(self.configured_project()), "--task-id", "KOS-T009", "--json")
         payload = json.loads(result.stdout)
         self.assertEqual(payload["status"], "dispatch_ready")
         stages = [step["stage"] for step in payload["steps"]]

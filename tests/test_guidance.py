@@ -118,8 +118,18 @@ class GuidanceTests(unittest.TestCase):
         self.assertEqual(before, {p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()})
 
     def test_paths_are_shell_quoted(self):
-        text = guidance.render_guidance('/tmp/a project', '/tmp/a bin/kos')
-        self.assertIn("'/tmp/a bin/kos' doctor --project-root '/tmp/a project' --summary", text)
+        root = self.root / 'a project'
+        (root / '.agent-os').mkdir(parents=True)
+        text = guidance.render_guidance(root, '/tmp/a bin/kos')
+        self.assertIn(f"'/tmp/a bin/kos' doctor --project-root '{root}' --summary", text)
+
+    def test_unmanaged_guide_has_no_automatic_lifecycle(self):
+        root = self.root / 'unmanaged project'
+        root.mkdir()
+        text = guidance.render_guidance(root, '/tmp/a bin/kos')
+        self.assertIn('without prompting to initialize', text)
+        self.assertNotIn('doctor --project-root', text)
+        self.assertEqual(list(root.iterdir()), [])
 
     def test_entry_surfaces_load_the_guide_instead_of_repeating_it(self):
         for surface in ('entry', 'startup', 'global'):
@@ -128,6 +138,13 @@ class GuidanceTests(unittest.TestCase):
                 self.assertLess(len(text), 3600)
                 self.assertIn('kos agent-guide --project-root .', text)
                 self.assertNotIn('### Parameter Examples', text)
+                if surface == 'global':
+                    self.assertIn('active task contracts', text)
+                    self.assertIn('Missing configuration and existing runs', text)
+                    self.assertIn('unavailable', text)
+                    self.assertNotIn('KOS_DECISION', text)
+                    self.assertLessEqual(len(guidance.ORDINARY_ENTRY.split()) + 5, 200)
+                    continue
                 self.assertIn(guidance.REPORT_RULE, text)
                 self.assertIn('legacy', text)
                 self.assertIn('unavailable', text)

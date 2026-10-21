@@ -1,3 +1,10 @@
+# Current update: v0.3.0 lean workflow
+
+See [the lean workflow guide](lean-workflow.md) and [changelog](../CHANGELOG.md).
+Unmanaged work needs no onboarding; adopted ordinary work retains verification
+and one concise receipt. Entries below describe earlier milestones, not current
+mandatory steps for every task.
+
 # KnowledgeOS Live Construction Report
 
 This file is the real-time construction log for the local KnowledgeOS build.
