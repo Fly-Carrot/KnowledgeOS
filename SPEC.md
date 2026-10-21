@@ -1,11 +1,28 @@
 # KnowledgeOS Operating Spec
 
-KnowledgeOS is an agent operating system for knowledge and development work.
+KnowledgeOS is a project constraints, research evidence and handoff layer.
+Codex or another host executes the work.
+
+## Current Workflow Contract (v0.3.0)
+
+Unmanaged directories work normally without initialization prompts or automatic
+control-plane creation. Simple questions require no managed task. Explicitly
+adopted, eligible new ordinary runs use `run-task`, actual work and verification,
+`eval-task`, then `complete-task`. They end with one truthful receipt: status,
+verification and record link, including unresolved checks or required sync.
+
+Existing runs keep their bound contracts. Strict projects retain the full
+lifecycle below. Permissions, protected data, explicit approvals, research
+provenance, material decisions and required postflight are not weakened. Detailed
+evidence lanes and phase markers are not mandatory for ordinary runs. See
+[Lean project workflow](docs/lean-workflow.md) and the installed `agent-guide`
+for the applicable contract; older full-lifecycle descriptions are not universal
+startup requirements.
 
 Its product doctrine is:
 
 ```text
-small kernel + pluggable modules + optional apps + project-level strictness + mandatory checkpoint reporting
+small kernel + pluggable modules + optional apps + project-level strictness + evidence-backed reporting
 ```
 
 ## 1. Small Kernel
@@ -52,9 +69,9 @@ KnowledgeOS should support stricter profiles for release, research, and long-run
 
 The default path should be safe and observable, not heavy.
 
-## 5. Mandatory Evidence Lanes
+## 5. Strict-Profile Evidence Lanes
 
-Every meaningful run should expose four evidence lanes:
+Legacy/strict runs retain these evidence lanes when required by their contract:
 
 | Lane | File | Marker | Meaning |
 | --- | --- | --- | --- |
@@ -67,7 +84,8 @@ No command evidence, no success claim.
 
 ## 6. Full Task Lifecycle
 
-A complete substantial task follows this operating chain:
+A legacy/strict task follows this operating chain; ordinary runs use the reduced
+contract above:
 
 ```text
 User Intent
