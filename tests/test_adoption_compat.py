@@ -13,6 +13,46 @@ class AdoptionCompatTests(unittest.TestCase):
     start = ordinary_support.OrdinaryFlowTests.start
     adopt = ordinary_support.OrdinaryFlowTests.adopt
 
+    def historical_spec_run(self):
+        spec = cli.create_spec(self.project, title='Original method', intent='Preserve originals')
+        tasks = self.project / '.agent-os/tasks.yaml'
+        tasks.write_text(tasks.read_text().replace(f'  - id: {self.task}\n',
+            f'  - id: {self.task}\n    spec_id: {spec["spec_id"]}\n'))
+        run = self.start()['run_id']
+        directory = self.project / '.agent-os/runs' / run
+        binding = (directory / 'spec-binding.json').read_bytes()
+        (directory / 'spec-binding.json').unlink()  # Historical snapshot-only fixture.
+        meta = directory / 'run.yaml'
+        meta.write_text(meta.read_text().replace('status: started', 'status: completed'))
+        source = self.project / '.agent-os/specs' / spec['spec_id'] / 'spec.md'
+        source.write_text(source.read_text() + '\nChanged future method.\n')
+        return run, directory, binding
+
+    def test_completed_legacy_dispatch_uses_verified_archived_spec(self):
+        run, directory, _ = self.historical_spec_run()
+        self.assertEqual(cli.build_dispatch_plan(self.project, self.task, run_id=run)['status'], 'dispatch_ready')
+        snapshot = directory / 'spec-snapshot.md'
+        snapshot.write_text(snapshot.read_text() + '\nTampered archive.\n')
+        with self.assertRaisesRegex(ValueError, 'fingerprint'):
+            cli.build_dispatch_plan(self.project, self.task, run_id=run)
+
+    def test_active_and_modern_bindings_do_not_get_historical_exception(self):
+        run, directory, binding = self.historical_spec_run()
+        (directory / 'spec-binding.json').write_bytes(binding)
+        with self.assertRaisesRegex(ValueError, 'spec drift'):
+            cli.build_dispatch_plan(self.project, self.task, run_id=run)
+        (directory / 'spec-binding.json').unlink()
+        meta = directory / 'run.yaml'
+        meta.write_text(meta.read_text().replace('status: completed', 'status: started'))
+        with self.assertRaisesRegex(ValueError, 'spec drift'):
+            cli.build_dispatch_plan(self.project, self.task, run_id=run)
+
+    def test_dispatch_failure_is_a_diagnostic_not_uncaught_exception(self):
+        run = self.start()['run_id']
+        with patch.object(cli, 'build_dispatch_plan', side_effect=ValueError('spec drift: fixture')):
+            errors = cli.verify_dispatch_capability_contract(self.project, self.task, run, None)
+        self.assertIn('dispatch_validation_error', [e['label'] for e in errors])
+
     def receipt(self):
         data = {
             "schema": "knowledgeos.future-defaults.v1",

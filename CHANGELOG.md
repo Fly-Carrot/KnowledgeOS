@@ -8,6 +8,7 @@ KnowledgeOS is still a working prototype, so versions below describe capability 
 
 - Fix read-policy path alias bypasses, preserve explicit per-task confirmation in ordinary eligibility, enforce read restrictions before custody hashing, and revalidate relocated artifact contents. Each defect has a pre-fix failing regression.
 - Keep custody hashing compatible with Python 3.10 using bounded streaming reads.
+- Preserve completed legacy dispatch against checksum-verified archived specs; keep active and modern frozen bindings strict. Return dispatch validation failures as diagnostics instead of aborting the whole project check.
 
 ### Lean project workflow
 

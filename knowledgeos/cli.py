@@ -1371,11 +1371,42 @@ def dispatch_authorization(project_root: Path, task_id: str, task: dict[str, Any
     }
 
 
+def dispatch_run_spec_binding(project_root: Path, task_id: str, run_dir: Path) -> dict[str, Any]:
+    """Read a completed legacy dispatch against its intact archived spec.
+
+    This is a planning-cache input, never permission to resume an old run.
+    Current-run and modern frozen-binding checks remain strict.
+    """
+    try:
+        return run_spec_binding(project_root, task_id, run_dir)
+    except ValueError as exc:
+        if not str(exc).startswith("spec drift:"):
+            raise
+        meta = parse_scalar_values(run_dir / "run.yaml", {"task_id", "run_id", "status"})
+        binding_path = run_dir / "spec-binding.json"
+        modern = binding_path.exists() and json.loads(read_text(binding_path)).get("binding_source") != "legacy_snapshot"
+        if meta.get("status") != "completed" or meta.get("task_id") != task_id or modern:
+            raise
+        snapshot = read_text(run_dir / "spec-snapshot.md")
+        archived = snapshot_metadata(run_dir / "spec-snapshot.md")
+        if "## Body\n" not in snapshot:
+            raise ValueError("historical spec snapshot has no body") from exc
+        body = snapshot.split("## Body\n", 1)[1].strip()
+        fingerprint = archived.get("Spec Fingerprint", "")
+        if content_fingerprint(body) != fingerprint:
+            raise ValueError("historical spec snapshot body fingerprint mismatch") from exc
+        return {"spec_id": archived["Spec ID"], "fingerprint": fingerprint,
+                "spec_fingerprint": fingerprint, "binding_source": "legacy_snapshot",
+                "binding_status": "legacy", "task_id": task_id, "thread_id": "",
+                "project_root": str(project_root.resolve()),
+                "title": archived.get("Spec Title", ""), "body": body}
+
+
 def dispatch_cache_inputs(project_root: Path, task: dict[str, Any], route: dict[str, Any],
                           policy: dict[str, Any], entries: list[dict[str, Any]],
                           host: dict[str, Any], run_dir: Path | None) -> str:
     binding_task = spec_binding_task(project_root, task["id"]) if (project_root / ".agent-os" / "tasks.yaml").exists() else task
-    binding = run_spec_binding(project_root, task["id"], run_dir) if run_dir else resolve_spec_binding(project_root, binding_task)
+    binding = dispatch_run_spec_binding(project_root, task["id"], run_dir) if run_dir else resolve_spec_binding(project_root, binding_task)
     files = sorted((project_root / ".agent-os").glob("*policy*.yaml"))
     project_policy = project_root / ".agent-os" / "project.yaml"
     if project_policy.exists():
@@ -6758,7 +6789,11 @@ def verify_dispatch_capability_contract(project_root: Path, task_id: str, run_id
     dispatch_event_ok = has_command_event(run_dir, "dispatch-task", task_id, run_id, status="dispatch_ready")
     if not dispatch_event_ok:
         errors.append({"label": "missing_dispatch_command_event", "detail": "dispatch-task --run-id command evidence is missing"})
-    dispatch = build_dispatch_plan(project_root, task_id, run_id=run_id)
+    try:
+        dispatch = build_dispatch_plan(project_root, task_id, run_id=run_id)
+    except (ValueError, KeyError, OSError) as exc:
+        errors.append({"label": "dispatch_validation_error", "detail": str(exc)})
+        return errors
     if dispatch.get("status") != "dispatch_ready":
         errors.append({"label": "dispatch_not_ready", "detail": dispatch.get("reason", "dispatch plan is not ready")})
         return errors
